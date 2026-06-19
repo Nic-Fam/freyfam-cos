@@ -21,7 +21,7 @@ Classify the incoming message and respond with ONLY a JSON object, no prose, no 
 
 Schema:
 {
-  "agent": "chief-of-staff" | "finance" | "dev" | "resale",
+  "agent": "chief-of-staff" | "finance" | "dev" | "resale" | "carmen",
   "complexity": "trivial" | "standard" | "complex",
   "high_stakes": boolean,   // money movement, sending email/SMS on the user's behalf, purchases, irreversible actions
   "summary": string         // <= 12 words
@@ -31,6 +31,8 @@ Guidance:
 - "trivial": a fact lookup or one-line answer needing no tools.
 - "standard": normal multi-step help (most messages).
 - "complex": long-horizon, multi-tool, or ambiguous planning work.
+- "carmen": meal planning and kitchen inventory (what's for dinner, what's in the fridge,
+  what's expiring, logging groceries used). Note: actually BUYING groceries is high_stakes.
 - high_stakes is true whenever the request could spend money or send something outbound.`;
 
 export async function triageInbound(message) {
@@ -49,14 +51,16 @@ export async function triageInbound(message) {
 }
 
 const HEARTBEAT_SYSTEM = `You are a watchdog for a family's assistant. You are given a compact list of \
-recent signals (new email subjects/senders, calendar changes, reminders). Decide if ANY of them \
-need action or a heads-up to the family right now. Respond with ONLY JSON, no prose, no code fences.
+recent signals (new email subjects/senders, calendar changes, reminders, expiring food). Decide if \
+ANY of them need action or a heads-up to the family right now. Respond with ONLY JSON, no prose, no code fences.
 
 Schema:
 {
   "actionable": boolean,
-  "items": [ { "what": string, "agent": "chief-of-staff"|"finance"|"dev"|"resale", "urgency": "now"|"today"|"fyi" } ]
+  "items": [ { "what": string, "agent": "chief-of-staff"|"finance"|"dev"|"resale"|"carmen", "urgency": "now"|"today"|"fyi" } ]
 }
+
+Route expiring/expired kitchen items to "carmen" (urgency "fyi" unless it is a lot of food).
 
 Be conservative: routine newsletters, receipts already filed, and noise are NOT actionable.`;
 

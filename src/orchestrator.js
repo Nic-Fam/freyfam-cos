@@ -37,11 +37,11 @@ const tools = [
   },
   {
     name: "delegate",
-    description: "Hand a scoped task to a specialist agent and get their result.",
+    description: "Hand a scoped task to a specialist agent and get their result. Use 'carmen' for meal planning and kitchen inventory.",
     input_schema: {
       type: "object",
       properties: {
-        agent: { type: "string", enum: ["finance", "dev", "resale"] },
+        agent: { type: "string", enum: ["finance", "dev", "resale", "carmen"] },
         task: { type: "string" },
       },
       required: ["agent", "task"],

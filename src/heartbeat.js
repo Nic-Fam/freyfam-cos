@@ -1,6 +1,7 @@
 import { HEARTBEAT_INTERVAL_MS } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals } from "./channels/graph.js";
+import { getExpiringSoon } from "./meals.js";
 import { handleInbound } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 
@@ -19,6 +20,14 @@ async function gatherSignals() {
     signals.push(...(await recentMailSignals({ top: 15 })));
   } catch (err) {
     console.error("[heartbeat] mail signal fetch failed:", err.message);
+  }
+  try {
+    // Kitchen items expiring within 2 days (or already past) -> Carmen's beat.
+    for (const it of await getExpiringSoon(2)) {
+      signals.push({ source: "kitchen", item: it.name, expiresAt: it.expiresAt, daysUntil: it.daysUntil });
+    }
+  } catch (err) {
+    console.error("[heartbeat] kitchen signal fetch failed:", err.message);
   }
   // TODO (Claude Code): add calendar deltas, reminders, resale saved-search hits.
   return signals;

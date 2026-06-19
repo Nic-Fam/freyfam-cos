@@ -13,6 +13,10 @@ import { recall, remember } from "../memory.js";
 import { analyzeTransactions } from "../finance.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
+import {
+  getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
+  listActive, summary, getExpiringSoon, addItem, consume,
+} from "../meals.js";
 
 const obj = (properties, required = []) => ({ type: "object", properties, required });
 
@@ -79,6 +83,87 @@ const REGISTRY = {
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
       list_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
+    },
+  }),
+
+  carmen: () => ({
+    tools: [
+      ...memoryTools(),
+      {
+        name: "view_meal_plan",
+        description: "Show planned meals between two dates (inclusive, YYYY-MM-DD).",
+        input_schema: obj({ startDate: { type: "string" }, endDate: { type: "string" } }, ["startDate", "endDate"]),
+      },
+      {
+        name: "plan_meal",
+        description: "Add or replace a planned meal for a date and meal type.",
+        input_schema: obj({
+          date: { type: "string" },
+          mealType: { type: "string", enum: ["breakfast", "lunch", "dinner", "snack"] },
+          name: { type: "string" },
+          prepMinutes: { type: "number" },
+          notes: { type: "string" },
+          recipeUrl: { type: "string" },
+        }, ["date", "mealType", "name"]),
+      },
+      {
+        name: "remove_meal",
+        description: "Remove a planned meal for a date and meal type.",
+        input_schema: obj({
+          date: { type: "string" },
+          mealType: { type: "string", enum: ["breakfast", "lunch", "dinner", "snack"] },
+        }, ["date", "mealType"]),
+      },
+      {
+        name: "kitchen_inventory",
+        description: "List items currently in the kitchen, optionally filtered.",
+        input_schema: obj({
+          location: { type: "string", enum: ["fridge", "freezer", "pantry", "counter", "other"] },
+          category: { type: "string" },
+          query: { type: "string" },
+        }),
+      },
+      { name: "inventory_summary", description: "Counts by category plus expiring-soon and recently-added shortlists.", input_schema: obj({}) },
+      { name: "expiring_soon", description: "Items expiring within N days (default 4); includes already-expired.", input_schema: obj({ days: { type: "number" } }) },
+      {
+        name: "add_inventory_item",
+        description: "Add an item to the kitchen inventory. Expiration is estimated if not given.",
+        input_schema: obj({
+          name: { type: "string" },
+          category: { type: "string", enum: ["produce", "dairy", "meat", "pantry", "frozen", "bakery", "beverage", "condiment", "snack", "other"] },
+          location: { type: "string", enum: ["fridge", "freezer", "pantry", "counter", "other"] },
+          quantity: { type: "number" },
+          unit: { type: "string" },
+          expiresAt: { type: "string" },
+          opened: { type: "boolean" },
+          notes: { type: "string" },
+        }, ["name"]),
+      },
+      {
+        name: "consume_inventory_item",
+        description: "Mark some/all of an inventory item used. Omit quantity to use it all.",
+        input_schema: obj({ id: { type: "string" }, quantity: { type: "number" } }, ["id"]),
+      },
+    ],
+    handlers: {
+      ...memoryHandlers("carmen"),
+      view_meal_plan: async ({ startDate, endDate }) => {
+        const meals = await getMealsInRange(startDate, endDate);
+        return formatMealsContext(meals) || "No meals planned in that range.";
+      },
+      plan_meal: async (input) => JSON.stringify(await saveMeal({ ...input, createdBy: "carmen" })),
+      remove_meal: async ({ date, mealType }) => {
+        await deleteMeal(date, mealType);
+        return "removed";
+      },
+      kitchen_inventory: async (filter) => JSON.stringify(await listActive(filter || {})),
+      inventory_summary: async () => JSON.stringify(await summary()),
+      expiring_soon: async ({ days } = {}) => JSON.stringify(await getExpiringSoon(days ?? 4)),
+      add_inventory_item: async (input) => JSON.stringify(await addItem({ ...input, addedBy: "carmen", source: "manual" })),
+      consume_inventory_item: async ({ id, quantity }) => {
+        const r = await consume(id, { quantity, actor: "carmen" });
+        return r ? JSON.stringify(r) : "item fully consumed and removed";
+      },
     },
   }),
 
