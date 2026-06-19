@@ -34,14 +34,20 @@ function collection(agent) {
   return createCollection({ file: join(DIR(), `${agent}.json`), partition: "decision" });
 }
 
+// Newest first. Order by createdAt, NOT array/storage order: the Azure Table
+// backend returns rows sorted by RowKey (a random id), so a plain reverse() would
+// be wrong remotely. Sorting on the ISO timestamp is correct for both backends.
+function newestFirst(items) {
+  return [...items].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
 function renderMarkdown(agent, items) {
   const lines = [`# Decision log: ${agent}`, ""];
   if (!items.length) {
     lines.push("_No decisions recorded yet._", "");
     return lines.join("\n");
   }
-  // Newest first so the latest decision is at the top of the human-readable file.
-  for (const it of [...items].reverse()) {
+  for (const it of newestFirst(items)) {
     lines.push(`## ${it.createdAt} — ${it.title}`, "");
     lines.push(it.decision, "");
     if (it.rationale) lines.push(`**Why:** ${it.rationale}`, "");
@@ -81,5 +87,5 @@ export async function logDecision(agent, { title, decision, rationale = "", cont
 /** List an agent's recorded decisions, newest first. */
 export async function listDecisions(agent, limit = 20) {
   const items = await collection(safeAgent(agent)).list();
-  return [...items].reverse().slice(0, limit);
+  return newestFirst(items).slice(0, limit);
 }
