@@ -54,7 +54,7 @@ export const GRAPH = {
   tenantId: process.env.GRAPH_TENANT_ID,
   clientId: process.env.GRAPH_CLIENT_ID,
   clientSecret: process.env.GRAPH_CLIENT_SECRET,
-  mailbox: process.env.GRAPH_MAILBOX || "assistant@freyfam.com",
+  mailbox: process.env.GRAPH_MAILBOX || "cos@freyfam.com", // assistant@ kept as an alias
 };
 
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;

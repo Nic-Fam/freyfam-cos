@@ -37,11 +37,37 @@ tool entries.
 
 Owns: `.env`, local run only. No code changes expected.
 
-- [ ] `npm install` (deps declared, never installed in this clone)
-- [ ] `cp .env.example .env` and fill: Anthropic, Twilio, Azure Storage, Graph
-- [ ] `node _smoke.mjs` passes (guards, confirm, memory) — no creds needed
-- [~] `npm run once` fires a single heartbeat tick end-to-end (needs Graph + Anthropic)
-- [~] `npm start`, text the Twilio number, confirm queue → reply round-trip
+Last verified: 2026-06-19 (this session).
+
+- [x] `npm install` — clean, 0 vulnerabilities, 34 pkgs
+- [x] `.env` present and filled: all keys populated (Anthropic, Twilio, Azure
+      Storage, Graph). Models valid: triage=`claude-haiku-4-5`,
+      standard=`claude-sonnet-4-6`, heavy=`claude-opus-4-8`. Only optional
+      `TWILIO_MESSAGING_SERVICE_SID` is unset (`TWILIO_FROM` is set, so fine).
+- [x] `node _smoke.mjs` passes (guards, confirm, memory) — no creds needed
+- [x] `npm run once` fires a single heartbeat tick end-to-end. Verified live:
+      Graph `recentMailSignals` returned 15 real signals (~0.66s, app-only token
+      works → also de-risks workstream C); Haiku heartbeat triage returned
+      `actionable=false` (~0.84s). Idle tick costs a fraction of a cent as designed.
+- [x] `npm start` boots and connects: `[queue] consuming "inbound-messages"` (Azure
+      Storage connection string works, `createIfNotExists` OK) + heartbeat scheduled.
+- [x] **Queue → reply round-trip verified via EMAIL** (Twilio number not cleared yet,
+      so SMS leg is blocked externally — A2P/number verification pending). Enqueued a
+      synthetic `{channel:"email", from:"nic@freyfam.com"}` message directly onto
+      `inbound-messages` (standing in for the not-yet-cutover Azure Function front
+      door, workstream B). Daemon pulled it, triaged on Haiku, ran chief-of-staff on
+      Sonnet, and replied via Graph `sendMail` ("Re: your note" → Nic@Freyfam.com).
+      Queue drained to 0 (consume + ack works). This exercises the full daemon-side
+      loop; only the Twilio transport is unverified.
+- [~] **Live SMS round-trip — BLOCKED (external):** Twilio number not cleared for
+      traffic yet. Re-run once it is: text the number while the daemon runs, confirm
+      queue → SMS reply. The daemon-side path is already proven by the email test
+      above, so this is just the transport leg.
+- [ ] **Provision `cos@freyfam.com`** as the primary CoS mailbox with `assistant@`
+      kept as an alias (M365), then set `GRAPH_MAILBOX=cos@freyfam.com` in the live
+      `.env`. Until provisioned, leave `.env` on `assistant@` (verified working
+      above); `config.js` default is now `cos@` but `.env` overrides it. See the
+      Identity & addressing decision in the topology section.
 - Parallel-safe: yes once creds exist; this is the gate that lets other streams
   *verify* their work rather than just write it.
 
@@ -75,12 +101,19 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
 
 Owns: `src/channels/graph.js`, `src/config.js` (GRAPH block only).
 
-- [~] Verify app-only client-credentials token actually acquires the
-      `.default` scope against the tenant
-- [~] Confirm `recentMailSignals()` returns real headers from `assistant@freyfam.com`
-- [ ] Confirm app registration has `Mail.Read` + `Mail.Send` *application* perms
-      with admin consent (sendMail path)
+- [x] Verify app-only client-credentials token actually acquires the
+      `.default` scope against the tenant — confirmed 2026-06-19 (token acquired,
+      live Graph calls succeed).
+- [x] Confirm `recentMailSignals()` returns real headers from the assistant mailbox
+      — confirmed 2026-06-19: returned 15 real signals (~0.66s).
+- [x] Confirm app registration has `Mail.Read` + `Mail.Send` *application* perms
+      with admin consent (sendMail path) — confirmed 2026-06-19: read works
+      (`recentMailSignals`), and `sendMail` actually delivered ("Re: your note" →
+      Nic@Freyfam.com) during the workstream-A email round-trip test, so Mail.Send
+      consent is in place.
 - Parallel-safe: yes — isolated file. Needs real Graph creds (overlaps A on creds).
+- NOTE: C is effectively complete as a side effect of the A verification. Promote the
+  `[~]` heading to `[x]` once someone gives it a dedicated read.
 
 ### D. Fix the proactive path bugs  `[!]`  — small, high value
 
@@ -211,6 +244,30 @@ or Lloyd's outbound channels, and a crash is contained — all while scaling to 
 between the household's episodic delegations. Always-on dedicated compute per agent
 (the literal "one Mac Mini each") was **rejected**: ~$40-150/mo for no extra isolation
 at this traffic. Trade-off accepted: serverless cold starts add ~1-5s per delegation.
+
+### Identity & addressing model (CONFIRMED 2026-06-19)
+
+Per-persona identity is **not** a cost driver — access isolation and email addresses
+are different planes:
+
+- **Access isolation = free.** Comes from Azure managed identities + scoped Graph
+  app permissions (see cost model above), not from mailboxes. App registrations and
+  managed identities cost $0.
+- **Email = optional and mostly free.** Licensed M365 mailboxes (~$6/user/mo) are the
+  trap; **shared mailboxes and aliases are $0**. Do NOT create six licensed mailboxes.
+
+Decisions:
+- **Primary CoS mailbox: `cos@freyfam.com`** (was `assistant@freyfam.com`). Keep
+  `assistant@` as an **alias** so existing mail still lands — additive, reversible.
+  Code: `GRAPH_MAILBOX` in `.env`; default updated in `config.js`. Provisioning the
+  alias in M365 is an ops step (workstream A).
+- **One Twilio number** for all of Lloyd's SMS — phone numbers ARE a per-identity
+  cost (~$1-2/mo each), so personas do NOT get their own.
+- **One outbound sender.** Lloyd owns all outbound, so nothing sends "as" a persona;
+  no per-persona send identity needed.
+- **Per-persona inbound routing only if wanted** (e.g. bank statements → `patrick@`,
+  marketplace alerts → `shey@`): use **free shared mailboxes**, each scoped to its
+  specialist via Graph **Application Access Policy**. Deferred until a real need.
 
 ### This supersedes a CLAUDE.md statement — flag for the owner
 
