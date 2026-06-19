@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-brain-test.json");
 process.env.BRAIN_PATH = TMP;
-const { remember, recall } = await import("../src/memory.js");
+const { remember, recall, rememberOnce } = await import("../src/memory.js");
 
 beforeEach(() => rm(TMP, { force: true }));
 after(() => rm(TMP, { force: true }));
@@ -23,4 +23,23 @@ test("agent-scoped recall isolates specialists but shares unscoped facts", async
 
   const all = await recall("anything", 10); // chief of staff: no scope -> everything
   assert.equal(all.length, 3);
+});
+
+test("recall ranks by lexical relevance (TF-IDF), not just presence", async () => {
+  await remember("Nic's work email is nicholas.frey@flyerdefense.com");
+  await remember("Trash pickup is Tuesday");
+  await remember("Shelli prefers oat milk");
+
+  const top = await recall("what is Nic's work email", 3);
+  assert.ok(top[0].text.includes("work email"), "most relevant fact ranks first");
+  assert.ok(top[0].score > top[2].score, "relevance scores are ordered, not flat");
+});
+
+test("rememberOnce skips exact-duplicate text so seeding is idempotent", async () => {
+  assert.equal(await rememberOnce("Trash pickup is Tuesday"), true, "first write lands");
+  assert.equal(await rememberOnce("Trash pickup is Tuesday"), false, "duplicate skipped");
+  assert.equal(await rememberOnce("Recycling is every other Friday"), true, "distinct fact lands");
+
+  const all = await recall("anything", 10);
+  assert.equal(all.length, 2, "no duplicate piled up");
 });

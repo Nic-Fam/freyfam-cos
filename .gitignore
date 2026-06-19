@@ -1,5 +1,7 @@
 node_modules/
 .env
-data/
+data/*
+!data/seed.mjs
+!data/seed-notes.json
 *.log
 .DS_Store

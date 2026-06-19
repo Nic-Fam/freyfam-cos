@@ -1,0 +1,13 @@
+{
+  "_comment": "Family notes seeded into the local brain (memory.js) by `npm run seed`. Add durable facts, preferences, and routines here. `text` is what gets recalled; `meta.agent` scopes a note to one specialist (finance, dev, resale, chef, security) - omit it for shared household facts the chief and everyone can see. Re-running the seed is safe: notes already present (by exact text) are skipped.",
+  "notes": [
+    { "text": "The family timezone is America/Los_Angeles.", "meta": {} },
+    { "text": "Household members: Nic, Shelli, and Fox. Nic is the primary owner the assistant texts.", "meta": {} },
+    { "text": "User-facing copy should be warm, direct, brief, and never use em dashes (family preference).", "meta": {} },
+    { "text": "flyerdefense.com and disney.com are read-only work domains: read their mail but never send to them.", "meta": {} },
+    { "text": "Shelli prefers oat milk.", "meta": { "agent": "chef" } },
+    { "text": "Fox has no nut allergy on record, but confirm before assuming - keep nuts flagged until verified.", "meta": { "agent": "chef" } },
+    { "text": "Resale hunting is across Poshmark, eBay, Vestiaire, The RealReal, and 1stDibs.", "meta": { "agent": "resale" } },
+    { "text": "No money movement: finance surfaces actions for a human to execute, it never pays or transfers.", "meta": { "agent": "finance" } }
+  ]
+}

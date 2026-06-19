@@ -2,7 +2,7 @@
 //
 // This is a faithful ESM port of the meal-planning feature already built in the
 // Azure-Functions repo (src/meal-plans.js + src/meals/*). It talks to the SAME
-// Azure Tables on the SAME storage account, so Carmen (the kitchen specialist)
+// Azure Tables on the SAME storage account, so Carmine (the kitchen specialist)
 // reads and writes the very rows that feature created — nothing is duplicated.
 //
 //   Table 'mealPlans'      : PartitionKey=YYYY-MM-DD, RowKey=mealType

@@ -1,5 +1,6 @@
 import { startQueueConsumer, stopQueueConsumer } from "./queue.js";
 import { startHeartbeat, tick } from "./heartbeat.js";
+import { closeBrowser } from "./channels/browser.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("daemon");
@@ -25,6 +26,7 @@ function shutdown(hb) {
   log.info("shutting down");
   clearInterval(hb);
   stopQueueConsumer();
+  closeBrowser(); // release the headless browser if one was launched (no-op otherwise)
   setTimeout(() => process.exit(0), 500);
 }
 

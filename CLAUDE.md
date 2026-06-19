@@ -13,13 +13,17 @@ An always-on Node daemon on the MacBook acting as the family **chief of staff**
 (Lloyd). It pulls inbound messages from an Azure queue, triages them cheaply, routes
 to the right specialist at the right model tier, and replies. A heartbeat makes it
 proactive. The five specialists are **finance (Patrick), dev (Steve), resale
-(Shey), chef (Carmen), and security (Frank)**.
+(Shey), chef (Carmine), and security (Frank)**.
 
-**Today** the specialists are in-process personas the chief delegates to (one
-process). **Target (CONFIRMED, see Topology below):** Lloyd stays local while the
-specialists run as isolated, serverless, scale-to-zero deployments in the Azure
-tenant. The `delegate` tool is the seam between the two: its `{agent, task} -> text`
-signature stays stable, so only its body changes when specialists move to Azure.
+**Today** the specialists run in-process (one process), but the transport seam is
+already built: `delegate` (`src/delegate.js`) routes each specialist either
+in-process (`COS_SPECIALIST_MODE=local`, the default) or to that specialist's own
+Azure Function (`mode=remote`), behind a config flag. The execution core
+(`src/specialists/runner.js`) is transport-agnostic and is exactly the unit that
+deploys to Azure. **Target (CONFIRMED, see Topology below):** Lloyd stays local
+while the specialists run as isolated, serverless, scale-to-zero deployments in the
+Azure tenant. The `delegate` seam's `{agent, task} -> text` signature stays stable,
+so cutting over is flipping the flag once the Functions are stood up, not a rewrite.
 
 ## Architecture
 
@@ -72,8 +76,15 @@ isolates the specialists:
   dominant line, are unchanged. Full breakdown and the migration checklist in TRACKER.md.
 
 Build specialist logic **transport-agnostic** (pure functions + a store) so the move
-to Azure is a body swap of `delegate`, not a rewrite. Open question (resolve before
-the split): where memory lives once specialists are remote.
+to Azure is a flag flip on `delegate`, not a rewrite.
+
+**Memory location (RESOLVED 2026-06-19):** each remote specialist owns its **own
+Table-scoped store** under its **own managed identity** — recall/remember and the
+decision log included. This matches the isolation model (separate identity + scope
+per agent, so one specialist cannot read another's memory) rather than a shared
+brain or a callback to Lloyd. Lloyd keeps his own local brain. The `recall`/`remember`
+and `logDecision`/`listDecisions` interfaces stay stable, so this is a store swap
+inside the specialist runner, not a caller change.
 
 ## HARD CONSTRAINTS (do not regress these)
 

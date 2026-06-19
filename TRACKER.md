@@ -142,21 +142,37 @@ Owns: `src/heartbeat.js`, and a few lines of `src/orchestrator.js`.
   needs a genuinely actionable signal to exercise end-to-end, but the structural bug
   — the throwing send — is gone.)
 
-### E. Real memory  `[~]`  → `[ ]`
+### E. Real memory  `[~]`  — near-term items DONE 2026-06-19; embeddings still deferred
 
-Owns: `src/memory.js`, new `data/` seed scripts. Interface (`recall`/`remember`)
-must stay stable so callers don't change.
+Owns: `src/memory.js`, `src/decisions.js`, new `data/` seed scripts. Interface
+(`recall`/`remember`) stayed stable so callers didn't change.
 
 - DECISION (2026-06-18): **embeddings deferred** — keep `embedHash()` for now,
-  revisit when the corpus grows. So the items below are *not* near-term.
+  revisit when the corpus grows. So the two items below are *not* near-term.
 - [ ] (deferred) Replace `embedHash()` (`memory.js:30`) with a real embedding call
 - [ ] (deferred) Swap JSON store for sqlite-vec or LanceDB (keep signatures)
-- [ ] Seed from the family's existing notes — still worth doing on the hash store
-- [ ] Adopt Genet's **`decision.md` per-agent decision log** (see Genet bar below):
-      a durable, human-readable record of *final decisions* each specialist made,
-      separate from the vector recall. Cheap, high-value, no embeddings needed.
-- Parallel-safe: **yes, fully isolated** — only `memory.js` + new files. Great
-  candidate for its own session. `_smoke.mjs:16-20` already pins the contract.
+- [x] **Seed from the family's existing notes (2026-06-19).** `data/seed-notes.json`
+      holds editable family notes (`{text, meta.agent?}`; omit `agent` for shared
+      facts). `data/seed.mjs` (`npm run seed`) loads them into the hash store via a
+      new additive `rememberOnce()` export — idempotent (dedupes by exact text), so
+      re-running never piles up duplicates. Honors `BRAIN_PATH`. Verified: 8 added on
+      first run, 0 on the second. Starter notes are grounded in CLAUDE.md (timezone,
+      members, read-only domains, no-em-dash style, oat milk, resale sites,
+      no-money-movement); the family edits the JSON to add more.
+- [x] **Genet `decision.md` per-agent decision log (2026-06-19).** `src/decisions.js`:
+      `logDecision(agent, {title, decision, rationale?, context?})` (append-only) +
+      `listDecisions(agent)` (newest-first). Canonical per-agent JSON under
+      `data/decisions/<agent>.json`, with a human-readable `<agent>.md` regenerated on
+      every write so it can't drift. Agent key is filename-sanitized (no path escape).
+      Wired as scoped `log_decision`/`list_decisions` tools on ALL five specialists
+      in `agents/tools.js` (shared helper like `memoryTools`) AND on the chief in
+      `orchestrator.js` — the chief writes to its own log but `list_decisions` takes an
+      optional `agent` so Lloyd can review any specialist's decisions. Logging takes no
+      real-world action — high-stakes effects still go through the chief's gate.
+- Parallel-safe: **yes, fully isolated** — `memory.js` + `decisions.js` + `data/`,
+  plus additive, non-conflicting tool wiring in `agents/tools.js` and `orchestrator.js`.
+  `_smoke.mjs:16-20`
+  + `test/memory.test.js` + new `test/decisions.test.js` pin the contracts (34/34 green).
 
 ### F. Specialist tools  `[~]`  → `[ ]`
 
@@ -174,14 +190,39 @@ modules under `src/channels/` or a new `src/tools/`.
   standalone `{name, description, input_schema}` + handler in its own file, then
   one short integration commit adds them to the list.
 
-### G. Browser automation (Playwright)  `[ ]`
+### G. Browser automation (Playwright)  `[~]`  — capability + tools landed 2026-06-19
 
-Owns: new `src/channels/browser.js` (or `src/tools/browser.js`), `package.json` dep.
+Owns: new `src/channels/browser.js`, `package.json` dep.
 
-- [ ] Add local headless Playwright capability (deferred from the Chromebook era)
-- [ ] Wire any ordering/purchase action **behind `confirm.js`** and through a tool
-- Parallel-safe: **yes** — almost all new files. Only `package.json` overlaps
-  (additive dep). Integration into the tool list overlaps F's bottleneck.
+- [x] **Local headless Playwright capability (2026-06-19).** `src/channels/browser.js`:
+      Playwright is a lazy, **optional** dep (`import("playwright")` inside the call;
+      friendly install hint if absent) so the daemon, tests, and every non-browser
+      path keep working without the browser binary installed. Shared headless
+      chromium launched on first use; `closeBrowser()` releases it (wired into
+      `daemon.js` shutdown, no-op when nothing launched). Transport-agnostic: the
+      module is a pure capability and never confirms anything itself, so it survives
+      the eventual local/Azure split unchanged.
+- [x] **Read-only browse tool.** `readPage(url)` opens one page and returns
+      title + visible text. No clicks/fills/navigation. Exposed to the chief as
+      `browse_page` for price/listing/availability checks.
+- [x] **Ordering wired behind `confirm.js` (2026-06-19).** `runOrder({url, steps})`
+      drives a goto/click/fill/waitFor checkout flow. Exposed to the chief as the
+      high-stakes `place_order` tool: handler calls `requestConfirmation` first
+      (same pattern as `send_email`) and bails on decline. **Hard constraint kept:**
+      `assertOutboundAllowed()` runs inside `runOrder` before any launch AND on every
+      `goto` step, so a browser action can never reach a read-only work domain.
+- [x] **Tests:** `test/browser.test.js` covers the guard (read-only domains rejected
+      before launch), input validation, and the safe `closeBrowser()` no-op. Designed
+      to pass with or without Playwright installed (only pre-launch paths). Suite green.
+- [ ] **REMAINING — live verify:** `npm i playwright && npx playwright install chromium`,
+      then drive a real read (`browse_page`) and a sandbox checkout through the
+      confirmation gate end-to-end. Flips this workstream to `[x]`.
+- [ ] **REMAINING — real selectors per site.** `steps` are generic primitives today;
+      per-site order flows (the resale sites) still need concrete selectors, ideally
+      surfaced as the resale specialist's saved-search fetchers (overlaps F).
+- Parallel-safe: **yes** — almost all new files. Only `package.json` (additive
+  optional dep) and the chief's tool list in `orchestrator.js` overlap; integration
+  into specialist tool lists overlaps F's bottleneck.
 
 ### H. Harden & operationalize  `[x]`
 
@@ -217,7 +258,7 @@ enqueues **text only**; inbound MMS images, vCards, and forwarded-voicemail audi
 are silently dropped (no media field in the queue contract). This is the path to
 photo intake, which the current roster actually wants:
 - **Shey (reseller):** snap a photo of an item → catalog / draft a listing.
-- **Carmen (chef):** photo of groceries or a receipt → update food inventory.
+- **Carmine (chef):** photo of groceries or a receipt → update food inventory.
 (This replaces the old "Sylvie" framing in the Genet gaps below.)
 
 Owns (cross-repo): the queue *contract* + `~/freyfam-assistant` front door + this
@@ -228,7 +269,7 @@ repo's `queue.js`/`orchestrator.js`.
 - [ ] Front door (B repo): include media URLs when `COS_ENQUEUE` is on.
 - [ ] Daemon: fetch the media (Twilio media URLs need auth + expire) and build
       Claude image content blocks in `orchestrator.handleInbound`.
-- [ ] Route image-bearing messages to the right specialist (Shey/Carmen) via triage.
+- [ ] Route image-bearing messages to the right specialist (Shey/Carmine) via triage.
 - [ ] Keep the hard constraints: any resulting outbound still goes through Lloyd's
       confirmation gate + `guards.js`.
 - Parallel-safe: yes once the contract field is pinned — front door and daemon sides
@@ -295,7 +336,7 @@ browser make it *good*; the path above makes it *live*.
 - **Lloyd runs locally** on a dedicated always-on Mac. He keeps the front door:
   queue consumer, inbound triage, the **confirmation gate**, **all outbound channels**
   (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
-- **The five specialists run in the Azure tenant** (Patrick, Steve, Shey, Carmen,
+- **The five specialists run in the Azure tenant** (Patrick, Steve, Shey, Carmine,
   Frank) on **serverless, scale-to-zero compute (CONFIRMED 2026-06-19) — no always-on
   computing**. Lloyd's `delegate` tool calls out to them instead of running them
   in-process. This is why the `@azure/data-tables` dependency showed up — specialist
@@ -320,7 +361,7 @@ household volume that is small.
 
 **Isolation comes from separate identity + separate storage per specialist, NOT from
 keeping compute warm.** Each specialist = its own Function/Container App with its own
-**managed identity** and **Table Storage scope**, so Patrick cannot read Carmen's data
+**managed identity** and **Table Storage scope**, so Patrick cannot read Carmine's data
 or Lloyd's outbound channels, and a crash is contained — all while scaling to zero
 between the household's episodic delegations. Always-on dedicated compute per agent
 (the literal "one Mac Mini each") was **rejected**: ~$40-150/mo for no extra isolation
@@ -374,19 +415,62 @@ constitution matches reality.
   If Azure specialists need their own recall, the store likely becomes shared/Azure-
   hosted (Tables or a vector store). Open question — resolve before the Azure split.
 
-### Migration checklist (extends workstream H, deferred)
+### Migration checklist (extends workstream H)
 
-- [ ] Confirm topology with Nic and update CLAUDE.md
-- [ ] Move specialist stores from local JSON to Azure Tables (data-tables dep started)
-- [ ] Stand up specialist compute in Azure — **serverless scale-to-zero** (Functions
-      Consumption or Container Apps min-replica-0); one identity + Table scope per agent
-- [ ] Reimplement `delegate` to invoke Azure specialists; keep signature stable
-- [ ] Resolve memory location (local vs shared/Azure)
+Started 2026-06-19. Three decisions locked with Nic this session: **compute =
+Azure Functions (Consumption)**; **memory = per-specialist Table-scoped store +
+managed identity** (NOT shared, NOT callback-to-Lloyd); **approach = code seam
+first, verify locally, then provision**.
+
+- [x] **Confirm topology with Nic and update CLAUDE.md (2026-06-19).** Architecture
+      section now describes the built seam; the "where memory lives" open question is
+      resolved (per-specialist Azure store) in CLAUDE.md.
+- [x] **Reimplement `delegate` to invoke Azure specialists; keep signature stable
+      (2026-06-19).** Seam built and verified locally:
+      - `src/delegate.js` — `chooseTransport` (local unless `mode=remote` AND the
+        specialist has an endpoint), `invokeRemoteSpecialist` (POST `{agent,task}` →
+        text, `x-functions-key` auth, `AbortController` timeout), and `delegate()`.
+        Remote failure does NOT fall back to local (that would run a specialist with
+        Lloyd's scope and break isolation) — it returns a graceful message.
+      - `src/specialists/runner.js` — the transport-agnostic execution core (moved
+        out of `orchestrator.js`); this is the unit that deploys to each Function.
+      - `src/persona.js` — shared persona loader (chief + runner).
+      - `config.js > SPECIALISTS` — `COS_SPECIALIST_MODE` (default `local`), per-agent
+        endpoint env vars, function key, timeout.
+      - `orchestrator.js` delegate handler now calls the seam; default behavior
+        (in-process) is unchanged. Tests: `test/delegate.test.js` (routing + remote
+        HTTP via a real stub server + no-silent-fallback). Suite 39/39 green.
+- [x] **Resolve memory location (2026-06-19): per-specialist Azure store** under each
+      specialist's own managed identity. `recall`/`remember` + `logDecision`/
+      `listDecisions` interfaces stay stable, so it's a store swap inside the runner,
+      not a caller change. (See CLAUDE.md Topology.)
+- [~] **Stand up specialist compute in Azure — provisioning kit DRAFTED (2026-06-19),
+      awaiting creds.** Ready to run the moment `az login` + `ANTHROPIC_API_KEY` exist:
+      - `deploy/specialists/app/specialist.mjs` — Function handler wrapping
+        `runner.js`; `authLevel:function`, `COS_AGENT` pin, returns `{text}` only.
+      - `deploy/specialists/{host.json,package.json,README.md}` — Functions v4 host +
+        the runner's runtime deps (`@anthropic-ai/sdk`, `@azure/data-tables`) + docs.
+      - `deploy/provision-specialists.sh` — one Consumption app per specialist, each
+        with its own system-assigned identity scoped (`Storage Table Data Contributor`)
+        to ONLY its own table. That per-app identity + per-table RBAC is the isolation.
+      - `deploy/publish-specialists.sh` — bundles `src/` + host into a temp dir,
+        deploys to each app, prints the per-agent `.env` block (URL + key).
+      - Per-agent keys supported on Lloyd's side (`config.SPECIALISTS.keys`,
+        `delegate.js`); `.env.example` documents all vars. `bash -n` + `node --check`
+        clean; suite 44/44 green.
+      - **BLOCKING caveat (in the README):** the runner's memory/decision log write
+        local JSON; on a Consumption Function that's ephemeral + unscoped. Remote mode
+        is verified for *stateless* reasoning now; the Tables-backed store (next item)
+        must land before remote specialists have persistent recall. Provisioning
+        already wires `COS_TABLE_ENDPOINT`/`COS_TABLE_NAME` + the scoped identity for it.
+- [ ] **NEXT — Move specialist stores from local JSON to Azure Tables** (data-tables
+      dep started). Per-specialist scope, co-located with each Function.
 - [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
       (edit machine-specific paths in `deploy/com.freyfam.cos.plist`), `pmset`/
       `caffeinate` for lid-closed always-on
 - [ ] Verify the read-only-domain guard + confirmation gate still gate every
-      outbound path after the split
+      outbound path after the split (specialists return text only; runner carries no
+      channel — invariant documented in `runner.js`)
 
 ## The Genet bar (concrete target)
 
@@ -402,7 +486,7 @@ expanded as it proves out). Each agent has a `soul.md` (persona) and a `decision
 | **Finn** | Finance | Read-only bank data, **isolated to a private Slack channel, no outbound** | ~ finance persona exists, **no tools**; our equivalent: SMS + "no money movement" guard |
 | **Cole** | Dev | Full-stack app build + **deploy to physical devices** (built a kids' TV app) | ~ dev persona exists, **no tools** |
 | **Sylvie** | Homeschool / creative | photo intake, image gen, printer, inventory | **replaced by → reseller** (`resale.md` exists, no tools) |
-| **Theo** | Content creator | content generation | **replaced by → chef** (Carmen): persona + meal/inventory tools DONE on the shared Azure tables |
+| **Theo** | Content creator | content generation | **replaced by → chef** (Carmine): persona + meal/inventory tools DONE on the shared Azure tables |
 | _(none)_ | — | — | **+ security** (Frank): persona + advisory tools DONE; real monitors TODO |
 
 **Roster (CONFIRMED 2026-06-18):** chief-of-staff, finance, dev, **reseller**,
@@ -420,7 +504,7 @@ it maps to the chef's food inventory and the reseller's stock.
 |----------|------|-------|
 | chief-of-staff | **Lloyd** | confirmed 2026-06-18 |
 | reseller (`resale`) | **Shey** | confirmed 2026-06-18 |
-| chef | **Carmen** | confirmed 2026-06-18 |
+| chef | **Carmine** | confirmed 2026-06-18 |
 | finance | **Patrick** | confirmed 2026-06-18 |
 | dev | **Steve** | confirmed 2026-06-18 |
 | security | **Frank** | confirmed 2026-06-18; persona `security.md` written |
@@ -439,15 +523,17 @@ only) so we match Genet's *security posture* without her hardware.
 - [ ] **Calendar / scheduling** (Claire) — extends D/heartbeat (`heartbeat.js:23`
       TODO) + a scheduling tool in F. This is the biggest missing chief-of-staff muscle.
 - [ ] **Photo / multimodal intake** — now its own first-class **workstream I**
-      (inbound MMS → image content blocks). Roster fit: Shey (item photos), Carmen
+      (inbound MMS → image content blocks). Roster fit: Shey (item photos), Carmine
       (groceries/receipts). See workstream I for the cross-repo plan.
 - [ ] **Image generation** (Sylvie) — a creative tool (Gemini or another provider).
       New tool module → wired in F.
 - [ ] **Printer access** (Sylvie) — local print tool (pairs with browser stream G).
-- [ ] **Per-agent `soul.md` + `decision.md`** — `soul.md` ≈ our `agents/*.md`
-      (rename/align concept); `decision.md` is the new decision-log in E.
-- [x] **Add the `chef` agent (Carmen)** — done 2026-06-18:
-      - [x] persona `src/agents/chef.md` (Kitchen & Meals — Carmen)
+- [~] **Per-agent `soul.md` + `decision.md`** — `decision.md` DONE (E, 2026-06-19):
+      `src/decisions.js` + per-agent `data/decisions/<agent>.md`, exposed as
+      `log_decision`/`list_decisions` on every specialist. `soul.md` ≈ our
+      `agents/*.md` (rename/align concept) — still TODO.
+- [x] **Add the `chef` agent (Carmine)** — done 2026-06-18:
+      - [x] persona `src/agents/chef.md` (Kitchen & Meals — Carmine)
       - [x] `"chef"` in the delegate enum + both triage enums, with guidance
       - [x] chef tools (F): view/plan/remove meals, kitchen inventory list/summary/
         expiring-soon, add/consume items + scoped memory. Data layer `src/meals.js`
@@ -455,7 +541,7 @@ only) so we match Genet's *security posture* without her hardware.
         Tables (mealPlans/inventory/inventoryEvents) — shared with the reseller's stock.
       - [x] heartbeat feeds items expiring within 2 days as signals -> routed to chef
       - NOTE: first shipped under key `carmen` (commit f36a2f8); realigned to key
-        `chef` (name stays Carmen) to match this tracker's role-key convention.
+        `chef` (name stays Carmine) to match this tracker's role-key convention.
 - [x] **Add the `security` agent (Frank)** — done 2026-06-18:
       - [x] persona `src/agents/security.md` (Frank)
       - [x] `"security"` in the delegate enum + both triage enums, with guidance

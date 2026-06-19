@@ -1,23 +1,14 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { agentLoop, systemBlocks } from "./claude.js";
-import { MODELS, modelForComplexity } from "./config.js";
+import { modelForComplexity } from "./config.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
+import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
 import { recentMailSignals, sendMail } from "./channels/graph.js";
-import { specialistTools } from "./agents/tools.js";
-
-const __dir = dirname(fileURLToPath(import.meta.url));
-const personaCache = new Map();
-async function persona(name) {
-  if (personaCache.has(name)) return personaCache.get(name);
-  const text = await readFile(join(__dir, "agents", `${name}.md`), "utf8");
-  personaCache.set(name, text);
-  return text;
-}
+import { persona } from "./persona.js";
+import { delegate } from "./delegate.js";
+import { readPage, runOrder } from "./channels/browser.js";
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -34,6 +25,28 @@ const tools = [
     name: "remember",
     description: "Save a durable fact or preference to the family's memory.",
     input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+  },
+  {
+    name: "log_decision",
+    description: "Record a final decision you reached, with a short why, to your durable decision log. Does not take any real-world action.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        decision: { type: "string" },
+        rationale: { type: "string" },
+        context: { type: "string" },
+      },
+      required: ["title", "decision"],
+    },
+  },
+  {
+    name: "list_decisions",
+    description: "List recent recorded decisions, newest first. Omit 'agent' for your own; pass a specialist key (finance, dev, resale, chef, security) to review what they decided.",
+    input_schema: {
+      type: "object",
+      properties: { agent: { type: "string", enum: ["chief-of-staff", "finance", "dev", "resale", "chef", "security"] } },
+    },
   },
   {
     name: "delegate",
@@ -56,23 +69,44 @@ const tools = [
       required: ["to", "subject", "body"],
     },
   },
+  {
+    name: "browse_page",
+    description:
+      "Read a public web page in the local headless browser and get back its title and visible text. Read-only: it never clicks, fills, or buys. Use it to check listings, prices, or availability.",
+    input_schema: {
+      type: "object",
+      properties: { url: { type: "string" }, maxChars: { type: "number" } },
+      required: ["url"],
+    },
+  },
+  {
+    name: "place_order",
+    description:
+      "Drive a checkout or purchase flow in the local headless browser. High-stakes: it spends money, so it always requires owner approval first. Give a clear summary of what is being bought and for how much, plus the ordered browser steps to reach and confirm checkout.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        summary: { type: "string", description: "What is being bought and for how much." },
+        steps: {
+          type: "array",
+          description: "Ordered actions: goto/click/fill/waitFor.",
+          items: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["goto", "click", "fill", "waitFor"] },
+              url: { type: "string" },
+              selector: { type: "string" },
+              value: { type: "string" },
+            },
+            required: ["action"],
+          },
+        },
+      },
+      required: ["url", "summary"],
+    },
+  },
 ];
-
-async function runSpecialist(agent, task) {
-  const p = await persona(agent);
-  const mems = await recall(task, 4, { agent });
-  const ctx = mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "";
-  const { tools: specTools, handlers: specHandlers } = specialistTools(agent);
-  const { text } = await agentLoop({
-    model: MODELS.standard,
-    system: systemBlocks(p, ctx),
-    messages: [{ role: "user", content: task }],
-    tools: specTools,
-    toolHandlers: specHandlers,
-    maxTurns: 6,
-  });
-  return text;
-}
 
 function toolHandlers() {
   return {
@@ -81,12 +115,31 @@ function toolHandlers() {
       await remember(text);
       return "saved";
     },
-    delegate: async ({ agent, task }) => runSpecialist(agent, task),
+    log_decision: async (input) => JSON.stringify(await logDecision("chief-of-staff", input)),
+    list_decisions: async ({ agent } = {}) => JSON.stringify(await listDecisions(agent || "chief-of-staff")),
+    delegate: async ({ agent, task }) => delegate({ agent, task }),
     send_email: async ({ to, subject, body }) => {
       const ok = await requestConfirmation(`Email to ${to}\nSubject: ${subject}\n${body.slice(0, 200)}`);
       if (!ok) return "Owner declined; email not sent.";
       await sendMail({ to, subject, body }); // guard inside blocks read-only domains
       return "Email sent.";
+    },
+    browse_page: async ({ url, maxChars }) => {
+      try {
+        return JSON.stringify(await readPage(url, { maxChars }));
+      } catch (e) {
+        return `Could not read page: ${e.message}`;
+      }
+    },
+    place_order: async ({ url, summary, steps }) => {
+      const ok = await requestConfirmation(`Place order via browser:\n${summary}\n${url}`);
+      if (!ok) return "Owner declined; no order placed.";
+      try {
+        const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
+        return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
+      } catch (e) {
+        return `Order flow failed: ${e.message}`;
+      }
     },
   };
 }

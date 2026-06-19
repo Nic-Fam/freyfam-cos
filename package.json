@@ -10,6 +10,7 @@
     "start": "node src/daemon.js",
     "dev": "node --watch src/daemon.js",
     "once": "node src/daemon.js --heartbeat-once",
+    "seed": "node data/seed.mjs",
     "test": "node --test"
   },
   "dependencies": {
@@ -20,5 +21,8 @@
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "dotenv": "^16.4.7",
     "twilio": "^5.4.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.0"
   }
 }

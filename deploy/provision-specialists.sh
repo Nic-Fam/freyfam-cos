@@ -70,9 +70,18 @@ for AGENT in $AGENTS; do
 
   # Grant THIS app's identity data access to ONLY its own table. This is the
   # isolation boundary: finance's identity cannot read chef's table.
+  # Use --assignee-object-id + principal-type to SKIP the AAD graph lookup that
+  # races a freshly created managed identity; retry briefly for replication lag.
   TABLE_SCOPE="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${DATA_STORAGE}/tableServices/default/tables/${TABLE}"
-  az role assignment create --assignee "$PRINCIPAL" \
-    --role "Storage Table Data Contributor" --scope "$TABLE_SCOPE" -o none
+  for attempt in 1 2 3 4 5 6; do
+    if az role assignment create --assignee-object-id "$PRINCIPAL" \
+         --assignee-principal-type ServicePrincipal \
+         --role "Storage Table Data Contributor" --scope "$TABLE_SCOPE" -o none 2>/dev/null; then
+      break
+    fi
+    echo "  role-assign attempt $attempt failed (identity replicating); retry in 10s"
+    sleep 10
+  done
   echo "  identity $PRINCIPAL scoped to $TABLE only"
 done
 
