@@ -6,28 +6,22 @@
 //
 // Stored as a small JSON file so it survives restarts with zero extra services.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createCollection } from "./stores/collection.js";
 
-const PATH = () => process.env.SAVED_SEARCHES_PATH || "./data/saved-searches.json";
-
-async function load() {
-  try {
-    return JSON.parse(await readFile(PATH(), "utf8"));
-  } catch {
-    return { items: [] };
-  }
-}
-async function save(db) {
-  await mkdir(dirname(PATH()), { recursive: true });
-  await writeFile(PATH(), JSON.stringify(db, null, 2));
-}
+// Storage is pluggable (src/stores/collection.js): local JSON by default, or the
+// resale specialist's own managed-identity Azure Table when COS_TABLE_* is set
+// (remote on a Flex Function). Same add/list/remove API either way, so callers
+// and the resale tools are unchanged.
+const col = () =>
+  createCollection({
+    file: process.env.SAVED_SEARCHES_PATH || "./data/saved-searches.json",
+    partition: "savedsearch",
+  });
 
 /** @param {{label?:string, query:string, maxPrice?:number|null, sites?:string[]}} input */
 export async function addSavedSearch({ label, query, maxPrice = null, sites = [] } = {}) {
   if (!query || !String(query).trim()) throw new Error("query is required");
-  const db = await load();
   const item = {
     id: randomUUID().slice(0, 8),
     label: label || query,
@@ -36,20 +30,15 @@ export async function addSavedSearch({ label, query, maxPrice = null, sites = []
     sites: Array.isArray(sites) ? sites : [],
     createdAt: new Date().toISOString(),
   };
-  db.items.push(item);
-  await save(db);
+  await col().add(item);
   return item;
 }
 
 export async function listSavedSearches() {
-  return (await load()).items;
+  return col().list();
 }
 
 /** @returns {boolean} whether an item was actually removed */
 export async function removeSavedSearch(id) {
-  const db = await load();
-  const before = db.items.length;
-  db.items = db.items.filter((i) => i.id !== id);
-  await save(db);
-  return db.items.length < before;
+  return col().remove(id);
 }
