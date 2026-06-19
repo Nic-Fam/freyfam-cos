@@ -3,15 +3,23 @@
 Context for Claude Code. Read this first. This is a persistent, local-first
 household agent (OpenClaw-style) that runs as a daemon on Nic's MacBook. It is the
 "after Claw" evolution of the earlier Azure-Functions Frey Family Assistant: the
-brain and orchestration now live locally; Azure is just a durable front door.
+chief-of-staff brain and orchestration live locally; Azure is the durable front
+door and (target topology) the isolated home for the specialist agents. See the
+"Topology" note below and TRACKER.md for the confirmed deployment plan.
 
 ## What this is
 
-A single always-on Node daemon on the MacBook acting as the family **chief of
-staff**. It pulls inbound messages from an Azure queue, triages them cheaply, routes
+An always-on Node daemon on the MacBook acting as the family **chief of staff**
+(Lloyd). It pulls inbound messages from an Azure queue, triages them cheaply, routes
 to the right specialist at the right model tier, and replies. A heartbeat makes it
-proactive. Specialists (finance, dev, resale) are in-process personas the chief
-delegates to, not separate deployments.
+proactive. The five specialists are **finance (Patrick), dev (Steve), resale
+(Shey), chef (Carmen), and security (Frank)**.
+
+**Today** the specialists are in-process personas the chief delegates to (one
+process). **Target (CONFIRMED, see Topology below):** Lloyd stays local while the
+specialists run as isolated, serverless, scale-to-zero deployments in the Azure
+tenant. The `delegate` tool is the seam between the two: its `{agent, task} -> text`
+signature stays stable, so only its body changes when specialists move to Azure.
 
 ## Architecture
 
@@ -35,11 +43,35 @@ delegates to, not separate deployments.
      |     |-- memory.js ... local vector brain (JSON now; swap to sqlite-vec later)
      |     |-- confirm.js .. human-in-the-loop approval over SMS
      |     |-- guards.js ... blocks outbound to read-only work domains
-     |     |-- agents/*.md . persona files (chief-of-staff, finance, dev, resale)
+     |     |-- agents/*.md . persona files (chief-of-staff, finance, dev, resale, chef, security)
      |     `-- channels/ ... twilio.js (SMS out), graph.js (email read/send)
    browser automation (Playwright) -> runs LOCALLY on the Mac (TODO, see plan)
   ===================================================
 ```
+
+## Topology: current vs target (CONFIRMED 2026-06-19)
+
+The diagram above is the **current** dev shape: one process, specialists in-process.
+The **confirmed target** is a hybrid that keeps the trust-critical pieces local and
+isolates the specialists:
+
+- **Lloyd (chief of staff) runs locally** on a dedicated always-on Mac. He keeps the
+  front door, inbound triage, the confirmation gate, ALL outbound channels
+  (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
+- **The five specialists run in the Azure tenant** on serverless, scale-to-zero
+  compute (Functions Consumption or Container Apps, min-replica-0). **No always-on
+  per-agent computing.** Isolation comes from a **separate managed identity + Table
+  Storage scope per specialist**, not from warm compute, so one specialist cannot
+  read another's data or reach Lloyd's outbound channels.
+- **Outbound + confirmation always stay on Lloyd.** Specialists surface actions; the
+  local confirmation gate and guard enforce the hard constraints regardless of where
+  compute runs. This preserves the read-only-domain guarantee after the split.
+- Cost: ~$55-70/mo all-in (+$5-10 over the in-process design); Anthropic tokens, the
+  dominant line, are unchanged. Full breakdown and the migration checklist in TRACKER.md.
+
+Build specialist logic **transport-agnostic** (pure functions + a store) so the move
+to Azure is a body swap of `delegate`, not a rewrite. Open question (resolve before
+the split): where memory lives once specialists are remote.
 
 ## HARD CONSTRAINTS (do not regress these)
 
