@@ -444,8 +444,22 @@ first, verify locally, then provision**.
       specialist's own managed identity. `recall`/`remember` + `logDecision`/
       `listDecisions` interfaces stay stable, so it's a store swap inside the runner,
       not a caller change. (See CLAUDE.md Topology.)
-- [~] **Stand up specialist compute in Azure — provisioning kit DRAFTED (2026-06-19),
-      awaiting creds.** Ready to run the moment `az login` + `ANTHROPIC_API_KEY` exist:
+- [x] **Specialist compute LIVE on Flex Consumption (2026-06-19).** finance / resale /
+      chef / security each run as their own Flex Consumption Function (Running),
+      system-assigned identity scoped to their own `brain<agent>` table, deployed via
+      `--build remote`. The full remote path is VERIFIED: `delegate` → HTTPS + per-agent
+      function key → live Flex Function → `runner.js` → persona + Claude → text. finance
+      even exercised its `analyze_transactions` tool remotely (caught a duplicate charge).
+      Hard-won lessons (all in the scripts/README now): classic Linux Consumption hosts
+      would not start in this sub/region (503 everywhere) → use **Flex**; Flex needs
+      **`--build remote`** explicitly (its default deploy skipped Oryx → empty function
+      list); `EnableWorkerIndexing` required for the v4 Node model; role assignment via
+      `--assignee-object-id` to dodge the AAD replication race. **dev intentionally NOT on
+      Azure** — it stays in-process/local (Chromebook host = later milestone) because its
+      build/deploy/device work needs a stateful, tool-rich box, not scale-to-zero serverless.
+      CUTOVER: only **finance** is safe to flip remote now (stateless); resale/chef/security
+      stay `local` until their domain stores move onto the managed-identity Table path.
+- (kit, for reference) provisioning + publish scripts under `deploy/`:
       - `deploy/specialists/app/specialist.mjs` — Function handler wrapping
         `runner.js`; `authLevel:function`, `COS_AGENT` pin, returns `{text}` only.
       - `deploy/specialists/{host.json,package.json,README.md}` — Functions v4 host +
