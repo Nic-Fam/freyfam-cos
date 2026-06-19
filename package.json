@@ -11,6 +11,7 @@
     "dev": "node --watch src/daemon.js",
     "once": "node src/daemon.js --heartbeat-once",
     "seed": "node data/seed.mjs",
+    "specialist": "node deploy/specialists/local-server.mjs",
     "test": "node --test"
   },
   "dependencies": {

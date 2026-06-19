@@ -18,7 +18,11 @@ LOCATION=${LOCATION:-eastus}
 RG=${RG:-freyfam-cos-specialists}
 APP_PREFIX=${APP_PREFIX:-freyfam-cos}
 NODE_VERSION=${NODE_VERSION:-22}                 # verified on Flex Consumption; 20 is EOL
-AGENTS=${AGENTS:-finance dev resale chef security}
+# Azure-hosted specialists ONLY. Per the confirmed topology (see CLAUDE.md):
+# Lloyd + security (Frank) run on Mac minis and dev (Steve) on a local MacBook,
+# so they are NOT provisioned in Azure - they run via deploy/specialists/local-server.mjs
+# on that hardware. Override AGENTS to add/remove apps.
+AGENTS=${AGENTS:-finance resale chef}
 # Storage account name: globally unique, 3-24 chars, lowercase alnum only.
 DATA_STORAGE=${DATA_STORAGE:-freyfamcosdata$(echo $RANDOM)}
 : "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY (the inference key) before running}"

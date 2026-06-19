@@ -55,28 +55,41 @@ so cutting over is flipping the flag once the Functions are stood up, not a rewr
   ===================================================
 ```
 
-## Topology: current vs target (CONFIRMED 2026-06-19)
+## Topology: hybrid 3-tier (CONFIRMED 2026-06-19)
 
-The diagram above is the **current** dev shape: one process, specialists in-process.
-The **confirmed target** is a hybrid that keeps the trust-critical pieces local and
-isolates the specialists:
+The ASCII diagram is the original single-process dev shape. The confirmed running
+topology is a hybrid across **three tiers**, split so trust-critical and
+home-network-bound work stays on hardware Nic controls and the rest scales to zero
+in Azure:
 
-- **Lloyd (chief of staff) runs locally** on a dedicated always-on Mac. He keeps the
-  front door, inbound triage, the confirmation gate, ALL outbound channels
-  (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
-- **The five specialists run in the Azure tenant** on serverless, scale-to-zero
-  compute (Functions Consumption or Container Apps, min-replica-0). **No always-on
-  per-agent computing.** Isolation comes from a **separate managed identity + Table
-  Storage scope per specialist**, not from warm compute, so one specialist cannot
-  read another's data or reach Lloyd's outbound channels.
-- **Outbound + confirmation always stay on Lloyd.** Specialists surface actions; the
-  local confirmation gate and guard enforce the hard constraints regardless of where
-  compute runs. This preserves the read-only-domain guarantee after the split.
-- Cost: ~$55-70/mo all-in (+$5-10 over the in-process design); Anthropic tokens, the
-  dominant line, are unchanged. Full breakdown and the migration checklist in TRACKER.md.
+- **Local Mac fleet (household LAN):**
+  - **Lloyd (chief of staff)** on a Mac mini. Keeps the front door, inbound triage,
+    the confirmation gate, ALL outbound channels (Twilio/Graph), the `guards.js`
+    read-only-domain check, and memory recall. He is the host, not a delegated
+    specialist.
+  - **Frank (security)** on a Mac mini — local so it can reach home-network/security
+    surfaces and keep that data on-premises.
+  - **Steve (dev)** on an old MacBook — local for code/device access.
+  - Frank and Steve run `deploy/specialists/local-server.mjs` (`npm run specialist`),
+    a plain HTTP harness that serves the SAME `{agent,task}->{text}` contract, key
+    auth, and agent pin as the Azure handler. Lloyd reaches them over the LAN.
+- **Azure tenant (serverless, scale-to-zero Flex Consumption):**
+  - **finance (Patrick), resale (Shey), chef (Carmine)** — one Function app each,
+    each with its OWN managed identity + Table Storage scope. No always-on compute.
+- **The seam is `delegate`** (`src/delegate.js`): it POSTs `{agent,task}` to
+  `cfg.endpoints[agent]`. An endpoint URL is just Azure vs LAN host — the transport
+  is identical. No URL set => that specialist runs in-process on Lloyd (graceful
+  fallback / interim before its Mac is online).
+- **Isolation** comes from per-specialist identity + scoped storage (Azure RBAC per
+  Table; per-agent function key on the LAN), NOT from warm compute.
+- **Outbound + confirmation always stay on Lloyd.** A specialist only RETURNS text;
+  it has no outbound channel and no confirmation power, wherever it runs. This
+  preserves the read-only-domain guarantee across all three tiers.
+- Cost: still ~$55-70/mo all-in; the local Macs add electricity, not cloud spend.
+  Full breakdown + migration checklist in TRACKER.md.
 
-Build specialist logic **transport-agnostic** (pure functions + a store) so the move
-to Azure is a flag flip on `delegate`, not a rewrite.
+Build specialist logic **transport-agnostic** (pure functions + a store) so where a
+specialist runs is a config choice, not a rewrite.
 
 **Memory location (RESOLVED 2026-06-19):** each remote specialist owns its **own
 Table-scoped store** under its **own managed identity** — recall/remember and the

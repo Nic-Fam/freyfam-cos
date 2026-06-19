@@ -16,7 +16,9 @@ set -euo pipefail
 
 RG=${RG:-freyfam-cos-specialists}
 APP_PREFIX=${APP_PREFIX:-freyfam-cos}
-AGENTS=${AGENTS:-finance dev resale chef security}
+# Azure-hosted specialists ONLY (see provision-specialists.sh). security (Frank)
+# and dev (Steve) run locally on Macs via deploy/specialists/local-server.mjs.
+AGENTS=${AGENTS:-finance resale chef}
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FUNC_SRC="$REPO_ROOT/deploy/specialists"

@@ -328,20 +328,33 @@ to one session.
 **Critical path to "it works at all":** A → (B + C) → D. Memory, specialists, and
 browser make it *good*; the path above makes it *live*.
 
-## Deployment target & topology (CONFIRMED 2026-06-18, later milestone)
+## Deployment target & topology (UPDATED 2026-06-19 → hybrid 3-tier)
 
-**Dev now:** everything on Nic's laptop (one process, specialists in-process — current code).
+**Dev:** everything in one process, specialists in-process (still the default when
+no endpoint is set — graceful fallback).
 
-**Permanent (later):** split execution across the boundary —
-- **Lloyd runs locally** on a dedicated always-on Mac. He keeps the front door:
-  queue consumer, inbound triage, the **confirmation gate**, **all outbound channels**
-  (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
-- **The five specialists run in the Azure tenant** (Patrick, Steve, Shey, Carmine,
-  Frank) on **serverless, scale-to-zero compute (CONFIRMED 2026-06-19) — no always-on
-  computing**. Lloyd's `delegate` tool calls out to them instead of running them
-  in-process. This is why the `@azure/data-tables` dependency showed up — specialist
-  state (saved-searches, proposals, meals, finance) moves to Azure Table Storage,
-  co-located with the specialists.
+**Confirmed running topology — three tiers:**
+- **Local Mac fleet (household LAN):**
+  - **Lloyd** (chief) on a Mac mini — front door, queue consumer, inbound triage,
+    **confirmation gate**, **all outbound channels**, `guards.js`, memory recall.
+  - **Frank (security)** on a Mac mini — local for home-network/security access +
+    keeping that data on-prem.
+  - **Steve (dev)** on an old MacBook — local for code/device access.
+  - Frank + Steve run `deploy/specialists/local-server.mjs` (`npm run specialist`):
+    a plain HTTP harness serving the SAME `{agent,task}->{text}` contract + key auth
+    + agent pin as the Azure handler. Lloyd reaches them over the LAN.
+- **Azure (serverless Flex Consumption, scale-to-zero):** **finance (Patrick),
+  resale (Shey), chef (Carmine)** — one Function app each, own managed identity +
+  Table scope. (finance verified end-to-end on Flex.)
+- **Seam:** `delegate` POSTs `{agent,task}` to `cfg.endpoints[agent]`; Azure vs LAN
+  is just the host. No URL → that specialist runs in-process on Lloyd.
+
+CHANGE 2026-06-19: Frank + Steve moved OUT of Azure to local Macs. Done in repo:
+`provision-`/`publish-specialists.sh` AGENTS default is now `finance resale chef`;
+local harness + `npm run specialist` added; `.env.example` documents per-tier URLs.
+- [ ] **Decommission any dev/security Azure apps** if a prior run provisioned them
+      (`freyfam-cos-dev`, `freyfam-cos-security`) — they should not exist in Azure now.
+- [ ] Set LAN URLs + keys for dev/security in Lloyd's `.env` once the Macs are online.
 
 ### Cost & isolation model (CONFIRMED 2026-06-19)
 
