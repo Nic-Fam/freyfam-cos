@@ -3,5 +3,6 @@ node_modules/
 data/*
 !data/seed.mjs
 !data/seed-notes.json
+!data/import-from-assistant.mjs
 *.log
 .DS_Store
