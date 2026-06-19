@@ -59,10 +59,10 @@ Last verified: 2026-06-19 (this session).
       Sonnet, and replied via Graph `sendMail` ("Re: your note" → Nic@Freyfam.com).
       Queue drained to 0 (consume + ack works). This exercises the full daemon-side
       loop; only the Twilio transport is unverified.
-- [~] **Live SMS round-trip — BLOCKED (external):** Twilio number not cleared for
-      traffic yet. Re-run once it is: text the number while the daemon runs, confirm
-      queue → SMS reply. The daemon-side path is already proven by the email test
-      above, so this is just the transport leg.
+- [x] **Live SMS round-trip verified (2026-06-19):** Twilio leg now clear. A real SMS
+      through the deployed Azure Function front door (workstream B cutover) landed in
+      `inbound-messages`, and the daemon pulled → triaged → replied. Full external
+      path (Twilio → Function → queue → daemon → reply) confirmed end-to-end.
 - [x] **`cos@freyfam.com` provisioned and live (2026-06-19).** Set as the mailbox's
       **primary address / UPN** (`assistant@` is the alias). Live `.env` flipped to
       `GRAPH_MAILBOX=cos@freyfam.com`; `config.js` default matches. Verified: Graph
@@ -71,7 +71,7 @@ Last verified: 2026-06-19 (this session).
 - Parallel-safe: yes once creds exist; this is the gate that lets other streams
   *verify* their work rather than just write it.
 
-### B. Front door (Azure Function)  `[~]`  — EXTERNAL REPO `~/freyfam-assistant`
+### B. Front door (Azure Function)  `[x]`  — EXTERNAL REPO `~/freyfam-assistant`
 
 Owns: the existing Azure Functions project (NOT in this repo). Branch
 `cos-front-door`.
@@ -86,9 +86,10 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
       over, flip back to roll back. No code change to switch.
 - [x] Wire contract pinned by `test/cos-queue.test.js` (encode → daemon decode
       round-trip + flag gate); 143/143 pass
-- [ ] **Cut over for real:** deploy the branch, set `COS_ENQUEUE=true` in the
-      Function App settings, and confirm a live SMS lands in the queue → daemon
-      reply (gated on workstream A being live)
+- [x] **Cut over (2026-06-19):** branch deployed, `COS_ENQUEUE=true` set in the
+      Function App. Live SMS confirmed landing in `inbound-messages` → daemon pulled,
+      triaged, and replied. Front door is now live end-to-end; roll back any time by
+      flipping `COS_ENQUEUE` back to OFF (no code change).
 - [ ] **Media gap (deferred):** the gate enqueues text only. MMS images, vCards,
       and forwarded-voicemail audio are dropped when COS_ENQUEUE is on — the
       payload has no media field. Needed for Sylvie/multimodal intake (see Genet
