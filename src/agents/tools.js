@@ -2,6 +2,7 @@
 // specialists an empty tool list, so they could talk but not act. This gives each
 // one a scoped, side-effect-light toolset:
 //   - every specialist: domain-scoped memory (recall/remember namespaced by agent)
+//                       + a per-agent decision log (log/list, the Genet decision.md)
 //   - finance: analyze_transactions (pure spending analysis; never moves money)
 //   - resale: saved-search registry (add/list/remove)
 //   - dev:     change-proposal log (propose/list; never deploys)
@@ -10,6 +11,7 @@
 // which wraps them in the confirmation gate. Specialists surface; they do not send.
 
 import { recall, remember } from "../memory.js";
+import { logDecision, listDecisions } from "../decisions.js";
 import { analyzeTransactions } from "../finance.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
@@ -39,10 +41,37 @@ function memoryHandlers(agent) {
   };
 }
 
+// Decision-log tools (the Genet "decision.md" pattern), scoped to the calling
+// agent. Separate from memory: this is the durable record of *final decisions*
+// the specialist made, for a human to audit later. Logging a decision takes no
+// real-world action - high-stakes effects still go through the chief's gate.
+function decisionTools() {
+  return [
+    {
+      name: "log_decision",
+      description: "Record a final decision you reached, with a short why, to your durable decision log. Does not take any real-world action.",
+      input_schema: obj({
+        title: { type: "string" },
+        decision: { type: "string" },
+        rationale: { type: "string" },
+        context: { type: "string" },
+      }, ["title", "decision"]),
+    },
+    { name: "list_decisions", description: "List your recent recorded decisions, newest first.", input_schema: obj({}) },
+  ];
+}
+function decisionHandlers(agent) {
+  return {
+    log_decision: async (input) => JSON.stringify(await logDecision(agent, input)),
+    list_decisions: async () => JSON.stringify(await listDecisions(agent)),
+  };
+}
+
 const REGISTRY = {
   finance: () => ({
     tools: [
       ...memoryTools(),
+      ...decisionTools(),
       {
         name: "analyze_transactions",
         description: "Summarize a list of transactions: totals by category, duplicate charges, and notable price jumps. Does not move money.",
@@ -59,6 +88,7 @@ const REGISTRY = {
     ],
     handlers: {
       ...memoryHandlers("finance"),
+      ...decisionHandlers("finance"),
       analyze_transactions: async ({ transactions }) => JSON.stringify(analyzeTransactions(transactions)),
     },
   }),
@@ -66,6 +96,7 @@ const REGISTRY = {
   resale: () => ({
     tools: [
       ...memoryTools(),
+      ...decisionTools(),
       {
         name: "add_saved_search",
         description: "Register a designer piece to hunt across resale sites.",
@@ -81,6 +112,7 @@ const REGISTRY = {
     ],
     handlers: {
       ...memoryHandlers("resale"),
+      ...decisionHandlers("resale"),
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
       list_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
@@ -90,6 +122,7 @@ const REGISTRY = {
   chef: () => ({
     tools: [
       ...memoryTools(),
+      ...decisionTools(),
       {
         name: "view_meal_plan",
         description: "Show planned meals between two dates (inclusive, YYYY-MM-DD).",
@@ -148,11 +181,12 @@ const REGISTRY = {
     ],
     handlers: {
       ...memoryHandlers("chef"),
+      ...decisionHandlers("chef"),
       view_meal_plan: async ({ startDate, endDate }) => {
         const meals = await getMealsInRange(startDate, endDate);
         return formatMealsContext(meals) || "No meals planned in that range.";
       },
-      plan_meal: async (input) => JSON.stringify(await saveMeal({ ...input, createdBy: "carmen" })),
+      plan_meal: async (input) => JSON.stringify(await saveMeal({ ...input, createdBy: "carmine" })),
       remove_meal: async ({ date, mealType }) => {
         await deleteMeal(date, mealType);
         return "removed";
@@ -160,9 +194,9 @@ const REGISTRY = {
       kitchen_inventory: async (filter) => JSON.stringify(await listActive(filter || {})),
       inventory_summary: async () => JSON.stringify(await summary()),
       expiring_soon: async ({ days } = {}) => JSON.stringify(await getExpiringSoon(days ?? 4)),
-      add_inventory_item: async (input) => JSON.stringify(await addItem({ ...input, addedBy: "carmen", source: "manual" })),
+      add_inventory_item: async (input) => JSON.stringify(await addItem({ ...input, addedBy: "carmine", source: "manual" })),
       consume_inventory_item: async ({ id, quantity }) => {
-        const r = await consume(id, { quantity, actor: "carmen" });
+        const r = await consume(id, { quantity, actor: "carmine" });
         return r ? JSON.stringify(r) : "item fully consumed and removed";
       },
     },
@@ -171,6 +205,7 @@ const REGISTRY = {
   security: () => ({
     tools: [
       ...memoryTools(),
+      ...decisionTools(),
       {
         name: "log_security_finding",
         description: "Record a security finding/advisory for a human to review. Read-only: does NOT take any control action (no arm/disarm, lock, or credential change).",
@@ -185,6 +220,7 @@ const REGISTRY = {
     ],
     handlers: {
       ...memoryHandlers("security"),
+      ...decisionHandlers("security"),
       log_security_finding: async (input) => JSON.stringify(await addFinding(input)),
       list_security_findings: async () => JSON.stringify(await listFindings()),
     },
@@ -193,6 +229,7 @@ const REGISTRY = {
   dev: () => ({
     tools: [
       ...memoryTools(),
+      ...decisionTools(),
       {
         name: "propose_change",
         description: "Record a change proposal (plan/diff) for a human to review and run. Does NOT deploy anything.",
@@ -206,6 +243,7 @@ const REGISTRY = {
     ],
     handlers: {
       ...memoryHandlers("dev"),
+      ...decisionHandlers("dev"),
       propose_change: async (input) => JSON.stringify(await addProposal(input)),
       list_proposals: async () => JSON.stringify(await listProposals()),
     },

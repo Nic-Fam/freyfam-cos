@@ -65,6 +65,41 @@ export const GRAPH = {
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------
+// Specialist transport (the delegate seam). `delegate` runs each specialist
+// either in-process ("local", today's default) or as an isolated Azure Function
+// ("remote"). The signature {agent, task} -> text is identical either way, so
+// flipping COS_SPECIALIST_MODE is the whole migration switch on Lloyd's side.
+//
+// Isolation in remote mode comes from each specialist being its OWN Function
+// with its own managed identity + Table scope (one endpoint per agent below),
+// NOT from keeping compute warm. Functions Consumption = scale-to-zero.
+//
+// HARD CONSTRAINT: specialists only return text; outbound + confirmation stay on
+// Lloyd. Remote mode does not change that - a remote specialist has no channel.
+// ---------------------------------------------------------------------------
+export const SPECIALISTS = {
+  mode: process.env.COS_SPECIALIST_MODE || "local",        // 'local' | 'remote'
+  functionKey: process.env.COS_SPECIALIST_KEY,             // fallback key if no per-agent key set
+  timeoutMs: Number(process.env.COS_SPECIALIST_TIMEOUT_MS || 30000), // cold start + run budget
+  endpoints: {
+    finance: process.env.COS_SPECIALIST_URL_FINANCE,
+    dev: process.env.COS_SPECIALIST_URL_DEV,
+    resale: process.env.COS_SPECIALIST_URL_RESALE,
+    chef: process.env.COS_SPECIALIST_URL_CHEF,
+    security: process.env.COS_SPECIALIST_URL_SECURITY,
+  },
+  // Each specialist Function has its OWN function key (isolation), so a leaked
+  // key only exposes one specialist. Falls back to functionKey if unset.
+  keys: {
+    finance: process.env.COS_SPECIALIST_KEY_FINANCE,
+    dev: process.env.COS_SPECIALIST_KEY_DEV,
+    resale: process.env.COS_SPECIALIST_KEY_RESALE,
+    chef: process.env.COS_SPECIALIST_KEY_CHEF,
+    security: process.env.COS_SPECIALIST_KEY_SECURITY,
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Cost watchdog. Reads month-to-date spend from the Anthropic Console (Admin
 // API) and Azure (Cost Management) on a throttled cadence and texts the owner
 // when a billing cycle crosses the threshold. All reads are plain API calls;
