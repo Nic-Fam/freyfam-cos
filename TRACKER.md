@@ -233,6 +233,36 @@ repo's `queue.js`/`orchestrator.js`.
 - Parallel-safe: yes once the contract field is pinned — front door and daemon sides
   can then proceed independently, same as B did.
 
+### J. Cost watchdog  `[~]`  — code done & green; needs creds + live verify
+
+Built 2026-06-19. Hourly, zero-model-token reads of month-to-date spend → SMS to
+`OWNER_PHONE` (via the guarded Twilio path) when a billing cycle crosses
+`COST_ALERT_USD` (default $100), re-alerting every `+COST_ALERT_STEP_USD` ($50) as
+it climbs. De-duped per tier per cycle in `data/cost-alerts.json`. Both meters
+no-op until their creds are set, so this is safe to ship dark.
+
+Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
+`deploy/azure-budget.sh`, `test/cost.test.js`.
+
+- [x] `src/cost.js`: Anthropic Admin `cost_report` + Azure Cost Management `query`
+      readers, tier/cycle logic, local de-dupe state. Wired into the heartbeat on
+      its own hourly cadence (`COST_CHECK_INTERVAL_MS`). Tests green.
+- [x] `deploy/azure-budget.sh`: independent Azure-side budget backstop (action
+      group + SMS at 80% / 100% / forecasted) that fires even when the Mac is off.
+- [ ] **LATER — provision creds (no code, just `.env`):** `ANTHROPIC_ADMIN_KEY`
+      (Console → Settings → Admin keys, org owner) and an Azure SP with the
+      **Cost Management Reader** role (`az ad sp create-for-rbac --role
+      "Cost Management Reader" --scopes /subscriptions/<id>`) → `AZURE_CLIENT_ID/
+      SECRET/TENANT_ID` + `AZURE_SUBSCRIPTION_ID`. Keys already scaffolded (blank)
+      in `.env`.
+- [ ] **LATER — live-verify the read → SMS path:** `COST_ALERT_USD=0.01 npm run once`
+      should text the owner within seconds; then revert. Flips this workstream to `[x]`.
+- [ ] **LATER (optional) — run the Azure budget backstop:** `bash deploy/azure-budget.sh`
+      (needs write RBAC, more than the read-only SP). Also set an Anthropic Console
+      monthly spend limit (Settings → Limits) as the hard-cap the daemon can't enforce.
+- Parallel-safe: yes — isolated except a one-line heartbeat call. Independent of all
+  other workstreams; only shares `.env` and `config.js` with the rest.
+
 ---
 
 ## Suggested parallel session plan
@@ -247,6 +277,7 @@ Run these as separate Claude Code sessions; they barely touch each other:
 | 4 | H: hardening | `queue.js`, `daemon.js`, `deploy/` | no |
 | 5 | C: Graph token | `graph.js`, config | yes (Graph) |
 | 6 | B: Azure Function | external repo | yes (Azure) |
+| 7 | J: cost watchdog verify | `.env` only | yes (Anthropic admin + Azure SP) |
 
 **Bottleneck (serialize):** D (proactive bug) and F (specialist tools) both edit
 `orchestrator.js`. Do D first (it's small and a real bug), then F. Or assign both
