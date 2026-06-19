@@ -21,7 +21,7 @@ Classify the incoming message and respond with ONLY a JSON object, no prose, no 
 
 Schema:
 {
-  "agent": "chief-of-staff" | "finance" | "dev" | "resale" | "carmen",
+  "agent": "chief-of-staff" | "finance" | "dev" | "resale" | "chef" | "security",
   "complexity": "trivial" | "standard" | "complex",
   "high_stakes": boolean,   // money movement, sending email/SMS on the user's behalf, purchases, irreversible actions
   "summary": string         // <= 12 words
@@ -31,8 +31,10 @@ Guidance:
 - "trivial": a fact lookup or one-line answer needing no tools.
 - "standard": normal multi-step help (most messages).
 - "complex": long-horizon, multi-tool, or ambiguous planning work.
-- "carmen": meal planning and kitchen inventory (what's for dinner, what's in the fridge,
+- "chef": meal planning and kitchen inventory (what's for dinner, what's in the fridge,
   what's expiring, logging groceries used). Note: actually BUYING groceries is high_stakes.
+- "security": home + IT security (suspicious logins, phishing, breaches, devices/updates,
+  alarms/cameras/locks). Note: any control action (arm/disarm, lock, password change) is high_stakes.
 - high_stakes is true whenever the request could spend money or send something outbound.`;
 
 export async function triageInbound(message) {
@@ -57,10 +59,11 @@ ANY of them need action or a heads-up to the family right now. Respond with ONLY
 Schema:
 {
   "actionable": boolean,
-  "items": [ { "what": string, "agent": "chief-of-staff"|"finance"|"dev"|"resale"|"carmen", "urgency": "now"|"today"|"fyi" } ]
+  "items": [ { "what": string, "agent": "chief-of-staff"|"finance"|"dev"|"resale"|"chef"|"security", "urgency": "now"|"today"|"fyi" } ]
 }
 
-Route expiring/expired kitchen items to "carmen" (urgency "fyi" unless it is a lot of food).
+Route expiring/expired kitchen items to "chef" (urgency "fyi" unless it is a lot of food).
+Route security-relevant signals (suspicious logins, breach/phishing notices, home-system alerts) to "security".
 
 Be conservative: routine newsletters, receipts already filed, and noise are NOT actionable.`;
 

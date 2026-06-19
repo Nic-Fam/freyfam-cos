@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { specialistTools } from "../src/agents/tools.js";
 
 test("each specialist exposes scoped memory tools, all with handlers + valid schemas", () => {
-  for (const agent of ["finance", "resale", "dev", "carmen"]) {
+  for (const agent of ["finance", "resale", "dev", "chef", "security"]) {
     const { tools, handlers } = specialistTools(agent);
     const names = tools.map((t) => t.name);
     assert.ok(names.includes("recall_memory"), `${agent} has recall_memory`);
@@ -22,9 +22,13 @@ test("domain tools are registered per specialist", () => {
     assert.ok(resale.includes(n), `resale has ${n}`);
   }
   assert.ok(specialistTools("dev").tools.some((t) => t.name === "propose_change"));
-  const carmen = specialistTools("carmen").tools.map((t) => t.name);
+  const chef = specialistTools("chef").tools.map((t) => t.name);
   for (const n of ["view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item"]) {
-    assert.ok(carmen.includes(n), `carmen has ${n}`);
+    assert.ok(chef.includes(n), `chef has ${n}`);
+  }
+  const security = specialistTools("security").tools.map((t) => t.name);
+  for (const n of ["log_security_finding", "list_security_findings"]) {
+    assert.ok(security.includes(n), `security has ${n}`);
   }
 });
 

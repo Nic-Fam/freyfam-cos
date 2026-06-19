@@ -17,6 +17,7 @@ import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
   listActive, summary, getExpiringSoon, addItem, consume,
 } from "../meals.js";
+import { addFinding, listFindings, SECURITY_SEVERITIES } from "../security.js";
 
 const obj = (properties, required = []) => ({ type: "object", properties, required });
 
@@ -86,7 +87,7 @@ const REGISTRY = {
     },
   }),
 
-  carmen: () => ({
+  chef: () => ({
     tools: [
       ...memoryTools(),
       {
@@ -146,7 +147,7 @@ const REGISTRY = {
       },
     ],
     handlers: {
-      ...memoryHandlers("carmen"),
+      ...memoryHandlers("chef"),
       view_meal_plan: async ({ startDate, endDate }) => {
         const meals = await getMealsInRange(startDate, endDate);
         return formatMealsContext(meals) || "No meals planned in that range.";
@@ -164,6 +165,28 @@ const REGISTRY = {
         const r = await consume(id, { quantity, actor: "carmen" });
         return r ? JSON.stringify(r) : "item fully consumed and removed";
       },
+    },
+  }),
+
+  security: () => ({
+    tools: [
+      ...memoryTools(),
+      {
+        name: "log_security_finding",
+        description: "Record a security finding/advisory for a human to review. Read-only: does NOT take any control action (no arm/disarm, lock, or credential change).",
+        input_schema: obj({
+          title: { type: "string" },
+          severity: { type: "string", enum: SECURITY_SEVERITIES },
+          summary: { type: "string" },
+          recommendation: { type: "string" },
+        }, ["title"]),
+      },
+      { name: "list_security_findings", description: "List recorded security findings.", input_schema: obj({}) },
+    ],
+    handlers: {
+      ...memoryHandlers("security"),
+      log_security_finding: async (input) => JSON.stringify(await addFinding(input)),
+      list_security_findings: async () => JSON.stringify(await listFindings()),
     },
   }),
 

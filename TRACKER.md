@@ -45,13 +45,28 @@ Owns: `.env`, local run only. No code changes expected.
 - Parallel-safe: yes once creds exist; this is the gate that lets other streams
   *verify* their work rather than just write it.
 
-### B. Front door (Azure Function)  `[ ]`  — EXTERNAL REPO
+### B. Front door (Azure Function)  `[~]`  — EXTERNAL REPO `~/freyfam-assistant`
 
-Owns: the existing Azure Functions project (NOT in this repo).
+Owns: the existing Azure Functions project (NOT in this repo). Branch
+`cos-front-door`.
 
-- [ ] Trim the SMS webhook to base64-enqueue `{from, body, channel, replyTo}` onto
-      `inbound-messages` and ack Twilio immediately
-- [ ] Same for the email handler
+- [x] Trim the SMS webhook to base64-enqueue `{from, body, channel, replyTo}` onto
+      `inbound-messages` and ack Twilio immediately — `src/cos-queue.js` +
+      gate in `src/functions/sms-handler.js` (runs after the unknown-sender drop,
+      so toll-free policy stays enforced at the edge)
+- [x] Same for the email handler — gate in `src/functions/email-handler.js`,
+      after fetch+mark-read (dedup); folds subject into body
+- [x] Feature-flagged `COS_ENQUEUE` (default OFF); flip the app setting to cut
+      over, flip back to roll back. No code change to switch.
+- [x] Wire contract pinned by `test/cos-queue.test.js` (encode → daemon decode
+      round-trip + flag gate); 143/143 pass
+- [ ] **Cut over for real:** deploy the branch, set `COS_ENQUEUE=true` in the
+      Function App settings, and confirm a live SMS lands in the queue → daemon
+      reply (gated on workstream A being live)
+- [ ] **Media gap (deferred):** the gate enqueues text only. MMS images, vCards,
+      and forwarded-voicemail audio are dropped when COS_ENQUEUE is on — the
+      payload has no media field. Needed for Sylvie/multimodal intake (see Genet
+      capability gaps); requires adding media URLs to the contract on both sides.
 - Parallel-safe: fully independent — different repo, different session, no overlap
   with this codebase. Only the queue *message shape* is the contract (see
   `queue.js:9-11`). Pin that shape and this can proceed in total isolation.
@@ -158,6 +173,57 @@ to one session.
 **Critical path to "it works at all":** A → (B + C) → D. Memory, specialists, and
 browser make it *good*; the path above makes it *live*.
 
+## Deployment target & topology (CONFIRMED 2026-06-18, later milestone)
+
+**Dev now:** everything on Nic's laptop (one process, specialists in-process — current code).
+
+**Permanent (later):** split execution across the boundary —
+- **Lloyd runs locally** on a dedicated always-on Mac. He keeps the front door:
+  queue consumer, inbound triage, the **confirmation gate**, **all outbound channels**
+  (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
+- **The five specialists run in the Azure tenant** (Patrick, Steve, Shey, Carmen,
+  Frank). Lloyd's `delegate` tool calls out to them instead of running them
+  in-process. This is why the `@azure/data-tables` dependency showed up — specialist
+  state (saved-searches, proposals, meals, finance) moves to Azure Table Storage,
+  co-located with the specialists.
+
+### This supersedes a CLAUDE.md statement — flag for the owner
+
+CLAUDE.md says specialists are "in-process personas the chief delegates to, **not
+separate deployments**." This decision changes that. **Do not silently edit the hard
+constraints** — confirm with Nic, then update CLAUDE.md's Architecture section so the
+constitution matches reality.
+
+### How to build NOW so the migration is cheap (guidance for in-flight work)
+
+- **Keep specialist logic transport-agnostic.** The finance analyzer, meal planner,
+  saved-search registry, proposal log etc. are pure functions + a store — that is
+  exactly right and ports to Azure unchanged. Avoid baking in any assumption that
+  `delegate` is an in-process call.
+- **`delegate` is the seam.** Today it calls `runSpecialist()` locally; later it
+  becomes an Azure invocation (Function / Container App / Durable). Keep its
+  signature (`{agent, task} -> text`) stable so only the body changes.
+- **Outbound + confirmation stay on Lloyd, always.** Specialists in Azure must never
+  send directly; they surface actions and Lloyd's local confirmation gate + guard
+  enforce the hard constraints. This keeps the read-only-domain guarantee intact
+  regardless of where compute runs.
+- **Decide where memory lives.** `memory.js` recall is currently local + agent-scoped.
+  If Azure specialists need their own recall, the store likely becomes shared/Azure-
+  hosted (Tables or a vector store). Open question — resolve before the Azure split.
+
+### Migration checklist (extends workstream H, deferred)
+
+- [ ] Confirm topology with Nic and update CLAUDE.md
+- [ ] Move specialist stores from local JSON to Azure Tables (data-tables dep started)
+- [ ] Stand up specialist compute in Azure (pick: Functions vs Container Apps)
+- [ ] Reimplement `delegate` to invoke Azure specialists; keep signature stable
+- [ ] Resolve memory location (local vs shared/Azure)
+- [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
+      (edit machine-specific paths in `deploy/com.freyfam.cos.plist`), `pmset`/
+      `caffeinate` for lid-closed always-on
+- [ ] Verify the read-only-domain guard + confirmation gate still gate every
+      outbound path after the split
+
 ## The Genet bar (concrete target)
 
 Source: Jesse Genet's "5 OpenClaw agents" setup (How I AI / The Cut, 2026). She
@@ -172,8 +238,8 @@ expanded as it proves out). Each agent has a `soul.md` (persona) and a `decision
 | **Finn** | Finance | Read-only bank data, **isolated to a private Slack channel, no outbound** | ~ finance persona exists, **no tools**; our equivalent: SMS + "no money movement" guard |
 | **Cole** | Dev | Full-stack app build + **deploy to physical devices** (built a kids' TV app) | ~ dev persona exists, **no tools** |
 | **Sylvie** | Homeschool / creative | photo intake, image gen, printer, inventory | **replaced by → reseller** (`resale.md` exists, no tools) |
-| **Theo** | Content creator | content generation | **replaced by → chef** (meal planning + food inventory; **new agent, no persona yet**) |
-| _(none)_ | — | — | **+ security** (home + IT security) — Frey-specific, no Genet analog |
+| **Theo** | Content creator | content generation | **replaced by → chef** (Carmen): persona + meal/inventory tools DONE on the shared Azure tables |
+| _(none)_ | — | — | **+ security** (Frank): persona + advisory tools DONE; real monitors TODO |
 
 **Roster (CONFIRMED 2026-06-18):** chief-of-staff, finance, dev, **reseller**,
 **chef**, **security**.
@@ -215,20 +281,26 @@ only) so we match Genet's *security posture* without her hardware.
 - [ ] **Printer access** (Sylvie) — local print tool (pairs with browser stream G).
 - [ ] **Per-agent `soul.md` + `decision.md`** — `soul.md` ≈ our `agents/*.md`
       (rename/align concept); `decision.md` is the new decision-log in E.
-- [ ] **Add the `chef` agent** — net new. Concrete code:
-      - new `src/agents/chef.md` persona (meal planning + food inventory)
-      - add `"chef"` to the delegate enum (`orchestrator.js:43`)
-      - add `"chef"` to both triage enums (`triage.js:25` inbound, `:57` heartbeat)
-      - chef tools in F: meal planner, food-inventory read/write (inventory model
-        is shared with the reseller's stock — see Sylvie note above)
-- [ ] **Add the `security` agent (Frank)** — persona `src/agents/security.md` already
-      written. Remaining wiring (deferred, same files as chef):
-      - add `"security"` to the delegate enum (`orchestrator.js:43`)
-      - add `"security"` to both triage enums (`triage.js:25` inbound, `:57` heartbeat)
-      - security tools in F: read-only signal monitors (auth/login events, breach
-        feeds, device/update status, home-system alerts); all control actions
-        (arm/disarm, lock, password/account changes) stay behind the confirmation gate
-      - heartbeat fit: security signals are a natural proactive feed — extend
-        `gatherSignals()` (`heartbeat.js:23`) alongside calendar deltas
+- [x] **Add the `chef` agent (Carmen)** — done 2026-06-18:
+      - [x] persona `src/agents/chef.md` (Kitchen & Meals — Carmen)
+      - [x] `"chef"` in the delegate enum + both triage enums, with guidance
+      - [x] chef tools (F): view/plan/remove meals, kitchen inventory list/summary/
+        expiring-soon, add/consume items + scoped memory. Data layer `src/meals.js`
+        is a faithful ESM port of the Azure-repo meal feature pointed at the SAME
+        Tables (mealPlans/inventory/inventoryEvents) — shared with the reseller's stock.
+      - [x] heartbeat feeds items expiring within 2 days as signals -> routed to chef
+      - NOTE: first shipped under key `carmen` (commit f36a2f8); realigned to key
+        `chef` (name stays Carmen) to match this tracker's role-key convention.
+- [x] **Add the `security` agent (Frank)** — done 2026-06-18:
+      - [x] persona `src/agents/security.md` (Frank)
+      - [x] `"security"` in the delegate enum + both triage enums, with guidance
+      - [x] security tools (F): scoped memory + `log_security_finding` /
+        `list_security_findings` (advisory log `src/security.js`). Frank flags;
+        humans act. All control actions (arm/disarm, lock, password/account changes)
+        stay behind the chief's confirmation gate.
+      - [ ] real read-only signal monitors (auth/login events, breach feeds, device/
+        update status, home-system alerts) — need external integrations; TODO
+      - [ ] heartbeat security feed via `gatherSignals()` (kitchen feed landed as the
+        pattern; security monitors still TODO)
 - [ ] **Progressive trust** — start specialists with minimal tools, widen over time.
       Bake into F by gating powerful tools behind config flags.

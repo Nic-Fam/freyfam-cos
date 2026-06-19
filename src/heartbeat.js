@@ -22,7 +22,7 @@ async function gatherSignals() {
     console.error("[heartbeat] mail signal fetch failed:", err.message);
   }
   try {
-    // Kitchen items expiring within 2 days (or already past) -> Carmen's beat.
+    // Kitchen items expiring within 2 days (or already past) -> the chef's beat (Carmen).
     for (const it of await getExpiringSoon(2)) {
       signals.push({ source: "kitchen", item: it.name, expiresAt: it.expiresAt, daysUntil: it.daysUntil });
     }
