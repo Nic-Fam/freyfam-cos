@@ -490,8 +490,35 @@ first, verify locally, then provision**.
         is verified for *stateless* reasoning now; the Tables-backed store (next item)
         must land before remote specialists have persistent recall. Provisioning
         already wires `COS_TABLE_ENDPOINT`/`COS_TABLE_NAME` + the scoped identity for it.
-- [ ] **NEXT — Move specialist stores from local JSON to Azure Tables** (data-tables
-      dep started). Per-specialist scope, co-located with each Function.
+- [~] **Move specialist stores onto the per-specialist MI Table path** (the pluggable
+      `src/stores/collection.js`: local JSON by default, the specialist's own
+      `brain<agent>` table when `COS_TABLE_*` is set):
+      - [x] `decisions.js` (done earlier this session)
+      - [x] **`saved-searches.js` (resale) — DONE + LIVE 2026-06-19.** Migrated to the
+        collection store (+ `remove()` on both backends). Verified end-to-end: a
+        `delegate` → remote resale Flex Function → `add_saved_search` wrote a row to
+        `brainresale` via the Function's managed identity (isolation intact, MI scoped
+        to that one table). **resale flipped remote** in the live `.env`. Gotcha logged:
+        the first failures were a RED HERRING — stale deployed code (pre-migration
+        `saved-searches.js`) hit `mkdir ./data` EACCES on the read-only Flex FS and the
+        agent narrated it as a "permission error"; RBAC/MI were fine all along. Lesson:
+        **redeploy after a store migration** before blaming Azure.
+      - [ ] `meals.js` (chef) — **DECISION NEEDED, not a mechanical migration.** meals is
+        a faithful port that SHARES the same Tables as the Azure-repo meal feature
+        (connection-string based, shared household data), so it can't move to an
+        isolated per-specialist MI table without breaking that sharing. Options: keep
+        chef LOCAL (works today); give the chef Function the shared-account connection
+        string (broader, account-level access — isolation tradeoff); or relocate the
+        meal tables (coordinated with the Azure repo). Until decided, **chef stays local.**
+      - [ ] `memory.js` — owned by the parallel recall workstream; still local JSON, so
+        remote specialists' `recall`/`remember` don't persist yet (decisions + saved
+        searches do). finance/resale work fine without it for now.
+- LOCAL specialists (Frank=security, Steve=dev) use `deploy/specialists/local-server.mjs`
+  (`npm run specialist`) — verified this session: same `{agent,task}->text` contract,
+  x-functions-key auth (401), agent pin (403), round-trip via `delegate`. **Steve →
+  Mac mini next week is plug-and-play**: run it with `COS_AGENT=dev` + a LAN key, set
+  `COS_SPECIALIST_URL_DEV`. NOTE: an orphaned Azure `freyfam-cos-security` app remains
+  from before the topology change (security is local now) — tear down when convenient.
 - [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
       (edit machine-specific paths in `deploy/com.freyfam.cos.plist`), `pmset`/
       `caffeinate` for lid-closed always-on
