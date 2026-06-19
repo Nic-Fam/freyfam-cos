@@ -63,11 +63,11 @@ Last verified: 2026-06-19 (this session).
       traffic yet. Re-run once it is: text the number while the daemon runs, confirm
       queue → SMS reply. The daemon-side path is already proven by the email test
       above, so this is just the transport leg.
-- [ ] **Provision `cos@freyfam.com`** as the primary CoS mailbox with `assistant@`
-      kept as an alias (M365), then set `GRAPH_MAILBOX=cos@freyfam.com` in the live
-      `.env`. Until provisioned, leave `.env` on `assistant@` (verified working
-      above); `config.js` default is now `cos@` but `.env` overrides it. See the
-      Identity & addressing decision in the topology section.
+- [x] **`cos@freyfam.com` provisioned and live (2026-06-19).** Set as the mailbox's
+      **primary address / UPN** (`assistant@` is the alias). Live `.env` flipped to
+      `GRAPH_MAILBOX=cos@freyfam.com`; `config.js` default matches. Verified: Graph
+      `recentMailSignals` resolves the new UPN and returned 5 messages. (Graph
+      addresses the mailbox by UPN, not by proxy alias, so primary-vs-alias mattered.)
 - Parallel-safe: yes once creds exist; this is the gate that lets other streams
   *verify* their work rather than just write it.
 
