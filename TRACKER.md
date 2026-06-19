@@ -173,12 +173,15 @@ expanded as it proves out). Each agent has a `soul.md` (persona) and a `decision
 | **Cole** | Dev | Full-stack app build + **deploy to physical devices** (built a kids' TV app) | ~ dev persona exists, **no tools** |
 | **Sylvie** | Homeschool / creative | photo intake, image gen, printer, inventory | **replaced by → reseller** (`resale.md` exists, no tools) |
 | **Theo** | Content creator | content generation | **replaced by → chef** (meal planning + food inventory; **new agent, no persona yet**) |
+| _(none)_ | — | — | **+ security** (home + IT security) — Frey-specific, no Genet analog |
 
-**Roster (CONFIRMED 2026-06-18):** chief-of-staff, finance, dev, **reseller**, **chef**.
+**Roster (CONFIRMED 2026-06-18):** chief-of-staff, finance, dev, **reseller**,
+**chef**, **security**.
 The Frey household swaps Genet's homeschool/creative + content agents for a
 **reseller** (already scaffolded as `resale`) and a **chef** (meal planning + food
-inventory — net new). Sylvie's *inventory* muscle is the relevant transferable
-capability: it maps to the chef's food inventory and the reseller's stock.
+inventory — net new), and adds a **security** agent (home + IT) that Genet's roster
+did not have. Sylvie's *inventory* muscle is the relevant transferable capability:
+it maps to the chef's food inventory and the reseller's stock.
 
 **Agent names (Genet-style):** keep the role *key* used for routing (`resale`,
 `chef`, …) but give each a name in its persona file, surfaced in copy.
@@ -190,6 +193,7 @@ capability: it maps to the chef's food inventory and the reseller's stock.
 | chef | **Carmen** | confirmed 2026-06-18 |
 | finance | **Patrick** | confirmed 2026-06-18 |
 | dev | **Steve** | confirmed 2026-06-18 |
+| security | **Frank** | confirmed 2026-06-18; persona `security.md` written |
 
 ### Architecture divergence (decide deliberately)
 
@@ -217,5 +221,14 @@ only) so we match Genet's *security posture* without her hardware.
       - add `"chef"` to both triage enums (`triage.js:25` inbound, `:57` heartbeat)
       - chef tools in F: meal planner, food-inventory read/write (inventory model
         is shared with the reseller's stock — see Sylvie note above)
+- [ ] **Add the `security` agent (Frank)** — persona `src/agents/security.md` already
+      written. Remaining wiring (deferred, same files as chef):
+      - add `"security"` to the delegate enum (`orchestrator.js:43`)
+      - add `"security"` to both triage enums (`triage.js:25` inbound, `:57` heartbeat)
+      - security tools in F: read-only signal monitors (auth/login events, breach
+        feeds, device/update status, home-system alerts); all control actions
+        (arm/disarm, lock, password/account changes) stay behind the confirmation gate
+      - heartbeat fit: security signals are a natural proactive feed — extend
+        `gatherSignals()` (`heartbeat.js:23`) alongside calendar deltas
 - [ ] **Progressive trust** — start specialists with minimal tools, widen over time.
       Bake into F by gating powerful tools behind config flags.
