@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps the Chief of Staff daemon running and restarts it if it exits.
+  Install:
+    1. Edit the two paths below to your checkout location and node binary.
+    2. cp deploy/com.freyfam.cos.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.freyfam.cos.plist
+  Logs land in the WorkingDirectory as cos.out.log / cos.err.log.
+
+  Also disable App Nap / sleep so it runs lid-closed on power:
+    sudo pmset -c sleep 0 disablesleep 1   (or run under `caffeinate -is npm start`)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.freyfam.cos</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nfrey2/.local/node-v22.14.0-darwin-x64/bin/node</string>
+        <string>/Users/nfrey2/freyfam-cos/src/daemon.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nfrey2/freyfam-cos</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nfrey2/freyfam-cos/cos.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nfrey2/freyfam-cos/cos.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,22 @@
+{
+  "name": "freyfam-cos",
+  "version": "0.1.0",
+  "description": "Frey Family Chief of Staff - persistent local agent daemon (OpenClaw-style) on the MacBook",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/daemon.js",
+    "dev": "node --watch src/daemon.js",
+    "once": "node src/daemon.js --heartbeat-once"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@azure/identity": "^4.5.0",
+    "@azure/storage-queue": "^12.25.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "dotenv": "^16.4.7",
+    "twilio": "^5.4.0"
+  }
+}
