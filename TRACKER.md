@@ -124,22 +124,23 @@ Owns: `src/channels/graph.js`, `src/config.js` (GRAPH block only).
 - NOTE: C is effectively complete as a side effect of the A verification. Promote the
   `[~]` heading to `[x]` once someone gives it a dedicated read.
 
-### D. Fix the proactive path bugs  `[!]`  — small, high value
+### D. Fix the proactive path bugs  `[x]`  — DONE 2026-06-19
 
 Owns: `src/heartbeat.js`, and a few lines of `src/orchestrator.js`.
 
-- [!] **Heartbeat results never reach the owner.** `heartbeat.js:38-43` escalates a
-      non-fyi item via `handleInbound({channel:"sms", from:"heartbeat", replyTo:undefined})`.
-      The orchestrator then does `sendSms(msg.replyTo || msg.from, text)` →
-      `sendSms("heartbeat", text)`, which throws (not a phone number). The comment
-      says "results go to owner via notifyOwner below" but there is no such call.
-      Fix: give the orchestrator a way to return text without sending (e.g. an
-      internal channel), and have the heartbeat `notifyOwner(result)` itself.
-- [ ] Heartbeat re-runs full inbound triage on its synthetic "Proactive task…"
-      string, double-paying the triage call. Minor cost leak; consider a direct
-      agent run instead of round-tripping through `handleInbound`.
-- Parallel-safe: touches `orchestrator.js` (the bottleneck) lightly — coordinate
-  with F. Best done by the same session as F, or first and fast.
+- [x] **Heartbeat results now reach the owner.** Root cause was the heartbeat
+      faking an inbound SMS (`from:"heartbeat"`), which made `handleInbound` call
+      `sendSms("heartbeat", text)` and throw. Fix: extracted `runChief(body, model)`
+      in `orchestrator.js` — runs the chief agent loop and RETURNS text without
+      sending. `handleInbound` now uses it then sends per channel (external behavior
+      unchanged); the heartbeat calls `runChief` directly and `notifyOwner(result)`.
+- [x] **No more double-triage.** The heartbeat no longer round-trips through
+      `handleInbound` (which re-ran `triageInbound`). It runs the chief directly at a
+      tier chosen from urgency (`now` → heavy, else standard), since `triageHeartbeat`
+      already judged the item. Removes the redundant triage call per escalation.
+- Verified: 29/29 tests green; `npm run once` runs clean. (Live escalation delivery
+  needs a genuinely actionable signal to exercise end-to-end, but the structural bug
+  — the throwing send — is gone.)
 
 ### E. Real memory  `[~]`  → `[ ]`
 

@@ -1,8 +1,8 @@
-import { HEARTBEAT_INTERVAL_MS, COST } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals } from "./channels/graph.js";
 import { getExpiringSoon } from "./meals.js";
-import { handleInbound } from "./orchestrator.js";
+import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { createLogger } from "./log.js";
@@ -64,13 +64,19 @@ export async function tick() {
       await notifyOwner(`FYI: ${item.what}`);
       continue;
     }
-    // Escalate to a real agent run by feeding it back through the orchestrator.
-    await handleInbound({
-      from: "heartbeat",
-      replyTo: undefined, // results go to owner via notifyOwner below
-      channel: "sms",
-      body: `Proactive task (${item.agent}, ${item.urgency}): ${item.what}`,
-    }).catch((e) => log.error("escalation failed", { reason: e.message }));
+    // Run the chief directly (triageHeartbeat already judged this, so no second
+    // triage) and deliver the result to the owner. Previously this faked an
+    // inbound SMS from "heartbeat", which threw in sendSms and dropped the result.
+    try {
+      const model = item.urgency === "now" ? MODELS.heavy : MODELS.standard;
+      const result = await runChief(
+        `Proactive task (${item.agent}, ${item.urgency}): ${item.what}`,
+        model
+      );
+      await notifyOwner(`Proactive (${item.agent}, ${item.urgency}): ${result}`);
+    } catch (e) {
+      log.error("escalation failed", { reason: e.message, item: item.what });
+    }
   }
 }
 

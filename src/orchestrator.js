@@ -96,6 +96,28 @@ function toolHandlers() {
  * the right agent at the right model tier, then reply over the same channel.
  * @param {{from:string, body:string, channel:"sms"|"email", replyTo?:string}} msg
  */
+/**
+ * Run the chief-of-staff agent loop on a piece of work and return its text.
+ * Pure compute: it does NOT send anything. Callers decide delivery (reply on the
+ * inbound channel, or notify the owner). Shared by inbound handling and the
+ * proactive heartbeat, so the heartbeat no longer fakes an inbound SMS to itself.
+ */
+export async function runChief(body, model) {
+  const p = await persona("chief-of-staff");
+  const mems = await recall(body, 4);
+  const volatile =
+    `Now: ${new Date().toISOString()}\n` +
+    (mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "");
+  const { text } = await agentLoop({
+    model,
+    system: systemBlocks(p, volatile),
+    messages: [{ role: "user", content: body }],
+    tools,
+    toolHandlers: toolHandlers(),
+  });
+  return text;
+}
+
 export async function handleInbound(msg) {
   // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
   if (tryResolveConfirmation(msg.body)) return;
@@ -105,19 +127,7 @@ export async function handleInbound(msg) {
   const model = modelForComplexity(t.complexity, t.high_stakes);
 
   // 2. Run the chief of staff (or answer trivially on Haiku).
-  const p = await persona("chief-of-staff");
-  const mems = await recall(msg.body, 4);
-  const volatile =
-    `Now: ${new Date().toISOString()}\n` +
-    (mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "");
-
-  const { text } = await agentLoop({
-    model,
-    system: systemBlocks(p, volatile),
-    messages: [{ role: "user", content: msg.body }],
-    tools,
-    toolHandlers: toolHandlers(),
-  });
+  const text = await runChief(msg.body, model);
 
   // 3. Reply on the channel it came in on.
   if (msg.channel === "sms") await sendSms(msg.replyTo || msg.from, text);
