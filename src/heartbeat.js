@@ -1,9 +1,13 @@
-import { HEARTBEAT_INTERVAL_MS } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals } from "./channels/graph.js";
 import { getExpiringSoon } from "./meals.js";
 import { handleInbound } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
+import { checkCostThresholds } from "./cost.js";
+import { createLogger } from "./log.js";
+
+const log = createLogger("heartbeat");
 
 // ===========================================================================
 // The heartbeat is what makes the assistant proactive instead of reactive.
@@ -19,7 +23,7 @@ async function gatherSignals() {
   try {
     signals.push(...(await recentMailSignals({ top: 15 })));
   } catch (err) {
-    console.error("[heartbeat] mail signal fetch failed:", err.message);
+    log.error("mail signal fetch failed", { reason: err.message });
   }
   try {
     // Kitchen items expiring within 2 days (or already past) -> the chef's beat (Carmen).
@@ -27,13 +31,30 @@ async function gatherSignals() {
       signals.push({ source: "kitchen", item: it.name, expiresAt: it.expiresAt, daysUntil: it.daysUntil });
     }
   } catch (err) {
-    console.error("[heartbeat] kitchen signal fetch failed:", err.message);
+    log.error("kitchen signal fetch failed", { reason: err.message });
   }
   // TODO (Claude Code): add calendar deltas, reminders, resale saved-search hits.
   return signals;
 }
 
+// Cost meters bill per cycle, not per minute, so we check them on their own
+// slower cadence (default hourly) rather than every heartbeat tick.
+let lastCostCheckAt = 0;
+
+async function maybeCheckCosts() {
+  const now = Date.now();
+  if (now - lastCostCheckAt < COST.checkIntervalMs) return;
+  lastCostCheckAt = now;
+  try {
+    await checkCostThresholds(new Date(), { notify: notifyOwner });
+  } catch (err) {
+    log.error("cost check failed", { reason: err.message });
+  }
+}
+
 export async function tick() {
+  await maybeCheckCosts();
+
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);
   if (!verdict.actionable) return;
@@ -49,12 +70,12 @@ export async function tick() {
       replyTo: undefined, // results go to owner via notifyOwner below
       channel: "sms",
       body: `Proactive task (${item.agent}, ${item.urgency}): ${item.what}`,
-    }).catch((e) => console.error("[heartbeat] escalation failed:", e.message));
+    }).catch((e) => log.error("escalation failed", { reason: e.message }));
   }
 }
 
 export function startHeartbeat() {
-  console.log(`[heartbeat] every ${Math.round(HEARTBEAT_INTERVAL_MS / 60000)} min`);
-  tick().catch((e) => console.error("[heartbeat] first tick:", e.message));
-  return setInterval(() => tick().catch((e) => console.error("[heartbeat]", e.message)), HEARTBEAT_INTERVAL_MS);
+  log.info("scheduled", { intervalMin: Math.round(HEARTBEAT_INTERVAL_MS / 60000) });
+  tick().catch((e) => log.error("first tick failed", { reason: e.message }));
+  return setInterval(() => tick().catch((e) => log.error("tick failed", { reason: e.message })), HEARTBEAT_INTERVAL_MS);
 }

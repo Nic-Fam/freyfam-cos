@@ -1,16 +1,18 @@
 import { startQueueConsumer, stopQueueConsumer } from "./queue.js";
 import { startHeartbeat, tick } from "./heartbeat.js";
+import { createLogger } from "./log.js";
 
+const log = createLogger("daemon");
 const once = process.argv.includes("--heartbeat-once");
 
 async function main() {
   if (once) {
-    console.log("[daemon] running a single heartbeat tick and exiting");
+    log.info("running a single heartbeat tick and exiting");
     await tick();
     process.exit(0);
   }
 
-  console.log("[daemon] Frey Family Chief of Staff starting");
+  log.info("Frey Family Chief of Staff starting");
   const hb = startHeartbeat();
 
   process.on("SIGINT", () => shutdown(hb));
@@ -20,13 +22,13 @@ async function main() {
 }
 
 function shutdown(hb) {
-  console.log("\n[daemon] shutting down");
+  log.info("shutting down");
   clearInterval(hb);
   stopQueueConsumer();
   setTimeout(() => process.exit(0), 500);
 }
 
 main().catch((err) => {
-  console.error("[daemon] fatal:", err);
+  log.error("fatal", { reason: err.message, stack: err.stack });
   process.exit(1);
 });

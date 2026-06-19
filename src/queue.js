@@ -1,6 +1,7 @@
 import { QueueClient } from "@azure/storage-queue";
 import { AZURE } from "./config.js";
 import { handleInbound } from "./orchestrator.js";
+import { createLogger } from "./log.js";
 
 // ===========================================================================
 // The Azure Function (public Twilio webhook) drops each inbound SMS/email onto
@@ -8,16 +9,42 @@ import { handleInbound } from "./orchestrator.js";
 // be publicly reachable. If the Mac reboots, messages wait safely in the queue.
 //
 // Expected message body (JSON): { from, body, channel: "sms"|"email", replyTo? }
+//
+// A failed message stays invisible only for the visibility timeout, then
+// reappears for another attempt. After MAX_DEQUEUE failed deliveries it is
+// "poison" -> we move it to the dead-letter queue and delete it from the main
+// queue so a single bad message can't cycle forever and starve the consumer.
 // ===========================================================================
 
+const log = createLogger("queue");
+
+const MAX_DEQUEUE = Number(process.env.MAX_DEQUEUE || 5);
+
 const queue = new QueueClient(AZURE.queueConnectionString, AZURE.inboundQueue);
+const deadLetter = new QueueClient(AZURE.queueConnectionString, AZURE.deadLetterQueue);
 
 let running = false;
+let dlqReady = false;
+
+async function deadLetterMessage(m, err) {
+  if (!dlqReady) {
+    await deadLetter.createIfNotExists();
+    dlqReady = true;
+  }
+  // Preserve the original (base64) body so the DLQ entry is replayable as-is.
+  await deadLetter.sendMessage(m.messageText);
+  await queue.deleteMessage(m.messageId, m.popReceipt);
+  log.error("dead-lettered poison message", {
+    deadLetterQueue: AZURE.deadLetterQueue,
+    dequeueCount: m.dequeueCount,
+    reason: err.message,
+  });
+}
 
 export async function startQueueConsumer() {
   await queue.createIfNotExists();
   running = true;
-  console.log(`[queue] consuming "${AZURE.inboundQueue}"`);
+  log.info("consuming", { queue: AZURE.inboundQueue, maxDequeue: MAX_DEQUEUE });
   let idleBackoff = 1000;
 
   while (running) {
@@ -28,7 +55,7 @@ export async function startQueueConsumer() {
         visibilityTimeout: 120, // hide while we process; reappears if we crash
       });
     } catch (err) {
-      console.error("[queue] receive failed:", err.message);
+      log.error("receive failed", { reason: err.message });
       await sleep(5000);
       continue;
     }
@@ -47,9 +74,21 @@ export async function startQueueConsumer() {
         await handleInbound(payload);
         await queue.deleteMessage(m.messageId, m.popReceipt); // ack only on success
       } catch (err) {
-        console.error("[queue] processing failed (will retry):", err.message);
-        // Leave it; visibility timeout returns it for another attempt.
-        // TODO (Claude Code): dead-letter after N dequeues using m.dequeueCount.
+        if (m.dequeueCount >= MAX_DEQUEUE) {
+          try {
+            await deadLetterMessage(m, err);
+          } catch (dlqErr) {
+            // Leave it on the main queue for another attempt rather than lose it.
+            log.error("dead-letter failed; leaving for retry", { reason: dlqErr.message });
+          }
+        } else {
+          // Leave it; visibility timeout returns it for another attempt.
+          log.warn("processing failed; will retry", {
+            reason: err.message,
+            dequeueCount: m.dequeueCount,
+            maxDequeue: MAX_DEQUEUE,
+          });
+        }
       }
     }
   }

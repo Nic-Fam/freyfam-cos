@@ -86,14 +86,22 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
       over, flip back to roll back. No code change to switch.
 - [x] Wire contract pinned by `test/cos-queue.test.js` (encode → daemon decode
       round-trip + flag gate); 143/143 pass
-- [x] **Cut over (2026-06-19):** branch deployed, `COS_ENQUEUE=true` set in the
-      Function App. Live SMS confirmed landing in `inbound-messages` → daemon pulled,
-      triaged, and replied. Front door is now live end-to-end; roll back any time by
-      flipping `COS_ENQUEUE` back to OFF (no code change).
-- [ ] **Media gap (deferred):** the gate enqueues text only. MMS images, vCards,
-      and forwarded-voicemail audio are dropped when COS_ENQUEUE is on — the
-      payload has no media field. Needed for Sylvie/multimodal intake (see Genet
-      capability gaps); requires adding media URLs to the contract on both sides.
+- [x] **Cut over (2026-06-19):** PR #1 merged to `main` → CI deployed (deployment
+      `cacaad52`, active); `COS_ENQUEUE=true` set on the Function App. Front door
+      and daemon share the same storage account (`freyfamassistant8a4f`) + queue
+      (`inbound-messages`), so the handoff is wired by construction. Verified live:
+      a front-door-format message enqueued → launchd daemon consumed → triaged →
+      replied via Graph `sendMail` → acked (queue drained to 0, no stderr errors).
+      Roll back any time by flipping `COS_ENQUEUE` back to OFF (no code change).
+- [ ] **SMS leg NOT yet confirmed (external block):** the cut-over verification ran
+      over the EMAIL/enqueue path, not SMS. The Twilio number still isn't cleared, so
+      SMS enqueues but replies fail at the Twilio send (same as the legacy path — no
+      regression). Re-verify the live SMS round-trip once the number clears.
+- [ ] **Media gap (deferred → tracked as workstream I):** the gate enqueues text
+      only. MMS images, vCards, and forwarded-voicemail audio are dropped when
+      COS_ENQUEUE is on (no media field in the payload). The front-door half of the
+      MMS work lives here; see **workstream I (Multimodal / MMS intake)** for the
+      full cross-repo plan and rationale.
 - Parallel-safe: fully independent — different repo, different session, no overlap
   with this codebase. Only the queue *message shape* is the contract (see
   `queue.js:9-11`). Pin that shape and this can proceed in total isolation.
@@ -174,16 +182,56 @@ Owns: new `src/channels/browser.js` (or `src/tools/browser.js`), `package.json` 
 - Parallel-safe: **yes** — almost all new files. Only `package.json` overlaps
   (additive dep). Integration into the tool list overlaps F's bottleneck.
 
-### H. Harden & operationalize  `[~]`
+### H. Harden & operationalize  `[x]`
 
-Owns: `src/queue.js`, `src/daemon.js`, `deploy/com.freyfam.cos.plist`, logging.
+Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.plist`.
 
-- [ ] Dead-letter after N dequeues using `m.dequeueCount` (`queue.js:52`)
-- [ ] Structured logging (replace ad-hoc `console.*`)
-- [ ] `pmset` / `caffeinate` so it runs lid-closed on power
-- [~] Install `deploy/com.freyfam.cos.plist` (edit paths first), `launchctl load`
+- [x] **Dead-letter after N dequeues (2026-06-19):** `queue.js` parks poison messages
+      (failed > `MAX_DEQUEUE`, default 5) on a dead-letter queue (`<inbound>-poison`,
+      derived in `config.js`) and deletes them from the main queue so one bad message
+      can't cycle forever. Original base64 body preserved for replay. Inspect the
+      `-poison` queue later with any Storage queue browser.
+- [x] **Structured logging (2026-06-19):** new `src/log.js` — dependency-free JSON-
+      line logger (`LOG_LEVEL` env; warn/error → stderr → `cos.err.log`). All 15
+      `console.*` sites across queue/daemon/heartbeat/cost migrated; `grep console.
+      src/` is clean. Verified live (`npm run once` emits structured lines). Tested
+      in `test/log.test.js` (format + stream routing + DLQ name). Suite 29/29 green.
+- [~] `pmset` / `caffeinate` so it runs lid-closed on power (2026-06-19):
+      `caffeinate -is` is now baked into the plist's ProgramArguments, so idle +
+      system sleep on AC are prevented for the daemon's lifetime (verified:
+      `pmset -g assertions` shows caffeinate pid holding both, on behalf of the
+      node daemon). REMAINING: true lid-CLOSED on power needs one sudo command the
+      daemon can't self-run — `sudo pmset -c disablesleep 1` (revert with `0`).
+- [x] Install `deploy/com.freyfam.cos.plist` (2026-06-19): copied to
+      `~/Library/LaunchAgents/`, `launchctl load -w`. Daemon runs under launchd
+      (`com.freyfam.cos`, RunAtLoad + KeepAlive), survives reboots and auto-restarts.
+      Logs: `cos.out.log` / `cos.err.log`. Plist paths already matched this machine.
 - Parallel-safe: mostly yes — `queue.js` and `deploy/` are isolated. Touches
   `daemon.js` lightly. Independent of E/F/G.
+
+### I. Multimodal / MMS intake  `[ ]`  — DO NOT DROP (deferred, cross-repo)
+
+Promoted from a buried bullet under B so it stays visible. Today the front door
+enqueues **text only**; inbound MMS images, vCards, and forwarded-voicemail audio
+are silently dropped (no media field in the queue contract). This is the path to
+photo intake, which the current roster actually wants:
+- **Shey (reseller):** snap a photo of an item → catalog / draft a listing.
+- **Carmen (chef):** photo of groceries or a receipt → update food inventory.
+(This replaces the old "Sylvie" framing in the Genet gaps below.)
+
+Owns (cross-repo): the queue *contract* + `~/freyfam-assistant` front door + this
+repo's `queue.js`/`orchestrator.js`.
+
+- [ ] Extend the queue message contract with a `media` field (Twilio `MediaUrlN` →
+      `[{url, contentType}]`). Update BOTH sides and the contract test.
+- [ ] Front door (B repo): include media URLs when `COS_ENQUEUE` is on.
+- [ ] Daemon: fetch the media (Twilio media URLs need auth + expire) and build
+      Claude image content blocks in `orchestrator.handleInbound`.
+- [ ] Route image-bearing messages to the right specialist (Shey/Carmen) via triage.
+- [ ] Keep the hard constraints: any resulting outbound still goes through Lloyd's
+      confirmation gate + `guards.js`.
+- Parallel-safe: yes once the contract field is pinned — front door and daemon sides
+  can then proceed independently, same as B did.
 
 ---
 
@@ -358,8 +406,9 @@ only) so we match Genet's *security posture* without her hardware.
 
 - [ ] **Calendar / scheduling** (Claire) — extends D/heartbeat (`heartbeat.js:23`
       TODO) + a scheduling tool in F. This is the biggest missing chief-of-staff muscle.
-- [ ] **Photo / multimodal intake** (Sylvie) — inbound MMS → image content blocks.
-      New: front door (B) must pass media URLs; orchestrator must build image blocks.
+- [ ] **Photo / multimodal intake** — now its own first-class **workstream I**
+      (inbound MMS → image content blocks). Roster fit: Shey (item photos), Carmen
+      (groceries/receipts). See workstream I for the cross-repo plan.
 - [ ] **Image generation** (Sylvie) — a creative tool (Gemini or another provider).
       New tool module → wired in F.
 - [ ] **Printer access** (Sylvie) — local print tool (pairs with browser stream G).

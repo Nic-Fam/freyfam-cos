@@ -37,6 +37,8 @@ signature stays stable, so only its body changes when specialists move to Azure.
    daemon.js
      |-- queue.js .......... pulls messages, acks on success
      |-- heartbeat.js ...... timer -> cheap signals -> Haiku triage -> escalate on hits
+     |     `-- cost.js ..... hourly: month-to-date spend (Anthropic Admin API + Azure
+     |                       Cost Mgmt, zero model tokens) -> SMS owner at $100/cycle
      |-- orchestrator.js ... chief of staff: triage -> tier -> agent loop -> reply
      |     |-- triage.js ... Haiku classifier (THE cost lever)
      |     |-- claude.js ... Anthropic wrapper: tiered models + prompt caching + tool loop

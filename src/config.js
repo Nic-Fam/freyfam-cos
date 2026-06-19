@@ -48,6 +48,11 @@ export const TWILIO = {
 export const AZURE = {
   queueConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   inboundQueue: process.env.INBOUND_QUEUE_NAME || "inbound-messages",
+  // Poison messages (failed > MAX_DEQUEUE times) are parked here so they stop
+  // cycling and can be inspected/replayed. Derived from the inbound name.
+  deadLetterQueue:
+    process.env.DEAD_LETTER_QUEUE_NAME ||
+    `${process.env.INBOUND_QUEUE_NAME || "inbound-messages"}-poison`,
 };
 
 export const GRAPH = {
@@ -58,3 +63,24 @@ export const GRAPH = {
 };
 
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+// ---------------------------------------------------------------------------
+// Cost watchdog. Reads month-to-date spend from the Anthropic Console (Admin
+// API) and Azure (Cost Management) on a throttled cadence and texts the owner
+// when a billing cycle crosses the threshold. All reads are plain API calls;
+// no model tokens. Leave creds unset to disable a given meter. See src/cost.js.
+// ---------------------------------------------------------------------------
+export const COST = {
+  thresholdUsd: Number(process.env.COST_ALERT_USD || 100),     // first alert
+  stepUsd: Number(process.env.COST_ALERT_STEP_USD || 50),      // re-alert every +$50 as it climbs
+  cycleDay: Number(process.env.COST_CYCLE_DAY || 1),           // day-of-month the billing cycle starts (UTC)
+  checkIntervalMs: Number(process.env.COST_CHECK_INTERVAL_MS || 60 * 60 * 1000), // hourly
+  statePath: process.env.COST_STATE_PATH || "./data/cost-alerts.json",
+  anthropicAdminKey: process.env.ANTHROPIC_ADMIN_KEY,          // sk-ant-admin... (NOT the inference key)
+  azure: {
+    tenantId: process.env.AZURE_TENANT_ID,
+    clientId: process.env.AZURE_CLIENT_ID,
+    clientSecret: process.env.AZURE_CLIENT_SECRET,
+    subscriptionId: process.env.AZURE_SUBSCRIPTION_ID,
+  },
+};

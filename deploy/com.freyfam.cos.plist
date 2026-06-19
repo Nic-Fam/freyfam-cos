@@ -8,8 +8,9 @@
     3. launchctl load ~/Library/LaunchAgents/com.freyfam.cos.plist
   Logs land in the WorkingDirectory as cos.out.log / cos.err.log.
 
-  Also disable App Nap / sleep so it runs lid-closed on power:
-    sudo pmset -c sleep 0 disablesleep 1   (or run under `caffeinate -is npm start`)
+  Idle/system sleep on AC is already handled: the daemon is launched under
+  `caffeinate -is` below. For lid-CLOSED operation on power, also run once (sudo):
+    sudo pmset -c disablesleep 1           (revert: sudo pmset -c disablesleep 0)
 -->
 <plist version="1.0">
 <dict>
@@ -17,7 +18,14 @@
     <string>com.freyfam.cos</string>
 
     <key>ProgramArguments</key>
+    <!-- Wrapped in `caffeinate -is` so the Mac will not idle- or system-sleep
+         (on AC power) while the daemon runs; the assertion is tied to the daemon's
+         lifetime, and KeepAlive restarts caffeinate (which re-asserts) if it dies.
+         For true lid-CLOSED operation on power you also need, one time, with sudo:
+           sudo pmset -c disablesleep 1   (revert: sudo pmset -c disablesleep 0) -->
     <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-is</string>
         <string>/Users/nfrey2/.local/node-v22.14.0-darwin-x64/bin/node</string>
         <string>/Users/nfrey2/freyfam-cos/src/daemon.js</string>
     </array>
