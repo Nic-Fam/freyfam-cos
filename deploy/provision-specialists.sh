@@ -17,7 +17,7 @@ set -euo pipefail
 LOCATION=${LOCATION:-eastus}
 RG=${RG:-freyfam-cos-specialists}
 APP_PREFIX=${APP_PREFIX:-freyfam-cos}
-NODE_VERSION=${NODE_VERSION:-24}                 # Azure requires 24 (Node 20 hit EOL 2026-04-30)
+NODE_VERSION=${NODE_VERSION:-22}                 # verified on Flex Consumption; 20 is EOL
 AGENTS=${AGENTS:-finance dev resale chef security}
 # Storage account name: globally unique, 3-24 chars, lowercase alnum only.
 DATA_STORAGE=${DATA_STORAGE:-freyfamcosdata$(echo $RANDOM)}
@@ -50,12 +50,16 @@ for AGENT in $AGENTS; do
   az storage table create --name "$TABLE" --account-name "$DATA_STORAGE" \
     --auth-mode login -o none
 
-  # Consumption plan = scale-to-zero. System-assigned identity per app.
+  # Flex Consumption = scale-to-zero with a healthy v4 host. (Classic Linux
+  # Consumption / --consumption-plan-location was tried first and its host would
+  # not start in this sub/region: every app 503'd, including an undeployed one.
+  # Flex fixed it. Flex is Linux-only and always Functions v4, so --os-type and
+  # --functions-version are implicit.) System-assigned identity per app.
   az functionapp create -n "$APP" -g "$RG" \
     --storage-account "$DATA_STORAGE" \
-    --consumption-plan-location "$LOCATION" \
-    --os-type Linux --runtime node --runtime-version "$NODE_VERSION" \
-    --functions-version 4 --assign-identity '[system]' -o none
+    --flexconsumption-location "$LOCATION" \
+    --runtime node --runtime-version "$NODE_VERSION" \
+    --assign-identity '[system]' -o none
 
   PRINCIPAL=$(az functionapp identity show -n "$APP" -g "$RG" --query principalId -o tsv)
   TABLE_ENDPOINT="https://${DATA_STORAGE}.table.core.windows.net"

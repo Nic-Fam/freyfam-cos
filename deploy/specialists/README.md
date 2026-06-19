@@ -6,6 +6,12 @@ transport-agnostic core Lloyd runs in-process — [`src/specialists/runner.js`](
 Lloyd reaches it through the `delegate` seam ([`src/delegate.js`](../../src/delegate.js));
 flipping `COS_SPECIALIST_MODE=remote` is the whole cutover on his side.
 
+**Status:** the end-to-end remote path is VERIFIED (2026-06-19) on **Flex
+Consumption** in eastus: Lloyd's `delegate` → HTTPS + function key → live Flex
+Function → `runner.js` → persona + Claude → text back (~4.4s incl. cold start).
+Use **Flex Consumption**, not classic Linux Consumption (whose host would not
+start in this subscription/region). Deploy with `--build remote` (see below).
+
 ## Files
 
 - `app/specialist.mjs` — HTTP handler. Validates `{agent, task}`, enforces the
