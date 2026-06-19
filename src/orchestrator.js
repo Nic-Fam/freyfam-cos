@@ -8,6 +8,7 @@ import { recall, remember } from "./memory.js";
 import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
 import { recentMailSignals, sendMail } from "./channels/graph.js";
+import { specialistTools } from "./agents/tools.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const personaCache = new Map();
@@ -59,15 +60,16 @@ const tools = [
 
 async function runSpecialist(agent, task) {
   const p = await persona(agent);
-  const mems = await recall(task, 4);
+  const mems = await recall(task, 4, { agent });
   const ctx = mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "";
+  const { tools: specTools, handlers: specHandlers } = specialistTools(agent);
   const { text } = await agentLoop({
     model: MODELS.standard,
     system: systemBlocks(p, ctx),
     messages: [{ role: "user", content: task }],
-    tools: [],            // give specialists their own scoped tools as you build them
-    toolHandlers: {},
-    maxTurns: 4,
+    tools: specTools,
+    toolHandlers: specHandlers,
+    maxTurns: 6,
   });
   return text;
 }

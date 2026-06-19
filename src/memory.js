@@ -45,11 +45,19 @@ export async function remember(text, meta = {}) {
   await save(db);
 }
 
-/** Return the top-k most relevant memories for a query string. */
-export async function recall(query, k = 5) {
+/**
+ * Return the top-k most relevant memories for a query string.
+ * Pass { agent } to scope recall to one specialist's memories plus unscoped
+ * (shared) facts, so finance memories don't surface for resale and vice versa.
+ * Omitting it (the chief of staff) searches everything.
+ */
+export async function recall(query, k = 5, { agent } = {}) {
   const db = await load();
   const q = embedHash(query);
-  return db.items
+  const pool = agent
+    ? db.items.filter((it) => !it.meta?.agent || it.meta.agent === agent)
+    : db.items;
+  return pool
     .map((it) => ({ ...it, score: cosine(q, it.embedding) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, k)

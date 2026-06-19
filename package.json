@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/daemon.js",
     "dev": "node --watch src/daemon.js",
-    "once": "node src/daemon.js --heartbeat-once"
+    "once": "node src/daemon.js --heartbeat-once",
+    "test": "node --test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
