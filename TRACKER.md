@@ -182,10 +182,35 @@ browser make it *good*; the path above makes it *live*.
   queue consumer, inbound triage, the **confirmation gate**, **all outbound channels**
   (Twilio/Graph), the `guards.js` read-only-domain check, and memory recall.
 - **The five specialists run in the Azure tenant** (Patrick, Steve, Shey, Carmen,
-  Frank). Lloyd's `delegate` tool calls out to them instead of running them
+  Frank) on **serverless, scale-to-zero compute (CONFIRMED 2026-06-19) — no always-on
+  computing**. Lloyd's `delegate` tool calls out to them instead of running them
   in-process. This is why the `@azure/data-tables` dependency showed up — specialist
   state (saved-searches, proposals, meals, finance) moves to Azure Table Storage,
   co-located with the specialists.
+
+### Cost & isolation model (CONFIRMED 2026-06-19)
+
+The dominant cost (Anthropic tokens, ~$40/mo) **does not change** — a specialist makes
+the same Claude calls wherever it runs. The hybrid only adds hosting + storage, and at
+household volume that is small.
+
+| Line | In-process (today) | **Hybrid serverless (chosen)** |
+|------|--------------------|-------------------------------|
+| Anthropic API | ~$40 | ~$40 |
+| Specialist compute | $0 | ~$0-5 (Functions/Container Apps scale-to-zero, mostly in free grants) |
+| Azure Tables | $0 | ~$0-1 |
+| Twilio | ~$10 | ~$10 |
+| Existing Function + Queue | ~$0-3 | ~$0-3 |
+| Mac power (Lloyd) | ~$3-5 | ~$3-5 |
+| **All-in** | **~$50-60** | **~$55-70 (+$5-10)** |
+
+**Isolation comes from separate identity + separate storage per specialist, NOT from
+keeping compute warm.** Each specialist = its own Function/Container App with its own
+**managed identity** and **Table Storage scope**, so Patrick cannot read Carmen's data
+or Lloyd's outbound channels, and a crash is contained — all while scaling to zero
+between the household's episodic delegations. Always-on dedicated compute per agent
+(the literal "one Mac Mini each") was **rejected**: ~$40-150/mo for no extra isolation
+at this traffic. Trade-off accepted: serverless cold starts add ~1-5s per delegation.
 
 ### This supersedes a CLAUDE.md statement — flag for the owner
 
@@ -215,7 +240,8 @@ constitution matches reality.
 
 - [ ] Confirm topology with Nic and update CLAUDE.md
 - [ ] Move specialist stores from local JSON to Azure Tables (data-tables dep started)
-- [ ] Stand up specialist compute in Azure (pick: Functions vs Container Apps)
+- [ ] Stand up specialist compute in Azure — **serverless scale-to-zero** (Functions
+      Consumption or Container Apps min-replica-0); one identity + Table scope per agent
 - [ ] Reimplement `delegate` to invoke Azure specialists; keep signature stable
 - [ ] Resolve memory location (local vs shared/Azure)
 - [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
