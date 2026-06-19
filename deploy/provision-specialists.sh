@@ -62,11 +62,15 @@ for AGENT in $AGENTS; do
 
   # App settings: pin the agent, hand over the inference key, point at the data
   # Table. The specialist reads the Table via its managed identity (no secret).
+  # EnableWorkerIndexing is REQUIRED for the v4 Node programming model: without
+  # it the host never discovers the code-defined function (publish reports
+  # "Error calling sync triggers" and the function list stays empty).
   az functionapp config appsettings set -n "$APP" -g "$RG" -o none --settings \
     COS_AGENT="$AGENT" \
     ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     COS_TABLE_ENDPOINT="$TABLE_ENDPOINT" \
-    COS_TABLE_NAME="$TABLE"
+    COS_TABLE_NAME="$TABLE" \
+    AzureWebJobsFeatureFlags="EnableWorkerIndexing"
 
   # Grant THIS app's identity data access to ONLY its own table. This is the
   # isolation boundary: finance's identity cannot read chef's table.

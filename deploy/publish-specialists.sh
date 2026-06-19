@@ -24,21 +24,24 @@ FUNC_SRC="$REPO_ROOT/deploy/specialists"
 command -v func >/dev/null || { echo "Azure Functions Core Tools (func) required: https://aka.ms/func-core-tools"; exit 1; }
 command -v az   >/dev/null || { echo "Azure CLI (az) required"; exit 1; }
 
-# --- assemble the bundle ---
+# --- assemble the bundle (NO local node_modules) ---
+# Ship source only and let Azure build node_modules on Linux (--build remote).
+# Shipping a macOS-built node_modules to a Linux Consumption host is the original
+# sin that crash-looped the host (503). Source comes from the committed branch so
+# a half-saved working tree can't leak into a deploy.
 BUILD=$(mktemp -d)
 trap 'rm -rf "$BUILD"' EXIT
 cp "$FUNC_SRC/host.json" "$FUNC_SRC/package.json" "$BUILD/"
 mkdir -p "$BUILD/app"
 cp "$FUNC_SRC/app/specialist.mjs" "$BUILD/app/"
-cp -R "$REPO_ROOT/src" "$BUILD/src"
-( cd "$BUILD" && npm install --omit=dev --no-audit --no-fund --silent )
-echo "bundle assembled ($BUILD)"
+git -C "$REPO_ROOT" archive HEAD src | tar -x -C "$BUILD"
+echo "bundle assembled, source-only ($BUILD)"
 
-# --- deploy the same bundle to each specialist app ---
+# --- deploy to each specialist app with a remote Linux build ---
 for AGENT in $AGENTS; do
   APP="${APP_PREFIX}-${AGENT}"
-  echo "=== publishing -> $APP ==="
-  ( cd "$BUILD" && func azure functionapp publish "$APP" --javascript )
+  echo "=== publishing -> $APP (remote build) ==="
+  ( cd "$BUILD" && func azure functionapp publish "$APP" --javascript --build remote )
 done
 
 # --- print the Lloyd-side .env block ---

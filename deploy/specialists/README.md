@@ -63,3 +63,23 @@ no caller changes. **Do this before relying on remote specialist memory.**
 Until then, treat remote mode as verified for *stateless* specialist reasoning
 (e.g. finance analysis on data passed in the task). Stateful specialists (chef
 inventory, resale saved-searches) should stay `local` until the Tables store is in.
+
+## Troubleshooting (Linux Consumption gotchas, learned the hard way)
+
+- **Never ship `node_modules` built on macOS.** Deploy source only and build on
+  Linux with `func ... publish --build remote` (publish-specialists.sh does this).
+  A macOS bundle crash-loops the host → `503` and then deploys can't even connect.
+- **`EnableWorkerIndexing` is required** for the v4 Node model or the host never
+  discovers the function (`Error calling sync triggers`, empty function list).
+  provision-specialists.sh sets it as an app setting.
+- **An undeployed Linux Consumption app returns `503` at its root** — that alone
+  is not an error; only worry once a deploy has succeeded and it still 503s.
+- **Do NOT set `WEBSITE_RUN_FROM_PACKAGE=0` / `SCM_DO_BUILD_DURING_DEPLOYMENT`**
+  on Linux Consumption — it only supports run-from-package; `func --build remote`
+  manages that setting for you.
+- **If all apps 503 (including a never-deployed one) and deploys fail to connect
+  with `503 Site Unavailable`,** the fault is platform-side (host not starting),
+  not the code. Check: storage health (`allowSharedKeyAccess`, network
+  `defaultAction`), the Consumption plan, region capacity, and subscription
+  quotas/Policy. Verified-good code can still be blocked here — keep specialists
+  `local` (the working default) until the hosting is sorted.
