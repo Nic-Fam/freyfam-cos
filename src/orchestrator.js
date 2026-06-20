@@ -5,7 +5,7 @@ import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
-import { recentMailSignals, sendMail, fetchAttachments } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
@@ -62,6 +62,29 @@ const tools = [
         task: { type: "string" },
       },
       required: ["agent", "task"],
+    },
+  },
+  {
+    name: "list_calendar",
+    description: "List upcoming events on the family calendar (read-only).",
+    input_schema: { type: "object", properties: { top: { type: "number" } } },
+  },
+  {
+    name: "create_calendar_event",
+    description:
+      "Create a calendar event and invite attendees. High-stakes (sends invites): requires owner approval. Apply the house rules above — e.g. for workday appointments include Nic's and Shelli's work emails as attendees; mark House Cleaning events showAs='free'. Times are ISO strings in the family's timezone.",
+    input_schema: {
+      type: "object",
+      properties: {
+        subject: { type: "string" },
+        start: { type: "string", description: "ISO start, e.g. 2026-06-25T14:00:00" },
+        end: { type: "string", description: "ISO end; defaults to start if omitted" },
+        attendees: { type: "array", items: { type: "string" }, description: "invitee email addresses" },
+        location: { type: "string" },
+        showAs: { type: "string", enum: ["free", "busy"] },
+        body: { type: "string" },
+      },
+      required: ["subject", "start"],
     },
   },
   {
@@ -162,6 +185,21 @@ function toolHandlers({ images, onDelegate } = {}) {
     // The schema stays {agent, task}; `images` come from context, not the model.
     // The wrapper also mirrors the handoff + result to the transport's observability.
     delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
+    list_calendar: async ({ top } = {}) => JSON.stringify(await listEvents({ top })),
+    create_calendar_event: async (input) => {
+      const who = (input.attendees || []).join(", ") || "(no invitees)";
+      const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
+      const ok = await requestConfirmation(
+        `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`
+      );
+      if (!ok) return "Owner declined; no event created.";
+      try {
+        const r = await createEvent(input);
+        return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
+      } catch (e) {
+        return `Could not create event: ${e.message}`;
+      }
+    },
     send_email: async ({ to, subject, body }) => {
       const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
       const ok = await requestConfirmation(`Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`);

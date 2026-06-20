@@ -2,6 +2,8 @@ import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { GRAPH } from "../config.js";
 
+const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
+
 // App-only auth (client credentials) against the assistant@freyfam.com mailbox.
 let _client;
 function graph() {
@@ -61,6 +63,60 @@ export async function fetchAttachments(messageId) {
       contentType: a.contentType,
       bytes: Buffer.from(a.contentBytes, "base64"),
     }));
+}
+
+// --- Calendar (workstream: close the scheduling gap / Genet's "Claire") --------
+// Events live on the cos@ mailbox calendar; family + (per house rules) work
+// addresses are invited. Needs Graph `Calendars.ReadWrite` application permission
+// + admin consent (NOT yet granted — Mail.Read/Send are). Creating an event sends
+// invites, so it's high-stakes: the create_calendar_event tool confirms first.
+
+function toGraphDateTime(v) {
+  if (v && typeof v === "object" && v.dateTime) return v; // already shaped
+  return { dateTime: String(v), timeZone: FAMILY_TZ };
+}
+
+/** Pure: build the Graph event body. Exported for tests. */
+export function buildEventPayload({ subject, start, end, attendees = [], location, body, showAs = "busy" }) {
+  if (!subject) throw new Error("subject is required");
+  if (!start) throw new Error("start is required");
+  const payload = {
+    subject,
+    start: toGraphDateTime(start),
+    end: toGraphDateTime(end || start),
+    showAs, // "free" for House Cleaning etc. (house rule), else "busy"
+    attendees: attendees.map((a) => ({
+      emailAddress: { address: typeof a === "string" ? a : a.address },
+      type: "required",
+    })),
+  };
+  if (location) payload.location = { displayName: location };
+  if (body) payload.body = { contentType: "Text", content: body };
+  return payload;
+}
+
+/** Upcoming events on the cos@ calendar (read-only). */
+export async function listEvents({ top = 20 } = {}) {
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/events`)
+    .select("subject,start,end,location,showAs,attendees")
+    .top(top)
+    .orderby("start/dateTime")
+    .get();
+  return (res.value || []).map((e) => ({
+    subject: e.subject,
+    start: e.start?.dateTime,
+    end: e.end?.dateTime,
+    location: e.location?.displayName,
+    showAs: e.showAs,
+    attendees: (e.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean),
+  }));
+}
+
+/** Create an event (sends invites to attendees). High-stakes: confirm upstream. */
+export async function createEvent(input) {
+  const res = await graph().api(`/users/${GRAPH.mailbox}/events`).post(buildEventPayload(input));
+  return { id: res.id, webLink: res.webLink, subject: res.subject };
 }
 
 /**
