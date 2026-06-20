@@ -263,7 +263,7 @@ Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.pli
 - Parallel-safe: mostly yes — `queue.js` and `deploy/` are isolated. Touches
   `daemon.js` lightly. Independent of E/F/G.
 
-### I. Multimodal / MMS intake  `[ ]`  — DO NOT DROP (deferred, cross-repo)
+### I. Multimodal / MMS intake  `[~]`  — daemon half DONE 2026-06-19; front door pending (cross-repo)
 
 Promoted from a buried bullet under B so it stays visible. Today the front door
 enqueues **text only**; inbound MMS images, vCards, and forwarded-voicemail audio
@@ -276,16 +276,29 @@ photo intake, which the current roster actually wants:
 Owns (cross-repo): the queue *contract* + `~/freyfam-assistant` front door + this
 repo's `queue.js`/`orchestrator.js`.
 
-- [ ] Extend the queue message contract with a `media` field (Twilio `MediaUrlN` →
-      `[{url, contentType}]`). Update BOTH sides and the contract test.
-- [ ] Front door (B repo): include media URLs when `COS_ENQUEUE` is on.
-- [ ] Daemon: fetch the media (Twilio media URLs need auth + expire) and build
-      Claude image content blocks in `orchestrator.handleInbound`.
-- [ ] Route image-bearing messages to the right specialist (Shey/Carmine) via triage.
-- [ ] Keep the hard constraints: any resulting outbound still goes through Lloyd's
-      confirmation gate + `guards.js`.
-- Parallel-safe: yes once the contract field is pinned — front door and daemon sides
-  can then proceed independently, same as B did.
+- [x] **Queue contract pinned (2026-06-19):** `media?: [{url, contentType}]` (Twilio
+      `MediaUrlN` + `MediaContentTypeN`). Payload is schemaless JSON so it flows through
+      `queue.js` untouched; documented in the `queue.js` header.
+- [x] **Daemon: fetch media + build Claude image blocks (2026-06-19).** `src/media.js`
+      `fetchInboundMedia()` (Twilio basic-auth, Claude-supported image types only, caps
+      count/size, skips audio/vCard/oversize non-fatally). `orchestrator.handleInbound`
+      builds multimodal `content` (caption + image blocks) when `msg.media` is present;
+      `runChief(body, model, {content})`. **Verified end-to-end**: real PNG →
+      `fetchInboundMedia` → `complete()` vision answered correctly. `test/media.test.js`
+      (5 tests) + suite 54/54.
+- [x] **Routing (2026-06-19):** triage gets an `[N photo(s) attached]` hint; the chief
+      persona now instructs Lloyd to read the photo and `delegate` to **resale** (Shey,
+      items) or **chef** (Carmine, groceries/receipts). NOTE: `delegate` still passes
+      TEXT only, so Lloyd describes what he sees to the specialist. Passing the image
+      THROUGH to a specialist would extend the delegate seam (Function handler + runner
+      + local-server) — a clean follow-up if specialists need the raw pixels.
+- [x] **Hard constraints kept:** specialists return text; all outbound still goes through
+      Lloyd's confirmation gate + `guards.js`. Media intake adds no outbound path.
+- [ ] **Front door (B repo, `~/freyfam-assistant`):** include media when `COS_ENQUEUE`
+      is on — map Twilio `MediaUrlN`/`MediaContentTypeN` → `media:[{url,contentType}]`
+      onto the queue payload. This is the only remaining piece; daemon side is ready.
+- Parallel-safe: yes — the contract is pinned, so the front-door change can land
+  independently (same as B did). Until it does, MMS still drops media at the edge.
 
 ### J. Cost watchdog  `[~]`  — code done & green; needs creds + live verify
 
