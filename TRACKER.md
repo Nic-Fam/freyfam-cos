@@ -294,11 +294,21 @@ repo's `queue.js`/`orchestrator.js`.
       + local-server) — a clean follow-up if specialists need the raw pixels.
 - [x] **Hard constraints kept:** specialists return text; all outbound still goes through
       Lloyd's confirmation gate + `guards.js`. Media intake adds no outbound path.
-- [ ] **Front door (B repo, `~/freyfam-assistant`):** include media when `COS_ENQUEUE`
-      is on — map Twilio `MediaUrlN`/`MediaContentTypeN` → `media:[{url,contentType}]`
-      onto the queue payload. This is the only remaining piece; daemon side is ready.
-- Parallel-safe: yes — the contract is pinned, so the front-door change can land
-  independently (same as B did). Until it does, MMS still drops media at the edge.
+- [x] **Front door (B repo, `~/freyfam-assistant`) — DONE 2026-06-19** (branch
+      `cos-front-door`, commit `4d41630`): `mediaFromForm(formData)` maps Twilio
+      `MediaUrlN`/`MediaContentTypeN` → `media:[{url,contentType}]` and the COS_ENQUEUE
+      gate includes it. Forwards raw Twilio URLs (daemon fetches with its own auth).
+      `test/cos-queue.test.js` 146 pass. **Pending merge→CI deploy** (like B's cutover).
+- [x] **Specialists see the photo too — DONE 2026-06-19** (`workstream-i-mms`, `f17c182`):
+      the inbound turn's image blocks ride along with `delegate` (tool schema stays
+      `{agent, task}`; images come from context) → `runSpecialist(agent, task, {images})`
+      builds multimodal content. Function handler + local-server parse `images`.
+      Verified image rides delegate → server → runner. So Shey/Carmine get the actual
+      picture, not just Lloyd's description.
+- **TO GO LIVE:** (1) merge `workstream-i-mms` → main; (2) **redeploy resale + chef
+      Functions** with the new runner (else they ignore forwarded images); (3) restart
+      the daemon (Lloyd-side intake + forwarding); (4) merge + CI-deploy the front door.
+- Parallel-safe: yes — contract pinned; front-door deploy lands independently.
 
 ### J. Cost watchdog  `[~]`  — code done & green; needs creds + live verify
 
