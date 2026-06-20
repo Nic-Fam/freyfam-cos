@@ -4,11 +4,26 @@ import { notifyOwner } from "./channels/twilio.js";
 // ===========================================================================
 // Human-in-the-loop gate. Any high-stakes action (sending mail/SMS on the
 // family's behalf, a purchase, anything irreversible) must pass through here.
-// The agent calls requestConfirmation(); the daemon texts the owner a summary;
-// the owner's "YES <code>" reply resolves the promise and the action proceeds.
+// requestConfirmation() texts the owner a summary + a code; the owner approves
+// from their phone ("YES <code>") OR, if Slack is wired, by tapping an
+// Approve/Deny button. Either path resolves the same pending code.
+//
+// Slack is added without an import cycle: slack.js calls registerApprovalNotifier()
+// to receive each request, and resolveByCode() to resolve a button tap. confirm.js
+// never imports slack.js.
 // ===========================================================================
 
 const pending = new Map(); // code -> { resolve, action, createdAt }
+const notifiers = new Set(); // extra approval channels (e.g. Slack) -> fn({code, action})
+
+/**
+ * Register an extra approval notifier, called IN ADDITION to the SMS path so you
+ * can approve from desk (Slack) or phone (SMS). Returns an unregister fn.
+ */
+export function registerApprovalNotifier(fn) {
+  notifiers.add(fn);
+  return () => notifiers.delete(fn);
+}
 
 /**
  * Ask the owner to approve an action. Returns a promise that resolves true/false.
@@ -19,6 +34,14 @@ export function requestConfirmation(actionDescription, { timeoutMs = 30 * 60 * 1
   notifyOwner(
     `Approval needed:\n${actionDescription}\n\nReply "YES ${code}" to approve or "NO ${code}" to cancel.`
   );
+  for (const n of notifiers) {
+    // A broken notifier (e.g. Slack offline) must never block the SMS path.
+    try {
+      n({ code, action: actionDescription });
+    } catch {
+      /* ignore */
+    }
+  }
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pending.delete(code);
@@ -37,16 +60,22 @@ export function requestConfirmation(actionDescription, { timeoutMs = 30 * 60 * 1
 }
 
 /**
- * Inspect an inbound message; if it is a YES/NO <code> reply to a pending
+ * Resolve a pending approval by its code (used by the Slack button action and,
+ * underneath, the SMS parser). Returns true if a matching pending entry existed.
+ */
+export function resolveByCode(code, approved) {
+  const entry = pending.get(String(code || "").toUpperCase());
+  if (!entry) return false;
+  entry.resolve(Boolean(approved));
+  return true;
+}
+
+/**
+ * SMS path: if the message is a "YES <code>" / "NO <code>" reply to a pending
  * action, resolve it and return true (so the orchestrator skips normal routing).
  */
 export function tryResolveConfirmation(messageBody) {
   const m = /^\s*(yes|no)\s+([A-Za-z0-9]{4})\s*$/i.exec(messageBody || "");
   if (!m) return false;
-  const approved = m[1].toLowerCase() === "yes";
-  const code = m[2].toUpperCase();
-  const entry = pending.get(code);
-  if (!entry) return false;
-  entry.resolve(approved);
-  return true;
+  return resolveByCode(m[2], m[1].toLowerCase() === "yes");
 }

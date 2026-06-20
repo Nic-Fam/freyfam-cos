@@ -119,3 +119,19 @@ export const COST = {
     subscriptionId: process.env.AZURE_SUBSCRIPTION_ID,
   },
 };
+
+// ---------------------------------------------------------------------------
+// Slack (the "desk" channel, workstream K). Socket Mode = the Mac opens an
+// OUTBOUND websocket; no public endpoint, same pull-only property as the SMS
+// queue. Needs an app-level token (xapp-, connections:write) + a bot token
+// (xoxb-). Disabled until both are set, so the daemon runs fine without Slack.
+// ---------------------------------------------------------------------------
+export const SLACK = {
+  appToken: process.env.SLACK_APP_TOKEN,   // xapp-... (Socket Mode)
+  botToken: process.env.SLACK_BOT_TOKEN,   // xoxb-...
+  // Where delegation handoffs + approval buttons are mirrored. Channel id or name.
+  commandChannel: process.env.SLACK_COMMAND_CHANNEL || "#command",
+  get enabled() {
+    return Boolean(this.appToken && this.botToken);
+  },
+};
