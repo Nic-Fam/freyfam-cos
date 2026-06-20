@@ -8,7 +8,12 @@ import { createLogger } from "./log.js";
 // this queue and returns immediately. The MacBook PULLS, so it never needs to
 // be publicly reachable. If the Mac reboots, messages wait safely in the queue.
 //
-// Expected message body (JSON): { from, body, channel: "sms"|"email", replyTo? }
+// Expected message body (JSON):
+//   { from, body, channel: "sms"|"email", replyTo?, media? }
+// media (optional, MMS): [{ url, contentType }] mapped from Twilio MediaUrlN +
+// MediaContentTypeN by the front door. The payload is schemaless JSON so media
+// flows straight through to handleInbound, which fetches images into Claude
+// vision blocks (see src/media.js). Front-door half lives in ~/freyfam-assistant.
 //
 // A failed message stays invisible only for the visibility timeout, then
 // reappears for another attempt. After MAX_DEQUEUE failed deliveries it is

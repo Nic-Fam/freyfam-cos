@@ -9,6 +9,7 @@ import { recentMailSignals, sendMail } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
+import { fetchInboundMedia } from "./media.js";
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -155,16 +156,17 @@ function toolHandlers() {
  * inbound channel, or notify the owner). Shared by inbound handling and the
  * proactive heartbeat, so the heartbeat no longer fakes an inbound SMS to itself.
  */
-export async function runChief(body, model) {
+export async function runChief(body, model, { content } = {}) {
   const p = await persona("chief-of-staff");
-  const mems = await recall(body, 4);
+  const mems = await recall(body, 4); // recall always keys off the text
   const volatile =
     `Now: ${new Date().toISOString()}\n` +
     (mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "");
   const { text } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
-    messages: [{ role: "user", content: body }],
+    // `content` (text + image blocks) wins when an MMS carried photos; else plain text.
+    messages: [{ role: "user", content: content || body }],
     tools,
     toolHandlers: toolHandlers(),
   });
@@ -175,14 +177,28 @@ export async function handleInbound(msg) {
   // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
   if (tryResolveConfirmation(msg.body)) return;
 
-  // 1. Cheap classification -> pick the cheapest sufficient model.
-  const t = await triageInbound(msg.body);
+  // 1. If the message carried photos (MMS), fetch them into Claude image blocks.
+  //    Lloyd is multimodal here: he can read a receipt / see an item and then
+  //    delegate to Carmine (groceries) or Shey (resale). Failures are non-fatal.
+  let content;
+  let triageText = msg.body || "";
+  if (Array.isArray(msg.media) && msg.media.length) {
+    const { imageBlocks } = await fetchInboundMedia(msg.media);
+    if (imageBlocks.length) {
+      content = [{ type: "text", text: msg.body?.trim() || "(photo attached, no caption)" }, ...imageBlocks];
+      triageText = `${msg.body || ""}\n[${imageBlocks.length} photo(s) attached]`.trim();
+    }
+  }
+
+  // 2. Cheap classification -> pick the cheapest sufficient model.
+  const t = await triageInbound(triageText);
   const model = modelForComplexity(t.complexity, t.high_stakes);
 
-  // 2. Run the chief of staff (or answer trivially on Haiku).
-  const text = await runChief(msg.body, model);
+  // 3. Run the chief of staff (or answer trivially on Haiku). recall keys off the
+  //    text; `content` carries the images when present.
+  const text = await runChief(msg.body || "(photo message)", model, { content });
 
-  // 3. Reply on the channel it came in on.
+  // 4. Reply on the channel it came in on.
   if (msg.channel === "sms") await sendSms(msg.replyTo || msg.from, text);
   else if (msg.channel === "email") {
     await sendMail({ to: msg.replyTo || msg.from, subject: "Re: your note", body: text });
