@@ -4,5 +4,6 @@ data/*
 !data/seed.mjs
 !data/seed-notes.json
 !data/import-from-assistant.mjs
+!data/house-rules.example.json
 *.log
 .DS_Store

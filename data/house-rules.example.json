@@ -1,0 +1,8 @@
+{
+  "_comment": "Always-on operating rules for the chief of staff (Lloyd), injected into every turn (see src/rules.js). Copy to house-rules.json (gitignored) and fill in your own. Lloyd has the current time in context, so time-conditional rules ('during the workday') work. Edit + restart the daemon to apply.",
+  "rules": [
+    "For appointments during the workday, add <person>'s work email and <spouse>'s work email as invitees.",
+    "For <kid>'s calendar appointments, do not auto-invite <spouse> unless <person> requests it.",
+    "House-hunt bookkeeping is sender-only; loop in both spouses only for tours, applications, or signing."
+  ]
+}

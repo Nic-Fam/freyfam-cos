@@ -11,6 +11,7 @@ import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments } from "./documents.js";
+import { getHouseRules, formatHouseRules } from "./rules.js";
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -200,9 +201,14 @@ function toolHandlers({ images, onDelegate } = {}) {
 export async function runChief(body, model, { content, images, onDelegate } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
-  const volatile =
-    `Now: ${new Date().toISOString()}\n` +
-    (mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "");
+  const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
+  const volatile = [
+    `Now: ${new Date().toISOString()}`,
+    formatHouseRules(rules),
+    mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const { text } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
