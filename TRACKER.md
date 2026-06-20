@@ -340,7 +340,7 @@ Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
 - Parallel-safe: yes — isolated except a one-line heartbeat call. Independent of all
   other workstreams; only shares `.env` and `config.js` with the rest.
 
-### K. Slack Socket Mode — the "desk" channel  `[ ]`  — designed, not built
+### K. Slack Socket Mode — the "desk" channel  `[~]`  — CODE COMPLETE 2026-06-20; token-gated
 
 **Principle: port the method, not the hardware.** Genet's Mac Minis exist to
 partition agents that run as separate processes and talk over Slack. We get the
@@ -369,23 +369,26 @@ observable. Both feed the SAME orchestrator, brain, guards, and confirm gate.
 - `#all-agents` = optional full-transcript "cooking" mirror.
 
 **Scaffold changes (the one real refactor + hooks):**
-1. [ ] `src/channels/slack.js` via `@slack/bolt` Socket Mode: map channel→agent, call
-       `handleInbound`, post replies. **Hard constraint:** Slack is a new outbound
-       channel, so it MUST call `assertOutboundAllowed` before sending (CLAUDE.md rule).
-2. [ ] **Transport refactor (the one real code change):** replace `handleInbound`'s
-       `if channel === "sms"` switch with a small transport object carrying `reply()`
-       and `mirror()`. SMS, email, and Slack each implement it. Everything else hangs
-       off this.
-3. [ ] `onDelegate` hook in `orchestrator.js` → fires `mirror()` into `#command` on
-       each `delegate` call + result. NOTE: works whether the specialist runs
-       in-process OR remote (the `delegate` seam already abstracts that), so the
-       "watch the team" view holds for the current hybrid topology.
-4. [~] **Per-agent tool allowlist (Finn's lockdown).** PARTLY DONE: the `REGISTRY` in
-       `src/agents/tools.js` already scopes tools per agent (finance gets read-only
-       analysis, no send). Remaining: make the allowlist explicit/enforced as the
-       per-role boundary regardless of channel, so a channel can't widen an agent.
-5. [ ] Confirmation upgrade: Slack Block Kit Approve/Deny buttons via Socket Mode,
-       keeping the SMS `YES <code>` path as the away-from-desk fallback.
+1. [x] `src/channels/slack.js` via `@slack/bolt` Socket Mode (lazy optional dep,
+       no-op until tokens set). Channel→agent map, DM/#cos→chief, per-agent channels
+       force a specialist, posts replies. **Hard constraint kept:** the reply path
+       calls `assertOutboundAllowed`. Started (non-fatal) from `daemon.js`.
+2. [x] **Transport refactor (the keystone):** `handleInbound` now takes a transport
+       `{reply, mirror}`; SMS/email built-in (mirror no-op), Slack passes its own.
+       `transportFor` + `wrapDelegateWithMirror` exported + unit-tested. Done in
+       commit `802e9f3`. I and L hang off this too.
+3. [x] `onDelegate` → `mirror()` into `#command` on each delegate call + result
+       (via `wrapDelegateWithMirror`). Works for in-process OR remote specialists.
+4. [~] **Per-agent tool allowlist (Finn's lockdown).** Still PARTLY DONE: the
+       `REGISTRY` in `src/agents/tools.js` scopes tools per agent. Remaining: make it
+       an explicit enforced boundary so a channel can't widen an agent. (Not blocking.)
+5. [x] Confirmation upgrade: Slack Block Kit Approve/Deny buttons; `confirm.js` gained
+       `registerApprovalNotifier` + `resolveByCode` so a button tap resolves the same
+       pending code as SMS `YES <code>` (both paths live, no import cycle).
+- [ ] **LIVE VERIFY (token-gated, needs you):** create a Slack app, enable Socket
+      Mode, set `SLACK_APP_TOKEN` (xapp-, connections:write) + `SLACK_BOT_TOKEN`
+      (xoxb-) in `.env`, `npm i @slack/bolt`, restart. Then: DM the bot, post in
+      `#finance`, watch `#command` mirror a delegation, tap an Approve button.
 
 **Flag (local-first tension):** Slack routes household conversation through Slack's
 cloud — a privacy trade vs the local brain. Worth a conscious decision; SMS already
@@ -394,7 +397,7 @@ has the same property via Twilio, so it's consistent, not new.
 - Parallel-safe: the transport refactor (#2) touches `handleInbound`/`orchestrator.js`
   (coordinate); `slack.js` is otherwise a new isolated file + the `@slack/bolt` dep.
 
-### L. Document intake (PDF / .ics / .vcf) over email  `[ ]`  — designed, not built
+### L. Document intake (PDF / .ics / .vcf) over email  `[~]`  — DAEMON HALF DONE 2026-06-20
 
 **Why email, not SMS:** MMS can't reliably carry PDFs/calendars (US carriers strip
 non-image MMS); the Graph mailbox `cos@freyfam.com` carries attachments natively.
@@ -415,34 +418,33 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
   (the storage account already has a Blob endpoint), mirroring how MMS uses Twilio
   media URLs. Do NOT inline bytes — Storage Queue messages cap at 64KB.
 
-**New daemon module `src/documents.js`** (parallel to `media.js`), route by type:
-- [ ] `application/pdf` → text extract (lightweight pure-JS parser, lazy-imported
-      like Playwright). Cap chars (`DOC_MAX_CHARS`) + note truncation so a big PDF
-      can't blow the token budget. Scanned/image-only PDFs out of scope v1 (future:
-      Claude-vision fallback via the existing image-block plumbing from I).
-- [ ] `text/calendar` (.ics) → parse event(s): summary, start/end, location,
-      attendees → structured summary. Natural feed for the **calendar/scheduling**
-      capability gap (Genet's "Claire").
-- [ ] `text/vcard` / `text/x-vcard` (.vcf) → parse contact → `remember` into memory.
-- [ ] Unknown types → skip + log (non-fatal), same posture as `media.js`.
+**`src/documents.js`** (parallel to `media.js`) — BUILT (commit `f10dd4a`):
+- [x] `application/pdf` → text via a lazy-imported parser; cap `DOC_MAX_CHARS` +
+      truncation note. Degrades to a logged skip if no parser installed (so the
+      daemon/tests run without it). Scanned PDFs out of scope v1.
+- [x] `text/calendar` (.ics) → event parse (summary/start/end/location/attendees),
+      dependency-free. Feeds the **calendar/scheduling** gap (Genet's "Claire").
+- [x] `text/vcard` / `text/x-vcard` (.vcf) → contact parse, dependency-free.
+- [x] Unknown types → skip + log (non-fatal).
 
 **Wiring & routing:**
-- [ ] Cross-repo contract: add `graphMessageId` (email) to the queue payload; pin
-      with a both-sides contract test (same discipline as B's `cos-queue.test.js`).
-- [ ] `handleInbound`: when an email has attachments, call `documents.js`, append the
-      extracted text/summary as content block(s), and augment the triage text
-      (`[PDF: invoice.pdf, 2pp]`) so routing can see it.
-- [ ] Route by document: receipt/invoice → finance (Patrick); grocery receipt →
-      chef (Carmine); calendar invite → Lloyd scheduling; contact → memory.
+- [x] `handleInbound` gathers MMS image blocks AND email doc text blocks through one
+      path (`collectAttachments` + `extractDocuments`), augmenting triage text.
+- [x] `graph.fetchAttachments(messageId)` pulls bytes via the granted `Mail.Read`.
+- [ ] **Cross-repo (front door, needs other repo):** pass `graphMessageId` on the
+      email payload (and don't delete the message); pin with a both-sides contract
+      test. Until then the daemon side is dormant (no `graphMessageId`/`attachments`
+      arrive). Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
+- [ ] Routing polish: nudge receipts→finance, invites→Lloyd scheduling, etc. (the
+      chief already delegates from the extracted text; this is tuning, not blocking).
 
-**Hard constraints (unchanged):** read-only parsing; any resulting outbound still
-goes through Lloyd's `confirm.js` + `guards.js`; no new Graph consent (read scope
-already granted).
+**Hard constraints (unchanged):** read-only parsing; outbound still via `confirm.js`
++ `guards.js`; no new Graph consent.
 
-- [ ] Tests `test/documents.test.js`: per-type parse on small fixtures,
-      skip-unsupported, char cap/truncation, no-attachment no-op (mirrors
-      `media`/`local-server` tests).
-- Deps: a PDF text extractor + an ICS/vCard parser (keep lightweight; lazy-import).
+- [x] Tests `test/documents.test.js`: .ics/.vcf parse, unsupported-skip, PDF via
+      injected parser, graceful no-parser skip. 68/68 suite green.
+- Dep to install for PDFs in prod: a text extractor (e.g. `pdf-parse`); `.ics`/`.vcf`
+  need none.
 - Parallel-safe: `documents.js` + tests are isolated; the `handleInbound` hook + the
   `graphMessageId` contract overlap **I** and K's transport refactor — those three
   all touch `handleInbound`'s content-building, so do K's `reply()`/`mirror()`/content
