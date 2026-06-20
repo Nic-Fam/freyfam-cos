@@ -109,7 +109,45 @@ const tools = [
   },
 ];
 
-function toolHandlers({ images } = {}) {
+// --- Transports: how one turn delivers its result + mirrors its work --------
+// A transport is { reply(text), mirror(event) }. SMS and email are built in;
+// SMS/email have no observability channel so their mirror is a no-op. Slack
+// (src/channels/slack.js) provides its own transport (reply -> the channel,
+// mirror -> #command) and passes it to handleInbound. Internal callers (the
+// heartbeat) use runChief directly and need no transport.
+const noop = () => {};
+
+export function transportFor(msg) {
+  if (msg.channel === "sms") {
+    return { reply: (text) => sendSms(msg.replyTo || msg.from, text), mirror: noop };
+  }
+  if (msg.channel === "email") {
+    return {
+      reply: (text) => sendMail({ to: msg.replyTo || msg.from, subject: "Re: your note", body: text }),
+      mirror: noop,
+    };
+  }
+  return { reply: noop, mirror: noop };
+}
+
+/**
+ * Wrap the delegate call so each delegation is echoed to `onDelegate` (which a
+ * transport routes to its observability channel, e.g. Slack #command): one event
+ * when Lloyd hands off, one with the specialist's result. This is the whole
+ * "watch Lloyd run the team" feature, and it works whether the specialist runs
+ * in-process or remote because `delegate` already abstracts transport. Exported
+ * pure for testing. `images` rides along (MMS photos) so the specialist sees them.
+ */
+export function wrapDelegateWithMirror(delegateFn, { onDelegate, images } = {}) {
+  return async ({ agent, task }) => {
+    await onDelegate?.({ phase: "start", from: "Lloyd", agent, task });
+    const result = await delegateFn({ agent, task, images });
+    await onDelegate?.({ phase: "result", from: "Lloyd", agent, task, result });
+    return result;
+  };
+}
+
+function toolHandlers({ images, onDelegate } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
     remember: async ({ text }) => {
@@ -118,10 +156,9 @@ function toolHandlers({ images } = {}) {
     },
     log_decision: async (input) => JSON.stringify(await logDecision("chief-of-staff", input)),
     list_decisions: async ({ agent } = {}) => JSON.stringify(await listDecisions(agent || "chief-of-staff")),
-    // `images` rides along from the inbound turn (MMS photos) so the specialist
-    // sees the actual picture. The tool schema stays {agent, task}: the model
-    // never re-emits image bytes; they come from context.
-    delegate: async ({ agent, task }) => delegate({ agent, task, images }),
+    // The schema stays {agent, task}; `images` come from context, not the model.
+    // The wrapper also mirrors the handoff + result to the transport's observability.
+    delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
     send_email: async ({ to, subject, body }) => {
       const ok = await requestConfirmation(`Email to ${to}\nSubject: ${subject}\n${body.slice(0, 200)}`);
       if (!ok) return "Owner declined; email not sent.";
@@ -159,7 +196,7 @@ function toolHandlers({ images } = {}) {
  * inbound channel, or notify the owner). Shared by inbound handling and the
  * proactive heartbeat, so the heartbeat no longer fakes an inbound SMS to itself.
  */
-export async function runChief(body, model, { content, images } = {}) {
+export async function runChief(body, model, { content, images, onDelegate } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const volatile =
@@ -171,12 +208,19 @@ export async function runChief(body, model, { content, images } = {}) {
     // `content` (text + image blocks) wins when an MMS carried photos; else plain text.
     messages: [{ role: "user", content: content || body }],
     tools,
-    toolHandlers: toolHandlers({ images }), // forwarded to specialists on delegate
+    toolHandlers: toolHandlers({ images, onDelegate }), // images + delegation mirror
   });
   return text;
 }
 
-export async function handleInbound(msg) {
+/**
+ * Main entry for an inbound family message. Triage first (cheap), route to the
+ * chief at the right tier, then deliver via the transport (reply on the inbound
+ * channel; mirror delegations to its observability channel if it has one).
+ * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[]}} msg
+ * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
+ */
+export async function handleInbound(msg, transport = transportFor(msg)) {
   // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
   if (tryResolveConfirmation(msg.body)) return;
 
@@ -201,14 +245,16 @@ export async function handleInbound(msg) {
 
   // 3. Run the chief of staff (or answer trivially on Haiku). recall keys off the
   //    text; `content` carries the images to Lloyd, `images` forwards them to any
-  //    specialist he delegates to this turn.
-  const text = await runChief(msg.body || "(photo message)", model, { content, images });
+  //    specialist he delegates to this turn; `onDelegate` mirrors each handoff to
+  //    the transport's observability channel (no-op for SMS/email).
+  const text = await runChief(msg.body || "(photo message)", model, {
+    content,
+    images,
+    onDelegate: (event) => transport.mirror(event),
+  });
 
-  // 4. Reply on the channel it came in on.
-  if (msg.channel === "sms") await sendSms(msg.replyTo || msg.from, text);
-  else if (msg.channel === "email") {
-    await sendMail({ to: msg.replyTo || msg.from, subject: "Re: your note", body: text });
-  }
+  // 4. Deliver via the transport (channel reply for SMS/email; channel post for Slack).
+  await transport.reply(text);
   return text;
 }
 
