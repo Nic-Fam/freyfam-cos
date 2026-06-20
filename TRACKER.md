@@ -435,8 +435,9 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
       `cos-front-door` (commit `cb486dc`) — email enqueue now passes `subject` +
       `graphMessageId`, message marked read but NOT deleted, contract test added
       (147/147). Also carries MMS `media` (commit `4d41630`, workstream I).
-      **PENDING DEPLOY:** merge `cos-front-door` → `main` so CI deploys it
-      (`COS_ENQUEUE` already true). Until deployed, the daemon side stays dormant.
+      **DEPLOYED 2026-06-20:** merged to `main` (`d0471fe`) + pushed → CI deploy
+      triggered; `COS_ENQUEUE` already true. So email threading + subject + document
+      intake + MMS images are now live end-to-end (confirm CI run succeeded in Azure).
       Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
 - [ ] Routing polish: nudge receipts→finance, invites→Lloyd scheduling, etc. (the
       chief already delegates from the extracted text; this is tuning, not blocking).
@@ -807,14 +808,15 @@ only) so we match Genet's *security posture* without her hardware.
 
 ### Capability gaps to hit the bar (maps to workstreams)
 
-- [~] **Calendar / scheduling** (Claire) — BUILT 2026-06-20, GATED on consent.
-      `graph.js` listEvents/createEvent + `list_calendar`/`create_calendar_event`
-      tools (create is confirm-gated). Applies the house rules (workday → work-email
-      invitees; House Cleaning → showAs=free), enabled by the outbound policy change.
-      REMAINING: grant Graph **Calendars.ReadWrite** app permission + admin consent
-      (Mail.Read/Send already granted); then live-verify create + invite.
-      Also depends on the **house-rules layer** (`src/rules.js`, done 2026-06-20) and
-      the **outbound policy change** (work addresses allowed as invitees, done).
+- [x] **Calendar / scheduling** (Claire) — LIVE 2026-06-20. `graph.js`
+      listEvents/createEvent + `list_calendar`/`create_calendar_event` tools (create
+      confirm-gated). Applies the house rules (workday → work-email invitees; House
+      Cleaning → showAs=free), enabled by the outbound policy change. **Consent gate
+      cleared:** `Calendars.ReadWrite` was ALREADY admin-consented on the Graph app
+      (the old assistant did calendar work; the daemon reuses the same app) — verified
+      `listEvents` reads the cos@ calendar live. Builds on the **house-rules layer**
+      (`src/rules.js`) + **outbound policy change**, both done 2026-06-20.
+      Final live-verify (not blocking): a real `create_calendar_event` (sends invites).
 - [ ] **Photo / multimodal intake** — now its own first-class **workstream I**
       (inbound MMS → image content blocks). Roster fit: Shey (item photos), Carmine
       (groceries/receipts). See workstream I for the cross-repo plan.
