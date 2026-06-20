@@ -48,7 +48,7 @@ so cutting over is flipping the flag once the Functions are stood up, not a rewr
      |     |-- claude.js ... Anthropic wrapper: tiered models + prompt caching + tool loop
      |     |-- memory.js ... local vector brain (JSON now; swap to sqlite-vec later)
      |     |-- confirm.js .. human-in-the-loop approval over SMS
-     |     |-- guards.js ... blocks outbound to read-only work domains
+     |     |-- guards.js ... isWorkDomain(): flags work-domain recipients for confirmation
      |     |-- agents/*.md . persona files (chief-of-staff, finance, dev, resale, chef, security)
      |     `-- channels/ ... twilio.js (SMS out), graph.js (email read/send)
    browser automation (Playwright) -> runs LOCALLY on the Mac (TODO, see plan)
@@ -64,8 +64,8 @@ in Azure:
 
 - **Local Mac fleet (household LAN):**
   - **Lloyd (chief of staff)** on a Mac mini. Keeps the front door, inbound triage,
-    the confirmation gate, ALL outbound channels (Twilio/Graph), the `guards.js`
-    read-only-domain check, and memory recall. He is the host, not a delegated
+    the confirmation gate, ALL outbound channels (Twilio/Graph), `guards.isWorkDomain`
+    flagging, and memory recall. He is the host, not a delegated
     specialist.
   - **Frank (security)** on a Mac mini — local so it can reach home-network/security
     surfaces and keep that data on-premises.
@@ -83,8 +83,8 @@ in Azure:
 - **Isolation** comes from per-specialist identity + scoped storage (Azure RBAC per
   Table; per-agent function key on the LAN), NOT from warm compute.
 - **Outbound + confirmation always stay on Lloyd.** A specialist only RETURNS text;
-  it has no outbound channel and no confirmation power, wherever it runs. This
-  preserves the read-only-domain guarantee across all three tiers.
+  it has no outbound channel and no confirmation power, wherever it runs. This keeps
+  the confirmation gate (constraint 2) the single chokepoint for all outbound.
 - Cost: still ~$55-70/mo all-in; the local Macs add electricity, not cloud spend.
   Full breakdown + migration checklist in TRACKER.md.
 
@@ -101,13 +101,17 @@ inside the specialist runner, not a caller change.
 
 ## HARD CONSTRAINTS (do not regress these)
 
-1. **Read-only work domains.** `flyerdefense.com` and `disney.com` are inbound-only.
-   The assistant may read that mail but must NEVER send to it. Enforced in
-   `guards.js` via `assertOutboundAllowed()`, called inside every outbound path.
-   Any new outbound channel MUST call the guard.
-2. **Human-in-the-loop for high stakes.** Spending money, sending messages on the
-   family's behalf, and anything irreversible require approval via `confirm.js`.
-   The triage step sets `high_stakes`; never auto-approve.
+1. **Work domains require confirmation (policy changed 2026-06-20; no longer a hard
+   block).** `flyerdefense.com` and `disney.com` are no longer inbound-only. The
+   family's OWN work addresses may appear as **calendar invitees freely**. Sending
+   **email** to a work domain is allowed but high-stakes: it goes through the
+   confirmation gate (constraint 2), and `guards.isWorkDomain()` flags such
+   recipients in the approval prompt. There is no absolute block anymore — the
+   confirmation gate is the protection.
+2. **Human-in-the-loop for high stakes.** Spending money, sending messages/email on
+   the family's behalf (including to work domains), creating calendar invites, and
+   anything irreversible require approval via `confirm.js`. Every outbound path that
+   can act on the family's behalf MUST route through it. Never auto-approve.
 3. **No money movement.** Finance agent surfaces actions; humans execute them.
 
 ## Model routing = the cost strategy
@@ -180,6 +184,7 @@ npm start              # full daemon: queue consumer + heartbeat
 
 - ESM, Node 22.
 - User-facing copy: warm, direct, brief, and **no em dashes** (family preference).
-- Every outbound path calls `assertOutboundAllowed` before sending.
+- Every outbound path that acts on the family's behalf routes through `confirm.js`;
+  use `guards.isWorkDomain()` to flag work-domain recipients in the prompt.
 - Add tools as `{name, description, input_schema}` + a handler; the chief's tool list
   lives in `orchestrator.js`.

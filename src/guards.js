@@ -1,8 +1,17 @@
-import { READ_ONLY_DOMAINS } from "./config.js";
+import { WORK_DOMAINS } from "./config.js";
 
-export class OutboundBlockedError extends Error {}
+// ===========================================================================
+// Outbound policy (updated 2026-06-20). Work domains (flyerdefense.com,
+// disney.com) are NO LONGER hard-blocked. Instead:
+//   - the family's OWN work addresses may appear as calendar invitees freely;
+//   - sending EMAIL to a work domain is allowed but high-stakes, so it routes
+//     through the confirmation gate (confirm.js) like any outbound.
+// So this module no longer throws; it just classifies recipients so callers can
+// flag work-domain sends in the approval prompt. Protection now rests on the
+// confirmation gate, not an absolute wall.
+// ===========================================================================
 
-function domainOf(addressOrList) {
+function domainsOf(addressOrList) {
   const list = Array.isArray(addressOrList) ? addressOrList : [addressOrList];
   return list
     .map((a) => String(a).toLowerCase())
@@ -10,18 +19,7 @@ function domainOf(addressOrList) {
     .map((d) => d.trim());
 }
 
-/**
- * Throws if any recipient is on a read-only domain. Call this in EVERY
- * outbound path (email send, and any future channel that can reach work inboxes).
- * This is a hard rule: the assistant reads Flyer Defense / Disney mail but never
- * replies, forwards, or sends to those domains.
- */
-export function assertOutboundAllowed(recipients) {
-  for (const dom of domainOf(recipients)) {
-    if (READ_ONLY_DOMAINS.includes(dom)) {
-      throw new OutboundBlockedError(
-        `Refusing to send to read-only domain "${dom}". These addresses are inbound-only.`
-      );
-    }
-  }
+/** True if any recipient is on a configured work domain (so callers can flag it). */
+export function isWorkDomain(recipients) {
+  return domainsOf(recipients).some((d) => WORK_DOMAINS.includes(d));
 }

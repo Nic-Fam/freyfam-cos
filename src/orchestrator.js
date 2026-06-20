@@ -12,6 +12,7 @@ import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
+import { isWorkDomain } from "./guards.js";
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -162,9 +163,10 @@ function toolHandlers({ images, onDelegate } = {}) {
     // The wrapper also mirrors the handoff + result to the transport's observability.
     delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
     send_email: async ({ to, subject, body }) => {
-      const ok = await requestConfirmation(`Email to ${to}\nSubject: ${subject}\n${body.slice(0, 200)}`);
+      const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
+      const ok = await requestConfirmation(`Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`);
       if (!ok) return "Owner declined; email not sent.";
-      await sendMail({ to, subject, body }); // guard inside blocks read-only domains
+      await sendMail({ to, subject, body }); // confirmation above is the gate (work domains flagged)
       return "Email sent.";
     },
     browse_page: async ({ url, maxChars }) => {

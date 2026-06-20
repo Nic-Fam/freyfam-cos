@@ -2,7 +2,6 @@ import { SLACK } from "../config.js";
 import { handleInbound } from "../orchestrator.js";
 import { delegate } from "../delegate.js";
 import { registerApprovalNotifier, resolveByCode } from "../confirm.js";
-import { assertOutboundAllowed } from "../guards.js";
 import { createLogger } from "../log.js";
 
 // ===========================================================================
@@ -67,7 +66,6 @@ export function approvalBlocks(code, action) {
 function slackTransport(client, channel) {
   return {
     reply: async (text) => {
-      assertOutboundAllowed(channel); // hard constraint: every outbound path calls the guard
       await client.chat.postMessage({ channel, text: String(text ?? "") });
     },
     mirror: async (event) => {

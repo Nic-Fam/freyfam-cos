@@ -4,18 +4,16 @@
 // serverless scale-to-zero), and any purchase is a high-stakes outbound action
 // that must pass Lloyd's confirmation gate + guard before it runs.
 //
-// HARD CONSTRAINTS honored here:
-//   - assertOutboundAllowed() runs before any *action* (order) path, so a browser
-//     action can never reach a read-only work domain (flyerdefense / disney).
-//   - This module never confirms anything itself. The human-in-the-loop gate
-//     (confirm.js) is applied by the tool layer in orchestrator.js, exactly like
-//     send_email: the chief owns the gate; this module is the pure capability.
+// HARD CONSTRAINT honored here:
+//   - This module never confirms anything itself. Any purchase is high-stakes and
+//     the human-in-the-loop gate (confirm.js) is applied by the tool layer in
+//     orchestrator.js, exactly like send_email: the chief owns the gate; this
+//     module is the pure capability. (The old work-domain hard block was removed
+//     2026-06-20; the confirmation gate is the protection.)
 //
 // Playwright is an OPTIONAL dependency. It is imported lazily so the daemon, the
 // test suite, and every non-browser path keep working when it is not installed.
 // Install with: npm i playwright && npx playwright install chromium
-
-import { assertOutboundAllowed } from "../guards.js";
 
 let _browser = null; // shared headless chromium, launched on first use
 let _chromium = null;
@@ -81,7 +79,6 @@ export async function readPage(url, { maxChars = 4000, timeoutMs = 30000 } = {})
 
 const STEP_RUNNERS = {
   goto: async (page, step, timeout) => {
-    assertOutboundAllowed(hostOf(step.url)); // re-check on every navigation
     await page.goto(step.url, { waitUntil: "domcontentloaded", timeout });
     return `goto ${step.url}`;
   },
@@ -101,8 +98,7 @@ const STEP_RUNNERS = {
 
 /**
  * HIGH-STAKES ACTION: drive a checkout / order flow. This is the seam the chief
- * wraps in confirm.js before calling. It re-checks the guard here as defense in
- * depth: a browser action may NEVER act on a read-only work domain.
+ * wraps in confirm.js before calling (the confirmation gate is the protection).
  *
  * `steps` is an ordered list of primitive actions run against the page:
  *   { action: "goto", url }
@@ -114,7 +110,6 @@ const STEP_RUNNERS = {
  */
 export async function runOrder({ url, steps = [], timeoutMs = 30000 } = {}) {
   if (!url) throw new Error("url is required");
-  assertOutboundAllowed(hostOf(url)); // hard constraint, before any browser launch
   const b = await browser();
   const page = await b.newPage();
   const transcript = [];

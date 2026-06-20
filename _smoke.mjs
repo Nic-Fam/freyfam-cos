@@ -1,13 +1,13 @@
 import assert from "node:assert";
-import { assertOutboundAllowed, OutboundBlockedError } from "./src/guards.js";
+import { isWorkDomain } from "./src/guards.js";
 import { tryResolveConfirmation } from "./src/confirm.js";
 process.env.BRAIN_PATH = "/tmp/cos-brain-test.json";
 const { remember, recall } = await import("./src/memory.js");
 
-assert.throws(() => assertOutboundAllowed("boss@flyerdefense.com"), OutboundBlockedError);
-assert.throws(() => assertOutboundAllowed(["ok@gmail.com", "x@disney.com"]), OutboundBlockedError);
-assert.doesNotThrow(() => assertOutboundAllowed("shelli@freyfam.com"));
-console.log("guard: read-only domains blocked, family allowed  ok");
+assert.equal(isWorkDomain("boss@flyerdefense.com"), true);
+assert.equal(isWorkDomain(["ok@gmail.com", "x@disney.com"]), true);
+assert.equal(isWorkDomain("shelli@freyfam.com"), false);
+console.log("guard: work domains classified (confirm-gated, not hard-blocked)  ok");
 
 assert.equal(tryResolveConfirmation("hello there"), false);
 assert.equal(tryResolveConfirmation("YES 9Z3Q"), false);

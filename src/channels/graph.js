@@ -1,7 +1,6 @@
 import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { GRAPH } from "../config.js";
-import { assertOutboundAllowed } from "../guards.js";
 
 // App-only auth (client credentials) against the assistant@freyfam.com mailbox.
 let _client;
@@ -65,12 +64,12 @@ export async function fetchAttachments(messageId) {
 }
 
 /**
- * Send mail from the assistant mailbox. Outbound guard runs FIRST so the
- * read-only work domains can never receive a message from the assistant.
+ * Send mail from the assistant mailbox. High-stakes: callers (the send_email
+ * tool) confirm with the owner first, which covers work-domain sends under the
+ * 2026-06-20 policy (no hard block; confirmation is the gate).
  */
 export async function sendMail({ to, subject, body }) {
   const recipients = Array.isArray(to) ? to : [to];
-  assertOutboundAllowed(recipients);
   await graph()
     .api(`/users/${GRAPH.mailbox}/sendMail`)
     .post({

@@ -1,17 +1,11 @@
 import test from "node:test";
 import assert from "node:assert";
 import { readPage, runOrder, closeBrowser } from "../src/channels/browser.js";
-import { OutboundBlockedError } from "../src/guards.js";
 
-// These tests deliberately exercise only the pre-launch paths (guard checks and
-// input validation), so they pass whether or not Playwright is installed: none of
-// them reach the actual headless-browser launch.
-
-test("runOrder refuses read-only work domains before launching", async () => {
-  for (const url of ["https://disney.com/store/checkout", "https://flyerdefense.com/buy"]) {
-    await assert.rejects(() => runOrder({ url }), OutboundBlockedError, url);
-  }
-});
+// These tests deliberately exercise only the pre-launch paths (input validation),
+// so they pass whether or not Playwright is installed: none reach the actual
+// headless-browser launch. (The old work-domain hard block was removed 2026-06-20;
+// purchases are protected by the confirmation gate in the tool layer, not here.)
 
 test("runOrder requires a url", async () => {
   await assert.rejects(() => runOrder({}), /url is required/);

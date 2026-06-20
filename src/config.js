@@ -27,11 +27,14 @@ export const HEARTBEAT_INTERVAL_MS = Number(
 );
 
 // ---------------------------------------------------------------------------
-// HARD CONSTRAINT: these domains are inbound-read-only. The assistant may READ
-// from them but must NEVER send outbound to them. Enforced in src/guards.js.
+// WORK DOMAINS (policy updated 2026-06-20). No longer a hard block. The family's
+// own work addresses may be calendar invitees freely; sending EMAIL to these
+// domains is allowed but high-stakes, so it goes through the confirmation gate
+// (confirm.js) like any outbound. guards.isWorkDomain() flags these recipients.
+// (Env still accepts the old READ_ONLY_DOMAINS name for back-compat.)
 // ---------------------------------------------------------------------------
-export const READ_ONLY_DOMAINS = (
-  process.env.READ_ONLY_DOMAINS || "flyerdefense.com,disney.com"
+export const WORK_DOMAINS = (
+  process.env.WORK_DOMAINS || process.env.READ_ONLY_DOMAINS || "flyerdefense.com,disney.com"
 )
   .split(",")
   .map((d) => d.trim().toLowerCase())
