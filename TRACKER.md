@@ -804,8 +804,14 @@ only) so we match Genet's *security posture* without her hardware.
 
 ### Capability gaps to hit the bar (maps to workstreams)
 
-- [ ] **Calendar / scheduling** (Claire) — extends D/heartbeat (`heartbeat.js:23`
-      TODO) + a scheduling tool in F. This is the biggest missing chief-of-staff muscle.
+- [~] **Calendar / scheduling** (Claire) — BUILT 2026-06-20, GATED on consent.
+      `graph.js` listEvents/createEvent + `list_calendar`/`create_calendar_event`
+      tools (create is confirm-gated). Applies the house rules (workday → work-email
+      invitees; House Cleaning → showAs=free), enabled by the outbound policy change.
+      REMAINING: grant Graph **Calendars.ReadWrite** app permission + admin consent
+      (Mail.Read/Send already granted); then live-verify create + invite.
+      Also depends on the **house-rules layer** (`src/rules.js`, done 2026-06-20) and
+      the **outbound policy change** (work addresses allowed as invitees, done).
 - [ ] **Photo / multimodal intake** — now its own first-class **workstream I**
       (inbound MMS → image content blocks). Roster fit: Shey (item photos), Carmine
       (groceries/receipts). See workstream I for the cross-repo plan.
