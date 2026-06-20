@@ -143,13 +143,21 @@ const tools = [
 // heartbeat) use runChief directly and need no transport.
 const noop = () => {};
 
+// Keep the inbound subject so an email reply threads (continuity). Avoids "Re: Re:";
+// falls back when the front door didn't pass a subject. SMS has no subject.
+export function replySubject(subject) {
+  const s = String(subject || "").trim();
+  if (!s) return "Re: your note";
+  return /^re:\s/i.test(s) ? s : `Re: ${s}`;
+}
+
 export function transportFor(msg) {
   if (msg.channel === "sms") {
     return { reply: (text) => sendSms(msg.replyTo || msg.from, text), mirror: noop };
   }
   if (msg.channel === "email") {
     return {
-      reply: (text) => sendMail({ to: msg.replyTo || msg.from, subject: "Re: your note", body: text }),
+      reply: (text) => sendMail({ to: msg.replyTo || msg.from, subject: replySubject(msg.subject), body: text }),
       mirror: noop,
     };
   }
@@ -286,7 +294,7 @@ async function collectAttachments(msg) {
  * Main entry for an inbound family message. Triage first (cheap), route to the
  * chief at the right tier, then deliver via the transport (reply on the inbound
  * channel; mirror delegations to its observability channel if it has one).
- * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[]}} msg
+ * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[], subject?:string, graphMessageId?:string}} msg
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
 export async function handleInbound(msg, transport = transportFor(msg)) {

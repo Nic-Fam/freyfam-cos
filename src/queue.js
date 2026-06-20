@@ -9,7 +9,9 @@ import { createLogger } from "./log.js";
 // be publicly reachable. If the Mac reboots, messages wait safely in the queue.
 //
 // Expected message body (JSON):
-//   { from, body, channel: "sms"|"email", replyTo?, media? }
+//   { from, body, channel: "sms"|"email", replyTo?, media?, subject?, graphMessageId? }
+// subject (email): retained so the reply threads (Re: <subject>); SMS has none.
+// graphMessageId (email): lets the daemon fetch attachments (workstream L).
 // media (optional, MMS): [{ url, contentType }] mapped from Twilio MediaUrlN +
 // MediaContentTypeN by the front door. The payload is schemaless JSON so media
 // flows straight through to handleInbound, which fetches images into Claude

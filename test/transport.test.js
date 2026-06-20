@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { transportFor, wrapDelegateWithMirror } from "../src/orchestrator.js";
+import { transportFor, wrapDelegateWithMirror, replySubject } from "../src/orchestrator.js";
+
+test("replySubject retains the email subject for continuity (no double Re:)", () => {
+  assert.equal(replySubject("Dentist for Fox"), "Re: Dentist for Fox");
+  assert.equal(replySubject("Re: Dentist for Fox"), "Re: Dentist for Fox");
+  assert.equal(replySubject("RE: tour Saturday"), "RE: tour Saturday");
+  assert.equal(replySubject(""), "Re: your note");
+  assert.equal(replySubject(undefined), "Re: your note");
+});
 
 test("transportFor gives reply+mirror per channel; mirror is a safe no-op", () => {
   for (const channel of ["sms", "email", "whatever"]) {
