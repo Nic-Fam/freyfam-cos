@@ -35,6 +35,7 @@ app.http("specialist", {
 
     const agent = body?.agent || PINNED;
     const task = body?.task;
+    const images = Array.isArray(body?.images) ? body.images : undefined;
 
     if (!task || !String(task).trim()) {
       return { status: 400, jsonBody: { error: "task is required" } };
@@ -46,7 +47,7 @@ app.http("specialist", {
     }
 
     try {
-      const text = await runSpecialist(agent, task);
+      const text = await runSpecialist(agent, task, { images });
       return { jsonBody: { text } };
     } catch (err) {
       context.error(`specialist "${agent}" failed`, err);

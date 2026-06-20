@@ -29,7 +29,7 @@ export function chooseTransport(agent, cfg = SPECIALISTS) {
  * (tolerates a plain-text body). Times out so a cold/hung Function can't wedge
  * the chief's tool loop. Returns the specialist's text.
  */
-export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, fetchImpl = fetch } = {}) {
+export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, fetchImpl = fetch, images } = {}) {
   const url = cfg.endpoints?.[agent];
   if (!url) throw new Error(`no remote endpoint configured for "${agent}"`);
 
@@ -43,7 +43,8 @@ export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, f
         "content-type": "application/json",
         ...(key ? { "x-functions-key": key } : {}),
       },
-      body: JSON.stringify({ agent, task }),
+      // images (base64 Claude image blocks) ride along only when the turn had photos.
+      body: JSON.stringify(images?.length ? { agent, task, images } : { agent, task }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`specialist "${agent}" returned HTTP ${res.status}`);
@@ -64,14 +65,14 @@ export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, f
  * Lloyd would break the isolation guarantee, so we surface a short error string
  * the chief can relay instead. (localRunner is injectable for tests.)
  */
-export async function delegate({ agent, task }, { cfg = SPECIALISTS, fetchImpl = fetch, localRunner = runSpecialist } = {}) {
+export async function delegate({ agent, task, images }, { cfg = SPECIALISTS, fetchImpl = fetch, localRunner = runSpecialist } = {}) {
   if (chooseTransport(agent, cfg) === "remote") {
     try {
-      return await invokeRemoteSpecialist(agent, task, { cfg, fetchImpl });
+      return await invokeRemoteSpecialist(agent, task, { cfg, fetchImpl, images });
     } catch (err) {
       log.error("remote specialist failed", { agent, error: String(err?.message || err) });
       return `I could not reach the ${agent} specialist just now. Try again shortly.`;
     }
   }
-  return localRunner(agent, task);
+  return localRunner(agent, task, { images });
 }

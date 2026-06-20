@@ -17,15 +17,19 @@ import { specialistTools } from "../agents/tools.js";
 // what the specialist is allowed to do.
 // ===========================================================================
 
-export async function runSpecialist(agent, task) {
+export async function runSpecialist(agent, task, { images } = {}) {
   const p = await persona(agent);
   const mems = await recall(task, 4, { agent });
   const ctx = mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "";
   const { tools: specTools, handlers: specHandlers } = specialistTools(agent);
+  // When the inbound turn carried photos (MMS), the chief forwards the same image
+  // blocks so the specialist sees the actual picture (Shey an item, Carmine a
+  // receipt), not just Lloyd's description. Plain text task otherwise.
+  const content = images?.length ? [{ type: "text", text: task }, ...images] : task;
   const { text } = await agentLoop({
     model: MODELS.standard,
     system: systemBlocks(p, ctx),
-    messages: [{ role: "user", content: task }],
+    messages: [{ role: "user", content }],
     tools: specTools,
     toolHandlers: specHandlers,
     maxTurns: 6,

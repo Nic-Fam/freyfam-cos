@@ -66,6 +66,24 @@ test("delegate uses the local runner when transport is local", async () => {
   assert.equal(out, "local:chef:plan dinner");
 });
 
+test("delegate forwards images to the local runner", async () => {
+  const cfg = { mode: "local", endpoints: {} };
+  const images = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }];
+  let got;
+  await delegate({ agent: "resale", task: "catalog this", images }, { cfg, localRunner: (a, t, opts) => { got = opts; return "ok"; } });
+  assert.deepEqual(got.images, images, "images passed through to the runner");
+});
+
+test("remote transport includes images in the POST body when present", async () => {
+  const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { resale: `${base}/finance` } };
+  const images = [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "ZZ" } }];
+  await invokeRemoteSpecialist("resale", "catalog", { cfg, images });
+  assert.deepEqual(lastRequest.body.images, images, "image blocks sent to the Function");
+  // and omitted when there are none
+  await invokeRemoteSpecialist("resale", "no pics", { cfg });
+  assert.equal(lastRequest.body.images, undefined, "no images key when none");
+});
+
 test("delegate surfaces a graceful message on remote failure (no silent local fallback)", async () => {
   const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { finance: `${base}/boom` } };
   let localCalled = false;

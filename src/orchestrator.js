@@ -109,7 +109,7 @@ const tools = [
   },
 ];
 
-function toolHandlers() {
+function toolHandlers({ images } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
     remember: async ({ text }) => {
@@ -118,7 +118,10 @@ function toolHandlers() {
     },
     log_decision: async (input) => JSON.stringify(await logDecision("chief-of-staff", input)),
     list_decisions: async ({ agent } = {}) => JSON.stringify(await listDecisions(agent || "chief-of-staff")),
-    delegate: async ({ agent, task }) => delegate({ agent, task }),
+    // `images` rides along from the inbound turn (MMS photos) so the specialist
+    // sees the actual picture. The tool schema stays {agent, task}: the model
+    // never re-emits image bytes; they come from context.
+    delegate: async ({ agent, task }) => delegate({ agent, task, images }),
     send_email: async ({ to, subject, body }) => {
       const ok = await requestConfirmation(`Email to ${to}\nSubject: ${subject}\n${body.slice(0, 200)}`);
       if (!ok) return "Owner declined; email not sent.";
@@ -156,7 +159,7 @@ function toolHandlers() {
  * inbound channel, or notify the owner). Shared by inbound handling and the
  * proactive heartbeat, so the heartbeat no longer fakes an inbound SMS to itself.
  */
-export async function runChief(body, model, { content } = {}) {
+export async function runChief(body, model, { content, images } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const volatile =
@@ -168,7 +171,7 @@ export async function runChief(body, model, { content } = {}) {
     // `content` (text + image blocks) wins when an MMS carried photos; else plain text.
     messages: [{ role: "user", content: content || body }],
     tools,
-    toolHandlers: toolHandlers(),
+    toolHandlers: toolHandlers({ images }), // forwarded to specialists on delegate
   });
   return text;
 }
@@ -181,10 +184,12 @@ export async function handleInbound(msg) {
   //    Lloyd is multimodal here: he can read a receipt / see an item and then
   //    delegate to Carmine (groceries) or Shey (resale). Failures are non-fatal.
   let content;
+  let images;
   let triageText = msg.body || "";
   if (Array.isArray(msg.media) && msg.media.length) {
     const { imageBlocks } = await fetchInboundMedia(msg.media);
     if (imageBlocks.length) {
+      images = imageBlocks;
       content = [{ type: "text", text: msg.body?.trim() || "(photo attached, no caption)" }, ...imageBlocks];
       triageText = `${msg.body || ""}\n[${imageBlocks.length} photo(s) attached]`.trim();
     }
@@ -195,8 +200,9 @@ export async function handleInbound(msg) {
   const model = modelForComplexity(t.complexity, t.high_stakes);
 
   // 3. Run the chief of staff (or answer trivially on Haiku). recall keys off the
-  //    text; `content` carries the images when present.
-  const text = await runChief(msg.body || "(photo message)", model, { content });
+  //    text; `content` carries the images to Lloyd, `images` forwards them to any
+  //    specialist he delegates to this turn.
+  const text = await runChief(msg.body || "(photo message)", model, { content, images });
 
   // 4. Reply on the channel it came in on.
   if (msg.channel === "sms") await sendSms(msg.replyTo || msg.from, text);

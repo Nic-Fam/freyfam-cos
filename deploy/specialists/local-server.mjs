@@ -45,12 +45,13 @@ export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialis
       }
       const agent = body?.agent || pinnedAgent;
       const task = body?.task;
+      const images = Array.isArray(body?.images) ? body.images : undefined;
       if (!task || !String(task).trim()) return json(400, { error: "task is required" });
       if (pinnedAgent && agent !== pinnedAgent) {
         return json(403, { error: `this server serves "${pinnedAgent}", not "${agent}"` });
       }
       try {
-        const text = await runner(agent, task);
+        const text = await runner(agent, task, { images });
         json(200, { text });
       } catch (err) {
         log.error("specialist run failed", { agent, reason: err.message });
