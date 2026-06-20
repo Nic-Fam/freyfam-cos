@@ -120,6 +120,20 @@ export async function createEvent(input) {
 }
 
 /**
+ * Reply to an existing message IN-THREAD. Graph's reply action preserves the
+ * conversation + sets In-Reply-To/References, so the reply collapses into the same
+ * email thread in the client (true continuity, beyond a matching subject line).
+ * Replies to the original sender. Needs the front door to pass `graphMessageId`
+ * and to NOT delete the message. Uses Mail.Send/Read (already granted — no new
+ * consent). Falls back to sendMail when no messageId is available.
+ */
+export async function replyToMessage(messageId, text) {
+  await graph()
+    .api(`/users/${GRAPH.mailbox}/messages/${messageId}/reply`)
+    .post({ comment: String(text ?? "") });
+}
+
+/**
  * Send mail from the assistant mailbox. High-stakes: callers (the send_email
  * tool) confirm with the owner first, which covers work-domain sends under the
  * 2026-06-20 policy (no hard block; confirmation is the gate).

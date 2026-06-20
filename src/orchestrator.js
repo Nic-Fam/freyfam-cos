@@ -5,7 +5,7 @@ import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
-import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
@@ -151,13 +151,19 @@ export function replySubject(subject) {
   return /^re:\s/i.test(s) ? s : `Re: ${s}`;
 }
 
-export function transportFor(msg) {
+// deps injectable for tests; default to the real channel functions.
+export function transportFor(msg, { onSms = sendSms, onMail = sendMail, onReply = replyToMessage } = {}) {
   if (msg.channel === "sms") {
-    return { reply: (text) => sendSms(msg.replyTo || msg.from, text), mirror: noop };
+    return { reply: (text) => onSms(msg.replyTo || msg.from, text), mirror: noop };
   }
   if (msg.channel === "email") {
     return {
-      reply: (text) => sendMail({ to: msg.replyTo || msg.from, subject: replySubject(msg.subject), body: text }),
+      // Thread in-place when we have the original message id (header-level
+      // continuity); otherwise send fresh, retaining the subject line.
+      reply: (text) =>
+        msg.graphMessageId
+          ? onReply(msg.graphMessageId, text)
+          : onMail({ to: msg.replyTo || msg.from, subject: replySubject(msg.subject), body: text }),
       mirror: noop,
     };
   }

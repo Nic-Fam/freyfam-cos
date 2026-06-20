@@ -10,6 +10,28 @@ test("replySubject retains the email subject for continuity (no double Re:)", ()
   assert.equal(replySubject(undefined), "Re: your note");
 });
 
+test("email transport threads in-place when graphMessageId is present", async () => {
+  const calls = [];
+  const t = transportFor(
+    { channel: "email", from: "a@b.com", subject: "Tour", graphMessageId: "MSG123" },
+    { onReply: (id, text) => calls.push(["reply", id, text]), onMail: () => calls.push(["mail"]) }
+  );
+  await t.reply("see you then");
+  assert.deepEqual(calls, [["reply", "MSG123", "see you then"]]);
+});
+
+test("email transport falls back to sendMail with Re: subject when no message id", async () => {
+  const calls = [];
+  const t = transportFor(
+    { channel: "email", from: "a@b.com", subject: "Tour" },
+    { onMail: (a) => calls.push(a), onReply: () => calls.push("THREADED") }
+  );
+  await t.reply("hi");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].to, "a@b.com");
+  assert.equal(calls[0].subject, "Re: Tour");
+});
+
 test("transportFor gives reply+mirror per channel; mirror is a safe no-op", () => {
   for (const channel of ["sms", "email", "whatever"]) {
     const t = transportFor({ channel, from: "+1", replyTo: "+1" });
