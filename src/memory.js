@@ -42,8 +42,21 @@ function embedHash(text, dims = 64) {
 const STOPWORDS = new Set(
   "a an the of to in on for and or is are was were be been being it its this that these those i me my we our you your he she they them his her with at by from as do does did what whats when where how why who which".split(/\s+/)
 );
+// Crude, dependency-free stemmer so word forms match: "emails" -> "email",
+// "addresses" -> "address", "appointments" -> "appointment". It need not be
+// linguistically correct, only CONSISTENT across query + stored text (both run
+// through it), so plural/singular mismatches stop scoring 0. ("business" etc.
+// ending in -ss are left alone.)
+function stem(t) {
+  if (t.length > 4 && t.endsWith("ies")) return t.slice(0, -3) + "y"; // categories -> category
+  if (t.length > 4 && t.endsWith("es")) return t.slice(0, -2); // addresses -> address, boxes -> box
+  if (t.length > 3 && t.endsWith("s") && !t.endsWith("ss")) return t.slice(0, -1); // emails -> email
+  return t;
+}
 function tokenize(s) {
-  return (String(s).toLowerCase().match(/[a-z0-9]+/g) || []).filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+  return (String(s).toLowerCase().match(/[a-z0-9]+/g) || [])
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t))
+    .map(stem);
 }
 function termCounts(tokens) {
   const m = new Map();

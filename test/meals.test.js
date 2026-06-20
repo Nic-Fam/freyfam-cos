@@ -39,7 +39,10 @@ test("formatMealsContext groups by date; null when empty", () => {
     { date: "2026-06-20", mealType: "dinner", name: "Tacos" },
     { date: "2026-06-20", mealType: "breakfast", name: "Oatmeal" },
   ]);
-  assert.ok(ctx.includes("2026-06-20:"));
+  // Date appears as the group header. (When the fixture date happens to be the
+  // real "today", formatMealsContext appends " (today)", so don't require the
+  // colon to be adjacent — that made this test fail only on 2026-06-20.)
+  assert.ok(ctx.includes("2026-06-20"));
   // breakfast should render before dinner within the day
   assert.ok(ctx.indexOf("Oatmeal") < ctx.indexOf("Tacos"));
 });
