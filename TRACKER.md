@@ -106,7 +106,7 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
   with this codebase. Only the queue *message shape* is the contract (see
   `queue.js:9-11`). Pin that shape and this can proceed in total isolation.
 
-### C. Graph / mailbox token debug  `[~]`  — was the old build's open item
+### C. Graph / mailbox token debug  `[x]`  — DONE 2026-06-19
 
 Owns: `src/channels/graph.js`, `src/config.js` (GRAPH block only).
 
@@ -121,8 +121,6 @@ Owns: `src/channels/graph.js`, `src/config.js` (GRAPH block only).
       Nic@Freyfam.com) during the workstream-A email round-trip test, so Mail.Send
       consent is in place.
 - Parallel-safe: yes — isolated file. Needs real Graph creds (overlaps A on creds).
-- NOTE: C is effectively complete as a side effect of the A verification. Promote the
-  `[~]` heading to `[x]` once someone gives it a dedicated read.
 
 ### D. Fix the proactive path bugs  `[x]`  — DONE 2026-06-19
 
@@ -174,21 +172,27 @@ Owns: `src/memory.js`, `src/decisions.js`, new `data/` seed scripts. Interface
   `_smoke.mjs:16-20`
   + `test/memory.test.js` + new `test/decisions.test.js` pin the contracts (34/34 green).
 
-### F. Specialist tools  `[~]`  → `[ ]`
+### F. Specialist tools  `[x]`  — all six wired 2026-06-19
 
-Owns: `src/orchestrator.js` (`runSpecialist`, `tools`), `src/agents/*.md`, new tool
-modules under `src/channels/` or a new `src/tools/`.
+Owns: `src/specialists/runner.js`, `src/agents/tools.js` (per-agent registry),
+`src/agents/*.md`, the domain modules below.
 
-- [~] `runSpecialist` currently passes `tools: []` (`orchestrator.js:68`) — specialists
-      can't do anything yet
-- [ ] Reseller: saved-search fetchers for Poshmark / eBay / Vestiaire / RealReal / 1stDibs + stock inventory
-- [ ] Chef: meal planner + food-inventory read/write (shares the inventory model with reseller stock)
-- [ ] Finance: surfacing tools (read-only; **no money movement** per hard constraint)
-- [ ] Dev: scoped repo/deploy helpers
-- Parallel-safe: partially. New tool *modules* are isolated; wiring them into
-  `runSpecialist` touches the bottleneck file. Pattern: build each tool as a
-  standalone `{name, description, input_schema}` + handler in its own file, then
-  one short integration commit adds them to the list.
+`runSpecialist` (`src/specialists/runner.js`) loads each agent's persona + scoped
+tools from the `REGISTRY` in `src/agents/tools.js`. Every specialist also gets
+agent-scoped **memory** (recall/remember) and a **decision log** (log/list), so one
+domain's memory never pollutes another's. Hard constraint held: specialists only
+RETURN text and have side-effect-light tools — no outbound, no confirmation power.
+
+- [x] Finance (Patrick): `analyze_transactions` (pure spending analysis; **never
+      moves money**) — `src/finance.js`.
+- [x] Reseller (Shey): saved-search registry add/list/remove — `src/saved-searches.js`.
+- [x] Dev (Steve): change-proposal log propose/list (**never deploys**) — `src/proposals.js`.
+- [x] Chef (Carmine): meal planner + food-inventory read/write — `src/meals.js`.
+- [x] Security (Frank): findings add/list with severities — `src/security.js`.
+- [ ] FUTURE depth (not blocking): live marketplace fetchers for the resale sites
+      (Poshmark/eBay/Vestiaire/RealReal/1stDibs) — needs network + per-site selectors,
+      overlaps G (browser).
+- Tested across `test/finance|saved-searches|proposals|meals|security|tools.test.js`.
 
 ### G. Browser automation (Playwright)  `[~]`  — capability + tools landed 2026-06-19
 
