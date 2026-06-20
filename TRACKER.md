@@ -450,6 +450,46 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
   all touch `handleInbound`'s content-building, so do K's `reply()`/`mirror()`/content
   seam FIRST and hang I and L off it rather than racing the same function.
 
+### M. Voice calling  `[ ]`  — FUTURE SCOPE (not started)
+
+A third human channel alongside SMS and Slack: the family calls (or is called by)
+the assistant. Twilio Programmable Voice / ConversationRelay (we already have the
+Twilio account + number). **Read this before building — there's a real architecture
+tension**, so it splits into two tiers.
+
+**The tension:** the whole design is pull-only — the Mac is never publicly reachable
+(Twilio → Azure Function → queue → Mac pulls). A *live* voice agent needs a
+persistent **public WebSocket** (ConversationRelay / media streams) with
+conversation-latency response, which a queue round-trip can't meet and the home Mac
+must not expose. So real-time voice cannot live on Lloyd's Mac the way SMS does.
+
+**Tier 1 — async voice (fits the pull model, do first):**
+- [ ] **Inbound voicemail → text.** Call hits the number → Twilio records + transcribes
+      → the front door enqueues `{channel:"voice", body:<transcript>, …}` (+ optional
+      recording URL as media). Flows through the EXISTING pipeline; Lloyd replies by
+      SMS or callback. (This also closes the "forwarded-voicemail audio" media-gap note.)
+- [ ] **Outbound calls (notify / simple IVR).** Lloyd initiates via Twilio
+      `calls.create()` (outbound HTTP — no public endpoint needed); TwiML hosted in the
+      Azure front door. **High-stakes → confirm gate + `guards.js`** (placing a call on
+      the family's behalf), same posture as `send_email`/`place_order`.
+
+**Tier 2 — real-time conversational voice (needs Azure, like the specialists):**
+- [ ] Live two-way voice via **ConversationRelay** (ASR + TTS + streaming). The public
+      WebSocket + agent loop run **in Azure**, reusing `runChief`/`runSpecialist`
+      (transport-agnostic) — NOT on the home Mac. Treat it as another remote
+      participant in the hybrid topology, not a Lloyd-local channel.
+
+**Constraints / notes:**
+- Outbound voice is its own Twilio trust program (STIR/SHAKEN, Voice Integrity) —
+  registration before traffic, like A2P was for SMS. Skills available:
+  `twilio-voice-twiml`, `twilio-voice-outbound-calls`, `twilio-voice-conversation-relay`.
+- Hard constraints unchanged: a specialist never dials out; outbound calling stays a
+  Lloyd capability behind confirmation.
+- Recording/transcription has consent implications (two-party-consent states) — gate
+  before recording.
+- Parallel-safe: Tier 1 reuses the queue contract (add `channel:"voice"`) + front
+  door; Tier 2 is an Azure-side build independent of Lloyd. Sequence Tier 1 first.
+
 ---
 
 ## Suggested parallel session plan
