@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Nightly restart for the chief-of-staff daemon. A long-running Node process
+  caches imported modules in memory, so deployed CODE changes (and dep installs)
+  do NOT take effect until the daemon is restarted. This helper job kickstarts
+  com.freyfam.cos every night so a day's changes are picked up, and clears any
+  wedged in-memory state.
+
+  It is a SAFETY NET, not a substitute for restarting on deploy. Picked 4am: a
+  low-traffic hour, since a restart clears in-memory state (notably pending
+  approvals in confirm.js). Queued inbound messages are safe (they persist in the
+  Azure queue) and the heartbeat just resumes.
+
+  Install:
+    cp deploy/com.freyfam.cos.restart.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.freyfam.cos.restart.plist
+  (uid 501 below must match `id -u`.)
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.freyfam.cos.restart</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/launchctl</string>
+      <string>kickstart</string>
+      <string>-k</string>
+      <string>gui/501/com.freyfam.cos</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>4</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/nfrey2/freyfam-cos/cos.restart.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nfrey2/freyfam-cos/cos.restart.log</string>
+  </dict>
+</plist>
