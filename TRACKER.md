@@ -394,6 +394,60 @@ has the same property via Twilio, so it's consistent, not new.
 - Parallel-safe: the transport refactor (#2) touches `handleInbound`/`orchestrator.js`
   (coordinate); `slack.js` is otherwise a new isolated file + the `@slack/bolt` dep.
 
+### L. Document intake (PDF / .ics / .vcf) over email  `[ ]`  — designed, not built
+
+**Why email, not SMS:** MMS can't reliably carry PDFs/calendars (US carriers strip
+non-image MMS); the Graph mailbox `cos@freyfam.com` carries attachments natively.
+Sibling to **I** (now done — images over MMS → Claude vision): I = vision blocks from
+MMS photos; L = extracted text/structured data from email attachments. Both extend
+the same content-building step in `handleInbound` (see `media.js` for the pattern).
+Slack file uploads (K) become a second doc channel later.
+
+**Current gap:** the email front door folds subject+body to text and **drops
+attachments**; `media.js` is images-only, and documents need parsing, not vision.
+
+**Transport (recommended):** the daemon **fetches attachments via Graph**, reusing
+the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
+- Front door passes `graphMessageId` on the email payload and does NOT delete the
+  message (mark-read is fine).
+- Daemon fetches `/users/{mailbox}/messages/{id}/attachments` and parses.
+- Alt if message lifetime is a problem: front door → Blob + short-lived SAS URL
+  (the storage account already has a Blob endpoint), mirroring how MMS uses Twilio
+  media URLs. Do NOT inline bytes — Storage Queue messages cap at 64KB.
+
+**New daemon module `src/documents.js`** (parallel to `media.js`), route by type:
+- [ ] `application/pdf` → text extract (lightweight pure-JS parser, lazy-imported
+      like Playwright). Cap chars (`DOC_MAX_CHARS`) + note truncation so a big PDF
+      can't blow the token budget. Scanned/image-only PDFs out of scope v1 (future:
+      Claude-vision fallback via the existing image-block plumbing from I).
+- [ ] `text/calendar` (.ics) → parse event(s): summary, start/end, location,
+      attendees → structured summary. Natural feed for the **calendar/scheduling**
+      capability gap (Genet's "Claire").
+- [ ] `text/vcard` / `text/x-vcard` (.vcf) → parse contact → `remember` into memory.
+- [ ] Unknown types → skip + log (non-fatal), same posture as `media.js`.
+
+**Wiring & routing:**
+- [ ] Cross-repo contract: add `graphMessageId` (email) to the queue payload; pin
+      with a both-sides contract test (same discipline as B's `cos-queue.test.js`).
+- [ ] `handleInbound`: when an email has attachments, call `documents.js`, append the
+      extracted text/summary as content block(s), and augment the triage text
+      (`[PDF: invoice.pdf, 2pp]`) so routing can see it.
+- [ ] Route by document: receipt/invoice → finance (Patrick); grocery receipt →
+      chef (Carmine); calendar invite → Lloyd scheduling; contact → memory.
+
+**Hard constraints (unchanged):** read-only parsing; any resulting outbound still
+goes through Lloyd's `confirm.js` + `guards.js`; no new Graph consent (read scope
+already granted).
+
+- [ ] Tests `test/documents.test.js`: per-type parse on small fixtures,
+      skip-unsupported, char cap/truncation, no-attachment no-op (mirrors
+      `media`/`local-server` tests).
+- Deps: a PDF text extractor + an ICS/vCard parser (keep lightweight; lazy-import).
+- Parallel-safe: `documents.js` + tests are isolated; the `handleInbound` hook + the
+  `graphMessageId` contract overlap **I** and K's transport refactor — those three
+  all touch `handleInbound`'s content-building, so do K's `reply()`/`mirror()`/content
+  seam FIRST and hang I and L off it rather than racing the same function.
+
 ---
 
 ## Suggested parallel session plan
