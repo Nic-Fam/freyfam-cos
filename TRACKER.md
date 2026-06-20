@@ -5,7 +5,7 @@ Development tracker for getting the daemon from "scaffold that compiles" to
 architecture and hard constraints; this file tracks *state* and *who-can-do-what-
 in-parallel*.
 
-Last synced to code: 2026-06-18 (commit `884573d`, initial scaffold).
+Last synced to code: 2026-06-19 (commit `82a6423`).
 
 ## Status legend
 
@@ -16,13 +16,21 @@ Last synced to code: 2026-06-18 (commit `884573d`, initial scaffold).
 
 ## Where we actually are
 
-The initial scaffold is more complete than a typical day-0: every file in the
-architecture diagram exists and the happy-path code is written. What's missing is
-**verification against real services**, the **stubbed brains** (memory embeddings,
-specialist tools, browser), and a few **real bugs** in the proactive path.
+**The assistant is built and live.** Inbound (SMS via the deployed Azure front door +
+email) → triage → specialist → reply runs under launchd, hardened (dead-letter,
+structured logging, no-sleep) with a cost watchdog. All six agents (Lloyd, Patrick,
+Steve, Shey, Carmine, Frank) have real scoped tools reachable through the `delegate`
+seam. The Azure split shipped: finance/resale/chef run remote on Azure with
+managed-identity Table stores; Lloyd + Frank + Steve are the local Mac fleet.
+
+A → H are done; what remains is **hardware** (stand up the Mac minis + MacBook),
+two **external gates** (Twilio number clearance, cost-watchdog creds), a few **live
+verifies** (G browser), and one **deferred feature** (I, MMS intake). Details in the
+per-workstream sections and the topology section below.
 
 `_smoke.mjs` covers guards + confirm parser + memory round-trip with zero network.
-Run it anytime with `node _smoke.mjs` (no creds needed).
+Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
+suite (49 tests).
 
 ---
 
