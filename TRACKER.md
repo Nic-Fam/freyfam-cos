@@ -490,6 +490,46 @@ must not expose. So real-time voice cannot live on Lloyd's Mac the way SMS does.
 - Parallel-safe: Tier 1 reuses the queue contract (add `channel:"voice"`) + front
   door; Tier 2 is an Azure-side build independent of Lloyd. Sequence Tier 1 first.
 
+### N. Web search tool  `[ ]`  — designed, not built
+
+A read-only `search` capability (query → ranked results) so Lloyd can "look up an
+address / hours / a fact" and Shey can hunt listings. Distinct from `browse_page`,
+which reads ONE known URL; search finds the URLs. Natural pairing: search → then
+`browse_page` the best hit.
+
+**Build once, grant via the per-agent allowlist** (this is the use case that makes
+K#4's explicit allowlist worth finishing — it's how Shey gets search but Patrick
+can't, regardless of channel):
+
+| Persona | Search? | Why |
+|---------|---------|-----|
+| **Lloyd (chief)** | yes — primary | already owns `browse_page`; general lookups are the chief's job |
+| **Shey (resale)** | yes — needs it most | resale hunting *is* search (listings, comps, prices); building block for the deferred marketplace fetchers |
+| **Frank (security)** | yes, **scoped** | security/threat-intel lookups; prefer a curated source set over open web given Frank's tight posture |
+| **Carmine (chef)** | on demand | recipes / store hours — grant when a real need shows |
+| **Steve (dev)** | on demand | docs / SO lookups |
+| **Patrick (finance)** | **NO** | finance stays locked down (read-only bank data, no external reach) — search widens exactly the surface "Finn's lockdown" guards |
+
+**Scope:**
+- [ ] `src/tools/search.js` (or `channels/`): thin wrapper over a provider — Brave
+      Search API / Bing / SerpAPI, or a search MCP. Provider + key in `config.js` +
+      `.env`; degrade to a clear "search unavailable" if unset (Playwright pattern).
+- [ ] Expose as a `search` tool; grant to chief + resale via the `REGISTRY` in
+      `src/agents/tools.js` (Frank scoped; finance excluded by omission).
+- [ ] Result shape: `[{title, url, snippet}]` so the model can pick a URL to
+      `browse_page`. Cap result count.
+- [ ] Tests: result mapping + the allowlist (search present for chief/resale, ABSENT
+      for finance).
+
+**Constraints/notes:** read-only — no `confirm`/`guards` needed for the search call
+itself; acting on a result (buy/email) still hits `confirm.js` + `guards.js`.
+**Privacy:** query text leaves the network to the provider — same trade as
+Twilio/Slack, so be deliberate about the provider. For remote specialists (Shey on
+Azure) the tool runs in their env; transport-agnostic, no special handling.
+- Parallel-safe: mostly — `search.js` is a new isolated file; granting it touches the
+  `REGISTRY` (shared with F) and the chief tool list in `orchestrator.js`. Pairs with
+  finishing K#4 (explicit allowlist).
+
 ---
 
 ## Suggested parallel session plan
