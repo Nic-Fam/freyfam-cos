@@ -13,15 +13,30 @@
 // same value the Function App calls AzureWebJobsStorage).
 
 import { TableClient } from "@azure/data-tables";
+import { DefaultAzureCredential } from "@azure/identity";
 
-const CONN = () => process.env.AZURE_STORAGE_CONNECTION_STRING;
 const TZ = process.env.HOUSEHOLD_TZ || "America/Los_Angeles";
 
+// Auth mirrors src/stores/collection.js so this SAME module works in-process on
+// Lloyd (connection string) and on chef's Azure Function (managed identity,
+// scoped to chef's own meal tables on the specialists account). Precedence:
+//   COS_TABLE_CONNECTION_STRING     -> explicit string (local tests / specialists acct)
+//   COS_TABLE_ENDPOINT + DefaultAzureCredential -> on the chef Function (MI)
+//   AZURE_STORAGE_CONNECTION_STRING -> legacy/local default
+let _cred;
 function table(name) {
-  return TableClient.fromConnectionString(CONN(), name);
+  const cs = process.env.COS_TABLE_CONNECTION_STRING || process.env.AZURE_STORAGE_CONNECTION_STRING;
+  const endpoint = process.env.COS_TABLE_ENDPOINT;
+  if (endpoint && !cs) {
+    _cred ||= new DefaultAzureCredential();
+    return new TableClient(endpoint, name, _cred);
+  }
+  return TableClient.fromConnectionString(cs, name);
 }
+// Tables are pre-created at provision time. On the Function the table-scoped MI
+// cannot create tables (a service-level op), so tolerate 403 as well as 409.
 async function ensure(client) {
-  try { await client.createTable(); } catch (e) { if (e.statusCode !== 409) throw e; }
+  try { await client.createTable(); } catch (e) { if (e.statusCode !== 409 && e.statusCode !== 403) throw e; }
 }
 
 // ===========================================================================
