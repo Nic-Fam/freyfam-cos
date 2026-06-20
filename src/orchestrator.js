@@ -5,11 +5,12 @@ import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
-import { recentMailSignals, sendMail } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
+import { extractDocuments } from "./documents.js";
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -213,6 +214,28 @@ export async function runChief(body, model, { content, images, onDelegate } = {}
   return text;
 }
 
+// Materialize email attachments: inline {bytes|contentBytes} from the front door,
+// or fetched from the mailbox via Graph when a graphMessageId is present. Non-fatal.
+async function collectAttachments(msg) {
+  if (Array.isArray(msg.attachments) && msg.attachments.length) {
+    return msg.attachments
+      .map((a) => ({
+        name: a.name,
+        contentType: a.contentType,
+        bytes: a.bytes ?? (a.contentBytes ? Buffer.from(a.contentBytes, "base64") : undefined),
+      }))
+      .filter((a) => a.bytes);
+  }
+  if (msg.graphMessageId) {
+    try {
+      return await fetchAttachments(msg.graphMessageId);
+    } catch {
+      return []; // an attachment-fetch failure must not drop the message
+    }
+  }
+  return [];
+}
+
 /**
  * Main entry for an inbound family message. Triage first (cheap), route to the
  * chief at the right tier, then deliver via the transport (reply on the inbound
@@ -224,19 +247,35 @@ export async function handleInbound(msg, transport = transportFor(msg)) {
   // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
   if (tryResolveConfirmation(msg.body)) return;
 
-  // 1. If the message carried photos (MMS), fetch them into Claude image blocks.
-  //    Lloyd is multimodal here: he can read a receipt / see an item and then
-  //    delegate to Carmine (groceries) or Shey (resale). Failures are non-fatal.
-  let content;
+  // 1. Gather non-text content (all non-fatal): MMS photos -> Claude image blocks
+  //    (vision); email attachments -> document text blocks (PDF/.ics/.vcf). Lloyd
+  //    is multimodal here: read a receipt photo or a PDF invoice, then delegate to
+  //    Carmine (groceries) / Shey (resale) / Patrick (finance).
+  const extraBlocks = [];
+  const triageNotes = [];
   let images;
-  let triageText = msg.body || "";
+
   if (Array.isArray(msg.media) && msg.media.length) {
     const { imageBlocks } = await fetchInboundMedia(msg.media);
     if (imageBlocks.length) {
-      images = imageBlocks;
-      content = [{ type: "text", text: msg.body?.trim() || "(photo attached, no caption)" }, ...imageBlocks];
-      triageText = `${msg.body || ""}\n[${imageBlocks.length} photo(s) attached]`.trim();
+      images = imageBlocks; // forwarded to specialists on delegate
+      extraBlocks.push(...imageBlocks);
+      triageNotes.push(`${imageBlocks.length} photo(s)`);
     }
+  }
+
+  const attachments = await collectAttachments(msg);
+  if (attachments.length) {
+    const { blocks, summaries } = await extractDocuments(attachments);
+    extraBlocks.push(...blocks);
+    triageNotes.push(...summaries);
+  }
+
+  let content;
+  let triageText = msg.body || "";
+  if (extraBlocks.length) {
+    content = [{ type: "text", text: msg.body?.trim() || "(attachment, no message)" }, ...extraBlocks];
+    triageText = [msg.body || "", `[${triageNotes.join("; ")}]`].filter((s) => s.trim()).join("\n").trim();
   }
 
   // 2. Cheap classification -> pick the cheapest sufficient model.

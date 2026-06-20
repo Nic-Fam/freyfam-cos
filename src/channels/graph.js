@@ -44,6 +44,27 @@ export async function recentMailSignals({ top = 15 } = {}) {
 }
 
 /**
+ * Fetch file attachments for one message (workstream L: document intake). The
+ * front door passes the `graphMessageId`; the daemon pulls the bytes via the
+ * app-only Mail.Read it already has (no new consent). Returns materialized
+ * {name, contentType, bytes} for `documents.extractDocuments`. Non-file
+ * attachments (item/reference) are skipped.
+ */
+export async function fetchAttachments(messageId) {
+  if (!messageId) return [];
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/messages/${messageId}/attachments`)
+    .get();
+  return (res.value || [])
+    .filter((a) => a["@odata.type"] === "#microsoft.graph.fileAttachment" && a.contentBytes)
+    .map((a) => ({
+      name: a.name,
+      contentType: a.contentType,
+      bytes: Buffer.from(a.contentBytes, "base64"),
+    }));
+}
+
+/**
  * Send mail from the assistant mailbox. Outbound guard runs FIRST so the
  * read-only work domains can never receive a message from the assistant.
  */
