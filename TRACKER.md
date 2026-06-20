@@ -507,13 +507,17 @@ first, verify locally, then provision**.
         `saved-searches.js`) hit `mkdir ./data` EACCES on the read-only Flex FS and the
         agent narrated it as a "permission error"; RBAC/MI were fine all along. Lesson:
         **redeploy after a store migration** before blaming Azure.
-      - [ ] `meals.js` (chef) — **DECISION NEEDED, not a mechanical migration.** meals is
-        a faithful port that SHARES the same Tables as the Azure-repo meal feature
-        (connection-string based, shared household data), so it can't move to an
-        isolated per-specialist MI table without breaking that sharing. Options: keep
-        chef LOCAL (works today); give the chef Function the shared-account connection
-        string (broader, account-level access — isolation tradeoff); or relocate the
-        meal tables (coordinated with the Azure repo). Until decided, **chef stays local.**
+      - [x] **`meals.js` (chef) — DONE + LIVE via Option 3 (2026-06-19).** Relocated the
+        meal tables (mealPlans, inventory, inventoryEvents) to the specialists storage
+        account and switched `meals.js` to choose auth like `collection.js` (connection
+        string locally, managed identity + `COS_TABLE_ENDPOINT` on the Function).
+        `ensure()` now tolerates 403 (table-scoped MI can't create tables; pre-created
+        at provision). chef's MI granted on all 3 meal tables + brainchef. Verified:
+        `delegate` → remote chef Flex Function → `plan_meal` wrote to mealPlans on the
+        specialists account via MI. **chef flipped remote.** Migrated 2 ledger rows.
+        CROSS-REPO TODO: the Azure-repo meal feature still points at the old account
+        (`freyfamassistant8a4f`, now empty) — repoint it to `freyfamcosspec31547` or
+        retire it. Done in THIS repo; that change lives in `~/freyfam-assistant`.
       - [ ] `memory.js` — owned by the parallel recall workstream; still local JSON, so
         remote specialists' `recall`/`remember` don't persist yet (decisions + saved
         searches do). finance/resale work fine without it for now.
@@ -521,8 +525,9 @@ first, verify locally, then provision**.
   (`npm run specialist`) — verified this session: same `{agent,task}->text` contract,
   x-functions-key auth (401), agent pin (403), round-trip via `delegate`. **Steve →
   Mac mini next week is plug-and-play**: run it with `COS_AGENT=dev` + a LAN key, set
-  `COS_SPECIALIST_URL_DEV`. NOTE: an orphaned Azure `freyfam-cos-security` app remains
-  from before the topology change (security is local now) — tear down when convenient.
+  `COS_SPECIALIST_URL_DEV`. The orphaned Azure `freyfam-cos-security` app was TORN
+  DOWN 2026-06-19 (security is local now); its empty `brainsecurity` table remains
+  on the storage account (harmless, ~$0). Azure now hosts exactly finance/resale/chef.
 - [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
       (edit machine-specific paths in `deploy/com.freyfam.cos.plist`), `pmset`/
       `caffeinate` for lid-closed always-on
