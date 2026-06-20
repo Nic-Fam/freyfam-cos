@@ -317,6 +317,60 @@ Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
 - Parallel-safe: yes — isolated except a one-line heartbeat call. Independent of all
   other workstreams; only shares `.env` and `config.js` with the rest.
 
+### K. Slack Socket Mode — the "desk" channel  `[ ]`  — designed, not built
+
+**Principle: port the method, not the hardware.** Genet's Mac Minis exist to
+partition agents that run as separate processes and talk over Slack. We get the
+three things that actually make that work — **channels as the interface**, the
+**chief delegating where you can watch**, and the **channel boundary doubling as a
+permission boundary** — without buying machines. Software partitioning (allowlists +
+`guards.js` + `confirm.js` + not handing every persona every credential) replaces
+physical partitioning.
+
+**Why Socket Mode:** the Mac opens an OUTBOUND websocket to Slack and receives
+events with no public endpoint — the same pull-only property we already chose for
+SMS via the Azure queue. Both human channels stay pull-only; the home machine is
+never publicly reachable. (App-level `xapp-` token with `connections:write` + a bot
+token.)
+
+**Hybrid split:** SMS over the Azure queue stays the remote, terse, approval
+channel; Slack over Socket Mode becomes the desk channel — rich, organized by agent,
+observable. Both feed the SAME orchestrator, brain, guards, and confirm gate.
+
+**Channel topology (map to the current 6-agent roster):**
+- `#cos` / DM with the bot = 1:1 with Lloyd (chief). Primary surface.
+- `#finance #dev #resale #chef #security` = posting forces that persona — the channel
+  just sets which agent the inbound routes to. (Per-agent channels, all six.)
+- `#command` = observability win: you direct Lloyd here and the daemon mirrors every
+  delegation into it ("Lloyd → Patrick: reconcile October card") plus the result.
+- `#all-agents` = optional full-transcript "cooking" mirror.
+
+**Scaffold changes (the one real refactor + hooks):**
+1. [ ] `src/channels/slack.js` via `@slack/bolt` Socket Mode: map channel→agent, call
+       `handleInbound`, post replies. **Hard constraint:** Slack is a new outbound
+       channel, so it MUST call `assertOutboundAllowed` before sending (CLAUDE.md rule).
+2. [ ] **Transport refactor (the one real code change):** replace `handleInbound`'s
+       `if channel === "sms"` switch with a small transport object carrying `reply()`
+       and `mirror()`. SMS, email, and Slack each implement it. Everything else hangs
+       off this.
+3. [ ] `onDelegate` hook in `orchestrator.js` → fires `mirror()` into `#command` on
+       each `delegate` call + result. NOTE: works whether the specialist runs
+       in-process OR remote (the `delegate` seam already abstracts that), so the
+       "watch the team" view holds for the current hybrid topology.
+4. [~] **Per-agent tool allowlist (Finn's lockdown).** PARTLY DONE: the `REGISTRY` in
+       `src/agents/tools.js` already scopes tools per agent (finance gets read-only
+       analysis, no send). Remaining: make the allowlist explicit/enforced as the
+       per-role boundary regardless of channel, so a channel can't widen an agent.
+5. [ ] Confirmation upgrade: Slack Block Kit Approve/Deny buttons via Socket Mode,
+       keeping the SMS `YES <code>` path as the away-from-desk fallback.
+
+**Flag (local-first tension):** Slack routes household conversation through Slack's
+cloud — a privacy trade vs the local brain. Worth a conscious decision; SMS already
+has the same property via Twilio, so it's consistent, not new.
+
+- Parallel-safe: the transport refactor (#2) touches `handleInbound`/`orchestrator.js`
+  (coordinate); `slack.js` is otherwise a new isolated file + the `@slack/bolt` dep.
+
 ---
 
 ## Suggested parallel session plan
