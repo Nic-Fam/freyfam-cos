@@ -431,10 +431,13 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
 - [x] `handleInbound` gathers MMS image blocks AND email doc text blocks through one
       path (`collectAttachments` + `extractDocuments`), augmenting triage text.
 - [x] `graph.fetchAttachments(messageId)` pulls bytes via the granted `Mail.Read`.
-- [ ] **Cross-repo (front door, needs other repo):** pass `graphMessageId` on the
-      email payload (and don't delete the message); pin with a both-sides contract
-      test. Until then the daemon side is dormant (no `graphMessageId`/`attachments`
-      arrive). Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
+- [x] **Cross-repo (front door):** DONE on `~/freyfam-assistant` branch
+      `cos-front-door` (commit `cb486dc`) — email enqueue now passes `subject` +
+      `graphMessageId`, message marked read but NOT deleted, contract test added
+      (147/147). Also carries MMS `media` (commit `4d41630`, workstream I).
+      **PENDING DEPLOY:** merge `cos-front-door` → `main` so CI deploys it
+      (`COS_ENQUEUE` already true). Until deployed, the daemon side stays dormant.
+      Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
 - [ ] Routing polish: nudge receipts→finance, invites→Lloyd scheduling, etc. (the
       chief already delegates from the extracted text; this is tuning, not blocking).
 
