@@ -565,7 +565,7 @@ Azure) the tool runs in their env; transport-agnostic, no special handling.
   `REGISTRY` (shared with F) and the chief tool list in `orchestrator.js`. Pairs with
   finishing K#4 (explicit allowlist).
 
-### O. Persona depth + per-agent brains (the "soul")  `[ ]`  — refinement
+### O. Persona depth + per-agent brains (the "soul")  `[~]`  — souls + rules DONE 2026-06-20; memory seeds need family data
 
 The agents work, but their personas are thin and uneven (dev 86w, finance 105w,
 resale 111w vs chef/security/chief ~290w) and read as role blurbs, not characters.
@@ -575,26 +575,29 @@ depth and a genuine per-agent brain. Owns: `src/agents/*.md`, per-agent memory s
 the rules layer.
 
 **Soul template (apply to all six, level them up):**
-- [ ] Standardize each `agents/*.md` to: **Identity & voice** (personality, tone, a
-      distinct character) · **Expertise** (what they're genuinely good at) · **How I
-      work / decide** (judgment style, when to push back, when to defer to the chief) ·
-      **Domain rules** (always-true policies for their beat) · **Hard rules** ·
-      **Style**. Today only the last two are consistent.
-- [ ] **Priority = the thin + newest personas:** dev (Steve), finance (Patrick),
-      resale (Shey) need the most; then deepen chef (Carmine) + security (Frank), which
-      were added fast; chief (Lloyd) last (already richest).
+- [x] **Standardized all six `agents/*.md` (2026-06-20)** to: **Identity & voice** ·
+      **Expertise** · **How I work / decide** · **Domain rules** · **Hard rules** ·
+      **Style**. Thin ones (Steve/Patrick/Shey) got real character + judgment; chef +
+      security gained Identity/voice + decision style; Lloyd got Identity/voice +
+      How-I-decide. Hard rules preserved verbatim. Also fixed a STALE rule in Frank's
+      persona (work-domain email is confirm-not-block since 2026-06-20; specialists have
+      no outbound anyway). No fabricated family facts — personas point to recall_memory
+      for tastes/allergies/etc. rather than asserting them.
 
 **Per-agent brain (beyond the persona text):**
-- [ ] **Seed each specialist's memory** with durable domain knowledge (recall is
-      already agent-scoped): Carmine → allergies/dislikes (e.g. "no nuts for Fox"),
-      equipment, go-to meals; Frank → home-security devices, network, alarm/camera
-      setup; Shey → target brands/sizes, saved searches; Patrick → accounts, budgets,
-      recurring bills; Steve → the stack, repos, deploy targets.
-- [ ] **Per-agent domain rules.** The house-rules layer (`src/rules.js`) is chief-only
-      today (injected in `runChief`). Extend it so specialists get their OWN always-on
-      rules (e.g. Carmine: "never plan a meal with nuts"; Frank: "never advise
-      disarming without confirmation"), injected in `runSpecialist`. Same reliability
-      argument as the chief's rules (always-on, not recall lottery).
+- [ ] **Seed each specialist's memory** with durable domain knowledge — NEEDS REAL
+      FAMILY DATA from Nic (don't fabricate): Carmine → allergies/dislikes, equipment,
+      go-to meals; Frank → home-security devices, network, alarm/camera setup; Shey →
+      target brands/sizes; Patrick → accounts, budgets, recurring bills; Steve → the
+      stack, repos, deploy targets. Add as agent-scoped entries in `data/seed-notes.json`
+      (`meta.agent`) then `npm run seed`.
+- [x] **Per-agent domain rules (2026-06-20).** `src/rules.js` gained `getAgentRules`/
+      `formatAgentRules` reading an optional `agentRules` map in the same
+      `house-rules.json`; `runSpecialist` now injects a local-time line + the agent's
+      standing rules (always-on, not recall lottery), mirroring `runChief`. Clock kept
+      inline to avoid a delegate->runner->orchestrator circular import.
+      `house-rules.example.json` documents the shape. The family fills in real per-agent
+      rules (e.g. Carmine: "never plan nuts for Fox"). `test/rules.test.js`.
 - [x] **Decision log per agent** — already live (`data/decisions/<agent>.md` + `.json`
       written via `log_decision`/`logDecision`). Refinement: make sure every specialist
       actually uses it, and surface a "what did you decide and why" review per agent.
