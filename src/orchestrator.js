@@ -255,12 +255,30 @@ function toolHandlers({ images, onDelegate } = {}) {
  * inbound channel, or notify the owner). Shared by inbound handling and the
  * proactive heartbeat, so the heartbeat no longer fakes an inbound SMS to itself.
  */
+// Family-local clock. `toISOString()` emits UTC, which made Lloyd think it was
+// ~1:30am when it was early evening Pacific; the house rules ("during the
+// workday") also need local time. Render an unambiguous local string + the zone.
+const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
+export function nowInFamilyTz(now = new Date()) {
+  const local = new Intl.DateTimeFormat("en-US", {
+    timeZone: FAMILY_TZ,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(now);
+  return `${local} (${FAMILY_TZ})`;
+}
+
 export async function runChief(body, model, { content, images, onDelegate } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
   const volatile = [
-    `Now: ${new Date().toISOString()}`,
+    `Now: ${nowInFamilyTz()}`,
     formatHouseRules(rules),
     mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
   ]

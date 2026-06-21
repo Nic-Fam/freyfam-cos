@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { transportFor, wrapDelegateWithMirror, replySubject } from "../src/orchestrator.js";
+import { transportFor, wrapDelegateWithMirror, replySubject, nowInFamilyTz } from "../src/orchestrator.js";
+
+test("nowInFamilyTz renders Pacific local time, not UTC (the 1:30am bug)", () => {
+  // 01:30 UTC is 6:30 PM the PREVIOUS day in Pacific (PDT in June).
+  const s = nowInFamilyTz(new Date("2026-06-21T01:30:00Z"));
+  assert.match(s, /Saturday/);        // June 20 local, not the 21st
+  assert.match(s, /June 20, 2026/);
+  assert.match(s, /6:30\s?PM/);       // evening, not 1:30 AM
+  assert.match(s, /PDT/);             // zone is shown so the model can't misread
+});
 
 test("replySubject retains the email subject for continuity (no double Re:)", () => {
   assert.equal(replySubject("Dentist for Fox"), "Re: Dentist for Fox");
