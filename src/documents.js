@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
@@ -97,17 +98,26 @@ export function parseVcard(text) {
   return { kind: "contact", contacts, text: lines.join("\n"), summary: `${contacts.length} contact(s)` };
 }
 
-// PDF needs a binary parser. Lazy-import so the daemon/tests run without it; if
-// it's not installed we skip the attachment (logged) rather than crash.
+// PDF needs a binary parser (pdf-parse v1, the classic `pdf(buffer) -> {text}` API).
+// Loaded lazily so the daemon/tests run without it; if it's not installed we skip
+// the attachment (logged) rather than crash. We use createRequire, NOT import():
+// pdf-parse v1's index runs a debug block that reads a test file when loaded as an
+// ES module (no module.parent), which throws. require() sets module.parent and
+// skips that block. `importer` stays injectable for tests.
 export async function parsePdf(bytes, { importer } = {}) {
   let pdfParse;
   try {
-    const load = importer || (() => import("pdf-parse"));
-    const mod = await load();
-    pdfParse = mod.default || mod;
+    if (importer) {
+      const mod = await importer();
+      pdfParse = mod.default || mod;
+    } else {
+      const require = createRequire(import.meta.url);
+      pdfParse = require("pdf-parse");
+    }
   } catch {
     return null; // parser not installed -> caller skips
   }
+  if (typeof pdfParse !== "function") return null;
   const out = await pdfParse(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
   return { kind: "pdf", text: out.text || "", summary: `PDF${out.numpages ? `, ${out.numpages}pp` : ""}` };
 }

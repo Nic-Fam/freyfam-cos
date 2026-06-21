@@ -21,6 +21,7 @@
     "@azure/storage-queue": "^12.25.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "dotenv": "^16.4.7",
+    "pdf-parse": "^1.1.1",
     "twilio": "^5.4.0"
   },
   "optionalDependencies": {
