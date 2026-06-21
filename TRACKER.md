@@ -576,6 +576,25 @@ the soul — tracked in **M** (voice), tabled for now. Genet parity: our `agents
   The one shared touch is extending `runSpecialist` to inject per-agent rules (small,
   in `src/specialists/runner.js`). Do that once, then personas/seeds fan out cleanly.
 
+### P. Morning digest (ported, Lloyd-composed)  `[x]`  — LIVE 2026-06-20
+
+Daily morning digest, ported from the legacy assistant's 7am timer. Under the split,
+Lloyd COMPOSES it by delegating (`src/digest.js` runs `runChief` with a brief; the
+agent loop calls `list_calendar`, `fox_today`, and delegates to chef/finance/security/
+resale). Fires once per local day in a morning window (`shouldRunDigest`) via the
+heartbeat.
+- [x] Delivered over BOTH channels: owner SMS + family email (`DIGEST_EMAIL_TO`),
+      independent via `Promise.allSettled` so a blocked channel (Twilio) can't stop
+      the other. Email is the reliable path until the number clears.
+- [x] **Fox at Bright Horizons + wardrobe hint** (`src/fox.js`): reads the same
+      `foxDailyContext` table the legacy used; `deriveClothingHint` flags paint/messy
+      → old clothes, water → full change + towel. `fox_today`/`set_fox_day` tools; a
+      house rule files each Bright Horizons email via `set_fox_day` so it stays fresh.
+- [x] **Legacy timer gated + DEPLOYED** (`~/freyfam-assistant` `main` `37f4075`): the
+      old morning-digest skips when `COS_ENQUEUE` is on, so no double digest.
+- Freshness note: today's Fox row is empty until the next Bright Horizons email is
+  filed; the digest just skips Fox's section until then. 95/95 daemon tests pass.
+
 ---
 
 ## Suggested parallel session plan
