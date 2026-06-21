@@ -534,6 +534,48 @@ Azure) the tool runs in their env; transport-agnostic, no special handling.
   `REGISTRY` (shared with F) and the chief tool list in `orchestrator.js`. Pairs with
   finishing K#4 (explicit allowlist).
 
+### O. Persona depth + per-agent brains (the "soul")  `[ ]`  — refinement
+
+The agents work, but their personas are thin and uneven (dev 86w, finance 105w,
+resale 111w vs chef/security/chief ~290w) and read as role blurbs, not characters.
+Genet's edge is that each agent has a real **soul** (e.g. Sylvie = "creative, bubbly
+teacher") plus its own memory + decision log. This workstream gives each persona
+depth and a genuine per-agent brain. Owns: `src/agents/*.md`, per-agent memory seeds,
+the rules layer.
+
+**Soul template (apply to all six, level them up):**
+- [ ] Standardize each `agents/*.md` to: **Identity & voice** (personality, tone, a
+      distinct character) · **Expertise** (what they're genuinely good at) · **How I
+      work / decide** (judgment style, when to push back, when to defer to the chief) ·
+      **Domain rules** (always-true policies for their beat) · **Hard rules** ·
+      **Style**. Today only the last two are consistent.
+- [ ] **Priority = the thin + newest personas:** dev (Steve), finance (Patrick),
+      resale (Shey) need the most; then deepen chef (Carmine) + security (Frank), which
+      were added fast; chief (Lloyd) last (already richest).
+
+**Per-agent brain (beyond the persona text):**
+- [ ] **Seed each specialist's memory** with durable domain knowledge (recall is
+      already agent-scoped): Carmine → allergies/dislikes (e.g. "no nuts for Fox"),
+      equipment, go-to meals; Frank → home-security devices, network, alarm/camera
+      setup; Shey → target brands/sizes, saved searches; Patrick → accounts, budgets,
+      recurring bills; Steve → the stack, repos, deploy targets.
+- [ ] **Per-agent domain rules.** The house-rules layer (`src/rules.js`) is chief-only
+      today (injected in `runChief`). Extend it so specialists get their OWN always-on
+      rules (e.g. Carmine: "never plan a meal with nuts"; Frank: "never advise
+      disarming without confirmation"), injected in `runSpecialist`. Same reliability
+      argument as the chief's rules (always-on, not recall lottery).
+- [x] **Decision log per agent** — already live (`data/decisions/<agent>.md` + `.json`
+      written via `log_decision`/`logDecision`). Refinement: make sure every specialist
+      actually uses it, and surface a "what did you decide and why" review per agent.
+
+**Constraints / cross-refs:** specialists still only RETURN text (hard rule); souls
+don't grant new powers. The literal per-persona **voice** (TTS) is the audible side of
+the soul — tracked in **M** (voice), tabled for now. Genet parity: our `agents/*.md`
+= her `soul.md`; our `data/decisions/<agent>.md` = her `decision.md`.
+- Parallel-safe: **yes, mostly per-agent** — each persona/seed is an independent file.
+  The one shared touch is extending `runSpecialist` to inject per-agent rules (small,
+  in `src/specialists/runner.js`). Do that once, then personas/seeds fan out cleanly.
+
 ---
 
 ## Suggested parallel session plan
