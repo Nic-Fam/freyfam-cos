@@ -585,12 +585,20 @@ the rules layer.
       for tastes/allergies/etc. rather than asserting them.
 
 **Per-agent brain (beyond the persona text):**
-- [ ] **Seed each specialist's memory** with durable domain knowledge — NEEDS REAL
+- [x] **Conversational path for the family to add memory + rules over time
+      (2026-06-20).** Nic/Shelli no longer edit JSON + restart. Messaging Lloyd does it:
+      `remember` takes an optional `agent` (seed a specialist's brain or shared);
+      `add_rule`/`list_rules`/`remove_rule` manage standing rules (house or per-agent) in
+      `house-rules.json` via `rules.js` `addRule`/`removeRule` (idempotent, index-or-text
+      removal, agent validation, key-preserving). Rules re-read per turn → live on the
+      next message, no restart. Hand-editing the JSON + `npm run seed` stays for bulk/
+      power use. Chief persona instructs Lloyd to capture facts + always/never rules.
+- [ ] **Bulk-seed each specialist's memory** with durable domain knowledge — NEEDS REAL
       FAMILY DATA from Nic (don't fabricate): Carmine → allergies/dislikes, equipment,
       go-to meals; Frank → home-security devices, network, alarm/camera setup; Shey →
       target brands/sizes; Patrick → accounts, budgets, recurring bills; Steve → the
-      stack, repos, deploy targets. Add as agent-scoped entries in `data/seed-notes.json`
-      (`meta.agent`) then `npm run seed`.
+      stack, repos, deploy targets. Either tell Lloyd as they come up (above) or add
+      agent-scoped entries in `data/seed-notes.json` (`meta.agent`) then `npm run seed`.
 - [x] **Per-agent domain rules (2026-06-20).** `src/rules.js` gained `getAgentRules`/
       `formatAgentRules` reading an optional `agentRules` map in the same
       `house-rules.json`; `runSpecialist` now injects a local-time line + the agent's
