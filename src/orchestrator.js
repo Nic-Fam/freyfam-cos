@@ -98,7 +98,8 @@ const tools = [
   },
   {
     name: "list_calendar",
-    description: "List upcoming events on the family calendar (read-only).",
+    description:
+      "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `calendars` field naming whose calendar it is on. Defaults to the next several days; pass `days: 1` for just today (e.g. the morning digest).",
     input_schema: { type: "object", properties: { top: { type: "number" } } },
   },
   {
@@ -307,7 +308,7 @@ function toolHandlers({ images, onDelegate } = {}) {
     // The schema stays {agent, task}; `images` come from context, not the model.
     // The wrapper also mirrors the handoff + result to the transport's observability.
     delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
-    list_calendar: async ({ top } = {}) => JSON.stringify(await listEvents({ top })),
+    list_calendar: async ({ top, days } = {}) => JSON.stringify(await listEvents({ top, days })),
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),
     ingest_fox_curriculum: async ({ url }) => {

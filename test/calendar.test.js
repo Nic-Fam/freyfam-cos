@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildEventPayload } from "../src/channels/graph.js";
+import { buildEventPayload, familyDateWindow } from "../src/channels/graph.js";
 
 test("buildEventPayload requires subject + start", () => {
   assert.throws(() => buildEventPayload({ start: "2026-06-25T14:00:00" }), /subject is required/);
@@ -22,6 +22,19 @@ test("buildEventPayload maps attendees and defaults end + showAs", () => {
   );
   assert.equal(p.attendees[0].type, "required");
   assert.ok(p.start.dateTime && p.start.timeZone, "start shaped as Graph dateTime");
+});
+
+test("familyDateWindow spans [start-of-today, +days] as naive local datetimes", () => {
+  // Noon UTC on 6/21 is still 6/21 in America/Los_Angeles (UTC-7), so the day is stable.
+  const w = familyDateWindow(1, new Date("2026-06-21T19:00:00Z"));
+  assert.equal(w.startDateTime, "2026-06-21T00:00:00");
+  assert.equal(w.endDateTime, "2026-06-22T00:00:00");
+});
+
+test("familyDateWindow rolls the end date across a month boundary", () => {
+  const w = familyDateWindow(7, new Date("2026-06-28T19:00:00Z"));
+  assert.equal(w.startDateTime, "2026-06-28T00:00:00");
+  assert.equal(w.endDateTime, "2026-07-05T00:00:00");
 });
 
 test("buildEventPayload carries showAs=free + location (House Cleaning rule)", () => {

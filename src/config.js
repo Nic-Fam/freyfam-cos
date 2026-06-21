@@ -62,7 +62,16 @@ export const GRAPH = {
   tenantId: process.env.GRAPH_TENANT_ID,
   clientId: process.env.GRAPH_CLIENT_ID,
   clientSecret: process.env.GRAPH_CLIENT_SECRET,
-  mailbox: process.env.GRAPH_MAILBOX || "cos@freyfam.com", // assistant@ kept as an alias
+  mailbox: process.env.GRAPH_MAILBOX || "cos@freyfam.com", // mail in/out + attachments; assistant@ is an alias
+  // Family calendars Lloyd READS and merges (the real schedule lives here, not on
+  // cos@). App-only Calendars.ReadWrite reaches any tenant mailbox, so no sharing
+  // needed. Comma-separated.
+  calendars: (process.env.GRAPH_CALENDARS || "nic@freyfam.com,shelli@freyfam.com")
+    .split(",").map((s) => s.trim()).filter(Boolean),
+  // Where NEW events are created so they land on the family calendar Lloyd reads.
+  calendarWrite: process.env.GRAPH_CALENDAR_WRITE || "nic@freyfam.com",
+  // How many days forward the schedule view spans (from start of today, local).
+  calendarDays: Number(process.env.GRAPH_CALENDAR_DAYS ?? 7),
 };
 
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;

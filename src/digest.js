@@ -20,7 +20,8 @@ const log = createLogger("digest");
 const DIGEST_PROMPT = `It is morning. Compose a brief MORNING DIGEST for the family, then output ONLY the digest text (it is sent as a message, so no preamble).
 
 Gather what you need first:
-- Today's schedule: call list_calendar.
+- Today's schedule: call list_calendar with days 1 (it merges Nic's and Shelli's
+  calendars; each event names whose calendar it is on). Note who has what today.
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).

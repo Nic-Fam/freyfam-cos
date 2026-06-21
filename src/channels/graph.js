@@ -66,10 +66,13 @@ export async function fetchAttachments(messageId) {
 }
 
 // --- Calendar (workstream: close the scheduling gap / Genet's "Claire") --------
-// Events live on the cos@ mailbox calendar; family + (per house rules) work
-// addresses are invited. Needs Graph `Calendars.ReadWrite` application permission
-// + admin consent (NOT yet granted — Mail.Read/Send are). Creating an event sends
-// invites, so it's high-stakes: the create_calendar_event tool confirms first.
+// The real family schedule lives on the family members' OWN calendars (nic@ +
+// shelli@), not on cos@. listEvents MERGES those (GRAPH.calendars) via
+// calendarView over a date window so today's events and recurring instances
+// actually appear (plain /events sorted oldest-first returned ancient events and
+// skipped recurrences). App-only Calendars.ReadWrite reaches any tenant mailbox.
+// New events are created on GRAPH.calendarWrite so they land where Lloyd reads.
+// Creating an event sends invites, so it's high-stakes: the tool confirms first.
 
 function toGraphDateTime(v) {
   if (v && typeof v === "object" && v.dateTime) return v; // already shaped
@@ -95,12 +98,29 @@ export function buildEventPayload({ subject, start, end, attendees = [], locatio
   return payload;
 }
 
-/** Upcoming events on the cos@ calendar (read-only). */
-export async function listEvents({ top = 20 } = {}) {
+// Local [start-of-today, +days] as naive datetime strings. Paired with the
+// Prefer outlook.timezone header, Graph interprets these in FAMILY_TZ, so the
+// window is honest about "today" regardless of the server's UTC clock. Uses a
+// UTC-noon anchor for the day math so DST never shifts the date. Pure/exported.
+export function familyDateWindow(days = 7, now = new Date()) {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: FAMILY_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now); // YYYY-MM-DD in family tz
+  const [y, m, d] = today.split("-").map(Number);
+  const endAnchor = new Date(Date.UTC(y, m - 1, d, 12));
+  endAnchor.setUTCDate(endAnchor.getUTCDate() + days);
+  const endDate = endAnchor.toISOString().slice(0, 10);
+  return { startDateTime: `${today}T00:00:00`, endDateTime: `${endDate}T00:00:00` };
+}
+
+// Read one mailbox's events in the window via calendarView (expands recurrences).
+async function calendarViewFor(mailbox, window) {
   const res = await graph()
-    .api(`/users/${GRAPH.mailbox}/events`)
+    .api(`/users/${mailbox}/calendarView`)
+    .query({ startDateTime: window.startDateTime, endDateTime: window.endDateTime })
+    .header("Prefer", `outlook.timezone="${FAMILY_TZ}"`)
     .select("subject,start,end,location,showAs,attendees")
-    .top(top)
+    .top(50)
     .orderby("start/dateTime")
     .get();
   return (res.value || []).map((e) => ({
@@ -110,12 +130,42 @@ export async function listEvents({ top = 20 } = {}) {
     location: e.location?.displayName,
     showAs: e.showAs,
     attendees: (e.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean),
+    calendars: [calendarOwner(mailbox)],
   }));
 }
 
-/** Create an event (sends invites to attendees). High-stakes: confirm upstream. */
+// Short owner label (local-part) so the digest can say whose calendar it is.
+function calendarOwner(mailbox) {
+  return String(mailbox).split("@")[0];
+}
+
+/**
+ * Merge the family calendars (GRAPH.calendars) over [today, +days], sorted by
+ * start. An event invited to both calendars is deduped (subject+start), keeping
+ * the union of owners in `calendars`. One mailbox erroring does not sink the
+ * rest. `top` caps the merged result.
+ */
+export async function listEvents({ top = 20, days = GRAPH.calendarDays } = {}) {
+  const window = familyDateWindow(days);
+  const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
+  const byKey = new Map();
+  for (const r of per) {
+    if (r.status !== "fulfilled") continue;
+    for (const e of r.value) {
+      const key = `${e.subject}|${e.start}`;
+      const existing = byKey.get(key);
+      if (existing) existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
+      else byKey.set(key, e);
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+    .slice(0, top);
+}
+
+/** Create an event on the family calendar (sends invites). High-stakes: confirm upstream. */
 export async function createEvent(input) {
-  const res = await graph().api(`/users/${GRAPH.mailbox}/events`).post(buildEventPayload(input));
+  const res = await graph().api(`/users/${GRAPH.calendarWrite}/events`).post(buildEventPayload(input));
   return { id: res.id, webLink: res.webLink, subject: res.subject };
 }
 
