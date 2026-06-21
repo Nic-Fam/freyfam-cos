@@ -12,6 +12,7 @@ import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
+import { getFoxToday, setFoxDay } from "./fox.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -71,6 +72,27 @@ const tools = [
     name: "list_calendar",
     description: "List upcoming events on the family calendar (read-only).",
     input_schema: { type: "object", properties: { top: { type: "number" } } },
+  },
+  {
+    name: "fox_today",
+    description:
+      "Get Fox's Bright Horizons day: activities, theme, and a wardrobe hint (e.g. old clothes on paint days, a change of clothes on water days). Read-only.",
+    input_schema: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; defaults to today" } } },
+  },
+  {
+    name: "set_fox_day",
+    description:
+      "Save Fox's Bright Horizons activities for a day. Call this when a Bright Horizons email arrives (one call per day it covers). A wardrobe hint is derived automatically from the activities (paint/messy -> old clothes; water -> a full change + towel). Operates only on the family's own data; no outbound.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        activities: { type: "string", description: "the day's activities / lesson plan" },
+        themeOrUnit: { type: "string", description: "weekly curriculum theme, if given" },
+        clothingHint: { type: "string", description: "optional; auto-derived from activities if omitted" },
+      },
+      required: ["date", "activities"],
+    },
   },
   {
     name: "create_calendar_event",
@@ -203,6 +225,12 @@ function toolHandlers({ images, onDelegate } = {}) {
     // The wrapper also mirrors the handoff + result to the transport's observability.
     delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
     list_calendar: async ({ top } = {}) => JSON.stringify(await listEvents({ top })),
+    fox_today: async ({ date } = {}) =>
+      JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),
+    set_fox_day: async ({ date, activities, themeOrUnit, clothingHint }) => {
+      const row = await setFoxDay(date, { activities, themeOrUnit, clothingHint });
+      return `Saved Fox's day ${date}. Wardrobe: ${row.clothingHint || "(none derived)"}`;
+    },
     create_calendar_event: async (input) => {
       const who = (input.attendees || []).join(", ") || "(no invitees)";
       const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;

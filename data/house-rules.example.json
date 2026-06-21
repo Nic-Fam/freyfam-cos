@@ -3,6 +3,8 @@
   "rules": [
     "For appointments during the workday, add <person>'s work email and <spouse>'s work email as invitees.",
     "For <kid>'s calendar appointments, do not auto-invite <spouse> unless <person> requests it.",
-    "House-hunt bookkeeping is sender-only; loop in both spouses only for tours, applications, or signing."
+    "House-hunt bookkeeping is sender-only; loop in both spouses only for tours, applications, or signing.",
+    "Sending email to a work domain is allowed but high-stakes: always confirm before sending. Work addresses may be calendar invitees freely.",
+    "When a daycare/preschool email arrives with the curriculum or daily report, call set_fox_day for each day with its activities (a wardrobe hint is derived: messy play -> old clothes; water play -> a full change + towel)."
   ]
 }

@@ -20,12 +20,15 @@ const DIGEST_PROMPT = `It is morning. Compose a brief MORNING DIGEST for the fam
 
 Gather what you need first:
 - Today's schedule: call list_calendar.
+- Fox's day at Bright Horizons: call fox_today. Include his activities and the
+  WARDROBE note so they can dress him right (old clothes on paint/messy days, a
+  full change of clothes on water days).
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick).
 - Any security flags: delegate to security (Frank).
 - Notable resale finds worth a glance: delegate to resale (Shey).
 
-Then write it warm, short, and scannable for a text message: a one-line greeting, today's schedule, meals plus any prep reminder, and any flags. Skip sections that have nothing. Plain punctuation, no em dashes.`;
+Then write it warm, short, and scannable for a text message: a one-line greeting, today's schedule, Fox's day + wardrobe note, meals plus any prep reminder, and any flags. Skip sections that have nothing. Plain punctuation, no em dashes.`;
 
 // Local {date:"YYYY-MM-DD", hour:0-23} for a tz, without relying on UTC.
 export function localParts(now, tz) {
