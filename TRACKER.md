@@ -148,15 +148,25 @@ Owns: `src/heartbeat.js`, and a few lines of `src/orchestrator.js`.
   needs a genuinely actionable signal to exercise end-to-end, but the structural bug
   — the throwing send — is gone.)
 
-### E. Real memory  `[~]`  — near-term items DONE 2026-06-19; embeddings still deferred
+### E. Real memory  `[x]`  — semantic recall LIVE 2026-06-20 (local embeddings)
 
 Owns: `src/memory.js`, `src/decisions.js`, new `data/` seed scripts. Interface
 (`recall`/`remember`) stayed stable so callers didn't change.
 
-- DECISION (2026-06-18): **embeddings deferred** — keep `embedHash()` for now,
-  revisit when the corpus grows. So the two items below are *not* near-term.
-- [ ] (deferred) Replace `embedHash()` (`memory.js:30`) with a real embedding call
-- [ ] (deferred) Swap JSON store for sqlite-vec or LanceDB (keep signatures)
+- DECISION (2026-06-18): embeddings deferred. **REVERSED 2026-06-20** — Nic chose
+  LOCAL embeddings (privacy/local-first) over the Voyage API. Built this session.
+- [x] **Replace `embedHash()` with real embeddings (2026-06-20).** `src/embeddings.js`:
+      on-device sentence-transformer via transformers.js (`Xenova/all-MiniLM-L6-v2`,
+      384-dim), lazy-loaded, ~90MB model cached at `data/models` (gitignored). No API
+      key, no per-call cost, family text never leaves the Mac. `EMBEDDINGS_PROVIDER`
+      (`local`|`none`); degrades to null on load failure. `recall()` is now HYBRID:
+      `0.6*semantic + 0.4*lexical`, falling back to pure TF-IDF when off or for items
+      embedded by a different/older model (`embModel` tag). `data/reembed.mjs`
+      (`npm run reembed`) upgraded all 45 existing facts. Suite runs `EMBEDDINGS_
+      PROVIDER=none` to stay offline. Verified: "where does Nic work" -> work-email
+      fact @ 0.61; query/work-email 0.75 vs query/oat-milk 0.01. `test/embeddings.test.js`.
+- [ ] (still deferred, not needed yet) Swap JSON store for sqlite-vec/LanceDB — the
+      in-memory cosine scan is fine at household corpus size; revisit when it grows.
 - [x] **Seed from the family's existing notes (2026-06-19).** `data/seed-notes.json`
       holds editable family notes (`{text, meta.agent?}`; omit `agent` for shared
       facts). `data/seed.mjs` (`npm run seed`) loads them into the hash store via a
@@ -512,7 +522,7 @@ must not expose. So real-time voice cannot live on Lloyd's Mac the way SMS does.
 - Parallel-safe: Tier 1 reuses the queue contract (add `channel:"voice"`) + front
   door; Tier 2 is an Azure-side build independent of Lloyd. Sequence Tier 1 first.
 
-### N. Web search tool  `[ ]`  — designed, not built
+### N. Web search tool  `[x]`  — built 2026-06-20 (Brave; key-gated to go live)
 
 A read-only `search` capability (query → ranked results) so Lloyd can "look up an
 address / hours / a fact" and Shey can hunt listings. Distinct from `browse_page`,
@@ -533,15 +543,18 @@ can't, regardless of channel):
 | **Patrick (finance)** | **NO** | finance stays locked down (read-only bank data, no external reach) — search widens exactly the surface "Finn's lockdown" guards |
 
 **Scope:**
-- [ ] `src/tools/search.js` (or `channels/`): thin wrapper over a provider — Brave
-      Search API / Bing / SerpAPI, or a search MCP. Provider + key in `config.js` +
-      `.env`; degrade to a clear "search unavailable" if unset (Playwright pattern).
-- [ ] Expose as a `search` tool; grant to chief + resale via the `REGISTRY` in
-      `src/agents/tools.js` (Frank scoped; finance excluded by omission).
-- [ ] Result shape: `[{title, url, snippet}]` so the model can pick a URL to
-      `browse_page`. Cap result count.
-- [ ] Tests: result mapping + the allowlist (search present for chief/resale, ABSENT
-      for finance).
+- [x] `src/search.js`: Brave-backed `webSearch()`; provider + key in `config.SEARCH`
+      + `.env` (`SEARCH_PROVIDER`/`BRAVE_SEARCH_KEY`/`SEARCH_RESULT_COUNT`); degrades to
+      a clear "search unavailable" when no key (Playwright pattern).
+- [x] Exposed as the `search` tool. Granted via `REGISTRY` (`agents/tools.js`,
+      shared `searchToolDef`/`searchHandler`) to **resale + security**, and on the
+      **chief** in `orchestrator.js`. finance EXCLUDED by omission; chef/dev on demand.
+- [x] Result shape `[{title, url, snippet}]`, capped at `SEARCH.count`. Pairs with
+      `browse_page` (search finds the URL, browse reads it).
+- [x] Tests `test/search.test.js`: result mapping + the allowlist (present for
+      chief/resale/security, ABSENT for finance/chef/dev).
+- [ ] **GO-LIVE: add `BRAVE_SEARCH_KEY` to `.env`** (free tier at
+      api.search.brave.com). Until then the tool returns "search unavailable".
 
 **Constraints/notes:** read-only — no `confirm`/`guards` needed for the search call
 itself; acting on a result (buy/email) still hits `confirm.js` + `guards.js`.
