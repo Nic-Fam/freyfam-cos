@@ -595,6 +595,35 @@ heartbeat.
 - Freshness note: today's Fox row is empty until the next Bright Horizons email is
   filed; the digest just skips Fox's section until then. 95/95 daemon tests pass.
 
+### Q. Steve on a Claude Code subscription (not the API)  `[ ]`  — cost lever, designed
+
+Run **Steve (dev)** on a **Claude Code / Claude Max subscription** instead of the
+metered Anthropic API. Two reasons it's the right agent for this: dev work (file
+edits, running tests, building apps — Genet's Cole built a kids' TV app) is exactly
+Claude Code's wheelhouse, and flat-rate subscription billing takes the heaviest
+agent off per-token API cost. Fits the topology: Steve already runs locally on the
+old MacBook, where Claude Code runs.
+
+**How (verified via the claude-api skill):** Claude Code, the `ant` CLI, and the
+Claude Agent SDK all resolve a **subscription via OAuth profile** (`claude` `/login`
+or `ant auth login`) — no API key. So Steve's local server (`COS_AGENT=dev`) invokes
+Claude Code (headless `claude -p` or the Agent SDK) for the task instead of the
+`claude.js` → API path. The `delegate` contract `{agent,task} -> text` stays stable;
+only Steve's execution backend changes.
+
+- [ ] Route the `dev` specialist runner to a Claude-Code backend (Agent SDK or
+      `claude -p`) on the MacBook; keep the same return contract.
+- [ ] **Critical gotcha:** `ANTHROPIC_API_KEY` SHADOWS the subscription (it wins
+      credential precedence). Steve's process must run with the API key UNSET (and not
+      both key + auth token, or the API 401s). Give the dev specialist its own env.
+- [ ] Authenticate the subscription once on the MacBook (`claude` `/login`); persist
+      the profile. This is a credential step (per the identity model), not an `.env` key.
+- [ ] Bound it: subscription has **usage limits** (Max/Pro caps) — heavy automated dev
+      can hit them; decide fallback (queue, or spill to API) and watch the cap.
+- Note: this is a capability upgrade too — Claude Code gives Steve real file/bash/build
+  tools (vs the current text-only runner), which is what "build a household app" needs.
+- ToS: confirm subscription terms allow this automated household use.
+
 ---
 
 ## Suggested parallel session plan
