@@ -867,6 +867,11 @@ first, verify locally, then provision**.
 - [ ] Verify the read-only-domain guard + confirmation gate still gate every
       outbound path after the split (specialists return text only; runner carries no
       channel — invariant documented in `runner.js`)
+- [ ] **Give the COS its own Azure Maps key (decided 2026-06-20, do later).** The
+      `commute_time` tool currently shares the legacy assistant's `AZURE_MAPS_KEY`
+      (carried into this repo's `.env`). Provision a dedicated Maps account for the
+      COS and swap `AZURE_MAPS_KEY` so rotating/deleting the old resource doesn't
+      take commute data down in both apps. Code needs no change — just the key.
 
 ## The Genet bar (concrete target)
 
