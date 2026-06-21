@@ -15,7 +15,9 @@
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
 
-const TZ = process.env.HOUSEHOLD_TZ || "America/Los_Angeles";
+// One family timezone source across the app (FAMILY_TZ); HOUSEHOLD_TZ kept as a
+// back-compat fallback. IANA zone => DST (PST/PDT) is handled automatically.
+const TZ = process.env.FAMILY_TZ || process.env.HOUSEHOLD_TZ || "America/Los_Angeles";
 
 // Auth mirrors src/stores/collection.js so this SAME module works in-process on
 // Lloyd (connection string) and on chef's Azure Function (managed identity,
@@ -50,9 +52,11 @@ export function normalizeDate(date) {
   if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return null;
-  const local = new Date(d.toLocaleString("en-US", { timeZone: TZ }));
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`;
+  // en-CA formats as YYYY-MM-DD directly; the IANA timeZone applies the correct
+  // DST offset, so this is the date as it reads in TZ (no fragile string re-parse).
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d);
 }
 
 export function normalizeMealType(mealType) {
