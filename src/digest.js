@@ -1,6 +1,7 @@
 import { MODELS, DIGEST } from "./config.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
+import { sendMail } from "./channels/graph.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
@@ -58,10 +59,35 @@ export function shouldRunDigest(now, lastRunDate, { hour = 7, tz = "America/Los_
   return { run: inWindow && lastRunDate !== date, date };
 }
 
-/** Compose (via Lloyd delegating to specialists) and deliver the digest. */
-export async function runMorningDigest({ runner = runChief, notify = notifyOwner } = {}) {
+/** Subject line for the emailed digest, dated in the family timezone. */
+export function digestSubject(now = new Date()) {
+  const d = new Intl.DateTimeFormat("en-US", {
+    timeZone: DIGEST.tz,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(now);
+  return `Morning digest: ${d}`;
+}
+
+/**
+ * Compose (via Lloyd delegating to specialists) and deliver the digest over BOTH
+ * channels: SMS to the owner (rides Twilio clearance) and email to the family
+ * (reliable today). Each send is independent, so one failing never blocks the
+ * other. Channels injectable for tests.
+ */
+export async function runMorningDigest({ runner = runChief, notify = notifyOwner, mail = sendMail } = {}) {
   const text = await runner(DIGEST_PROMPT, MODELS.standard);
-  if (text && text.trim()) await notify(text.trim());
-  else log.warn("digest produced no text; nothing sent");
+  const body = text && text.trim();
+  if (!body) {
+    log.warn("digest produced no text; nothing sent");
+    return text;
+  }
+  const sends = [notify(body)];
+  if (DIGEST.emailTo.length) sends.push(mail({ to: DIGEST.emailTo, subject: digestSubject(), body }));
+  const results = await Promise.allSettled(sends);
+  results.forEach((r, i) => {
+    if (r.status === "rejected") log.error("digest delivery failed", { channel: i === 0 ? "sms" : "email", reason: String(r.reason?.message || r.reason) });
+  });
   return text;
 }

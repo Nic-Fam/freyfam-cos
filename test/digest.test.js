@@ -34,25 +34,37 @@ test("fires again the next local day", () => {
   assert.equal(r.date, "2026-06-22");
 });
 
-test("runMorningDigest composes via the runner and delivers the text", async () => {
-  const calls = { runner: 0, sent: null };
+test("runMorningDigest delivers over BOTH sms and email", async () => {
+  const calls = { runner: 0, sms: null, mail: null };
   const text = await runMorningDigest({
     runner: async (prompt) => {
       calls.runner++;
       assert.match(prompt, /MORNING DIGEST/);
       return "Good morning. 2 events today; salmon for dinner.";
     },
-    notify: async (t) => {
-      calls.sent = t;
-    },
+    notify: async (t) => { calls.sms = t; },
+    mail: async (m) => { calls.mail = m; },
   });
   assert.equal(calls.runner, 1);
-  assert.equal(calls.sent, "Good morning. 2 events today; salmon for dinner.");
+  assert.equal(calls.sms, "Good morning. 2 events today; salmon for dinner.");
+  assert.equal(calls.mail.body, "Good morning. 2 events today; salmon for dinner.");
+  assert.ok(Array.isArray(calls.mail.to) && calls.mail.to.length, "email has recipients");
+  assert.match(calls.mail.subject, /^Morning digest:/);
   assert.equal(text, "Good morning. 2 events today; salmon for dinner.");
+});
+
+test("a failing channel does not block the other", async () => {
+  let mailed = false;
+  await runMorningDigest({
+    runner: async () => "digest body",
+    notify: async () => { throw new Error("twilio not cleared"); }, // sms fails
+    mail: async () => { mailed = true; }, // email still goes
+  });
+  assert.equal(mailed, true);
 });
 
 test("runMorningDigest sends nothing when the digest is empty", async () => {
   let sent = false;
-  await runMorningDigest({ runner: async () => "   ", notify: async () => { sent = true; } });
+  await runMorningDigest({ runner: async () => "   ", notify: async () => { sent = true; }, mail: async () => { sent = true; } });
   assert.equal(sent, false);
 });

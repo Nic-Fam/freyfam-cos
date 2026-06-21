@@ -148,4 +148,10 @@ export const DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
   windowHours: Number(process.env.DIGEST_WINDOW_HOURS ?? 2), // catch-up window after `hour`
   enabled: String(process.env.DIGEST_ENABLED ?? "true").toLowerCase() === "true",
+  // Email recipients for the digest (reliable now; SMS rides Twilio clearance).
+  // Comma-separated; empty disables the email copy.
+  emailTo: (process.env.DIGEST_EMAIL_TO || "nic@freyfam.com")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 };
