@@ -10,7 +10,7 @@ import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
-import { extractDocuments } from "./documents.js";
+import { extractDocuments, fetchDocument } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
@@ -132,6 +132,12 @@ const tools = [
     },
   },
   {
+    name: "fetch_document",
+    description:
+      "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Bright Horizons curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
+    input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
     name: "place_order",
     description:
       "Drive a checkout or purchase flow in the local headless browser. High-stakes: it spends money, so it always requires owner approval first. Give a clear summary of what is being bought and for how much, plus the ordered browser steps to reach and confirm checkout.",
@@ -251,6 +257,11 @@ function toolHandlers({ images, onDelegate } = {}) {
       if (!ok) return "Owner declined; email not sent.";
       await sendMail({ to, subject, body }); // confirmation above is the gate (work domains flagged)
       return "Email sent.";
+    },
+    fetch_document: async ({ url }) => {
+      const { blocks, summaries, skipped } = await fetchDocument(url);
+      if (!blocks.length) return `Could not read document: ${skipped?.[0]?.reason || "unsupported type"}`;
+      return JSON.stringify({ summary: summaries.join("; "), text: blocks.map((b) => b.text).join("\n\n") });
     },
     browse_page: async ({ url, maxChars }) => {
       try {

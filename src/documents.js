@@ -156,3 +156,36 @@ export async function extractDocuments(attachments = [], { pdfImporter } = {}) {
   if (skipped.length) log.warn("skipped inbound documents", { kept: blocks.length, skipped });
   return { blocks, summaries, skipped };
 }
+
+const FETCH_TIMEOUT_MS = Number(process.env.DOC_FETCH_TIMEOUT_MS || 25000);
+const MAX_FETCH_BYTES = Number(process.env.DOC_MAX_FETCH_BYTES || 15_000_000);
+
+/**
+ * Fetch a document at a URL (PDF/.ics/.vcf) and parse it through the same path as
+ * an attachment. For links that arrive in an email body — e.g. a Bright Horizons
+ * curriculum PDF (those media URLs are public direct-fetch, no auth). Read-only:
+ * http(s) only, timeout, size cap. Returns the same shape as extractDocuments.
+ */
+export async function fetchDocument(url, { fetchImpl = fetch } = {}) {
+  const u = String(url || "");
+  const empty = { blocks: [], summaries: [], skipped: [] };
+  if (!/^https?:\/\//i.test(u)) return { ...empty, skipped: [{ url: u, reason: "only http(s) URLs allowed" }] };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(u, { signal: controller.signal });
+    if (!res.ok) return { ...empty, skipped: [{ url: u, reason: `HTTP ${res.status}` }] };
+    const len = Number(res.headers?.get?.("content-length") || 0);
+    if (len && len > MAX_FETCH_BYTES) return { ...empty, skipped: [{ url: u, reason: `too large (${len}B)` }] };
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length > MAX_FETCH_BYTES) return { ...empty, skipped: [{ url: u, reason: `too large (${bytes.length}B)` }] };
+    const contentType = res.headers?.get?.("content-type") || "";
+    const name = u.split("?")[0].split("/").filter(Boolean).slice(-2).join("/") || "document";
+    return extractDocuments([{ name, contentType, bytes }]);
+  } catch (err) {
+    return { ...empty, skipped: [{ url: u, reason: err.message }] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
