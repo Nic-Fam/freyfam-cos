@@ -32,3 +32,28 @@ export function formatHouseRules(rules) {
   return "House rules (always apply; use the current time above to judge conditions like 'during the workday'):\n" +
     rules.map((r) => "- " + r).join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Per-agent rules. Same always-on argument as the house rules, but scoped to one
+// specialist's beat (e.g. chef: "never plan a meal with nuts"; security: "never
+// advise disarming without confirmation"). They live under an optional
+// `agentRules` map in the SAME house-rules.json, so the family adds local/secret
+// per-agent policy without editing the persona source. Injected in runSpecialist.
+// ---------------------------------------------------------------------------
+
+/** Return the always-on rules for one agent (empty if none / unreadable). */
+export async function getAgentRules(agent) {
+  try {
+    const data = JSON.parse(await readFile(RULES_PATH, "utf8"));
+    const rules = Array.isArray(data?.agentRules?.[agent]) ? data.agentRules[agent] : [];
+    return rules.filter((r) => typeof r === "string" && r.trim()).map((r) => r.trim());
+  } catch {
+    return [];
+  }
+}
+
+/** Render an agent's rules for its system context. Empty string when none. */
+export function formatAgentRules(rules) {
+  if (!rules || !rules.length) return "";
+  return "Your standing rules (always apply on your beat):\n" + rules.map((r) => "- " + r).join("\n");
+}
