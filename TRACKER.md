@@ -447,12 +447,14 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
       **public direct-fetch PDFs** — the long media id is the access token; HTTP 200,
       no login. (The parent *portal UI* is gated; the email links are not.) So the
       credentials/portal-scrape plan is MOOT for this path.
-- [ ] **Remaining piece for Fox/BH ingestion:** a tool to fetch a document URL (PDF)
-      and parse it — `browse_page` reads HTML, and `documents.js` handles email
-      *attachments*, but the curriculum is a *link in the email body*. Add e.g.
-      `fetch_document(url)` (reuse `parsePdf`) so Lloyd, on a BH email, pulls the link →
-      parses → `set_fox_day`. Then per-day splitting (the PDF is a weekly grid) is a
-      refinement; the week-level wardrobe hint already works.
+- [x] **Fox/BH ingestion chain complete (2026-06-20):** `fetch_document(url)` tool
+      (`documents.fetchDocument`, http(s)-only + timeout + size cap) fetches a document
+      LINK and routes it through `extractDocuments`. House rule: on a BH email, Lloyd
+      `fetch_document`s the curriculum link → `set_fox_day` per day → the morning digest
+      surfaces Fox's activities + wardrobe hint. Verified live on the real BH media URL
+      (public PDF, 5pp). No credentials anywhere.
+- [ ] Refinement (not blocking): per-DAY splitting of the weekly curriculum grid (the
+      PDF flattens Mon–Fri columns); today the wardrobe hint is week-level.
 
 **Hard constraints (unchanged):** read-only parsing; outbound still via `confirm.js`
 + `guards.js`; no new Graph consent.
