@@ -13,6 +13,7 @@ import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
+import { fetchFoxWeek } from "./fox-curriculum.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -80,9 +81,15 @@ const tools = [
     input_schema: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; defaults to today" } } },
   },
   {
+    name: "ingest_fox_curriculum",
+    description:
+      "Fetch a Bright Horizons WEEKLY curriculum PDF link and save Fox's activities PER DAY automatically (one entry per weekday, with a wardrobe hint each). Use this on a Bright Horizons email. Returns what was saved.",
+    input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
     name: "set_fox_day",
     description:
-      "Save Fox's Bright Horizons activities for a day. Call this when a Bright Horizons email arrives (one call per day it covers). A wardrobe hint is derived automatically from the activities (paint/messy -> old clothes; water -> a full change + towel). Operates only on the family's own data; no outbound.",
+      "Save Fox's Bright Horizons activities for ONE day (fallback / manual correction; prefer ingest_fox_curriculum for a weekly PDF). A wardrobe hint is derived automatically from the activities (paint/messy -> old clothes; water -> a full change + towel). Operates only on the family's own data; no outbound.",
     input_schema: {
       type: "object",
       properties: {
@@ -233,6 +240,24 @@ function toolHandlers({ images, onDelegate } = {}) {
     list_calendar: async ({ top } = {}) => JSON.stringify(await listEvents({ top })),
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),
+    ingest_fox_curriculum: async ({ url }) => {
+      let parsed;
+      try {
+        parsed = await fetchFoxWeek(url);
+      } catch (e) {
+        return `Could not fetch the curriculum: ${e.message}`;
+      }
+      if (!parsed || !parsed.days?.length) {
+        return "Could not parse that as a weekly grid. Fall back to fetch_document + set_fox_day per day.";
+      }
+      const saved = [];
+      for (const d of parsed.days) {
+        if (!d.date) continue;
+        await setFoxDay(d.date, { activities: d.activities, themeOrUnit: d.themeOrUnit, clothingHint: d.clothingHint });
+        saved.push(`${d.day} ${d.date}: ${d.clothingHint || "no special wardrobe"}`);
+      }
+      return `Saved Fox's week (${parsed.weekOf}):\n${saved.join("\n")}`;
+    },
     set_fox_day: async ({ date, activities, themeOrUnit, clothingHint }) => {
       const row = await setFoxDay(date, { activities, themeOrUnit, clothingHint });
       return `Saved Fox's day ${date}. Wardrobe: ${row.clothingHint || "(none derived)"}`;
