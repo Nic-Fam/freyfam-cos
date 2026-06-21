@@ -1,14 +1,21 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { embed, cosine, isEnabled, MODEL_ID } from "./embeddings.js";
 
 // ===========================================================================
 // The shared "brain" lives LOCALLY on the MacBook (no Azure AI Search needed
-// since the chief of staff is local). This is a deliberately small, dependency-
-// free starting point: a JSON-backed store of {id, text, embedding, meta}.
+// since the chief of staff is local). JSON-backed store of {id, text, meta,
+// embedding, embModel}.
 //
-// TODO (Claude Code): swap the naive cosine search for sqlite-vec or LanceDB
-// once the corpus grows, and replace embedHash() with a real embedding call.
-// Keep the same recall()/remember() interface so callers don't change.
+// Recall is HYBRID (workstream E): a local sentence-transformer (embeddings.js)
+// gives semantic similarity, blended with the TF-IDF lexical score below so
+// exact-word hits ("oat milk") still rank. When embeddings are disabled or the
+// model can't load, recall degrades cleanly to pure lexical. Items embedded by
+// an older/no model (embModel mismatch) simply skip the semantic term until
+// re-embedded (data/reembed.mjs).
+//
+// TODO (Claude Code): swap the JSON store for sqlite-vec or LanceDB once the
+// corpus outgrows an in-memory scan. Keep the recall()/remember() interface.
 // ===========================================================================
 
 const STORE_PATH = process.env.BRAIN_PATH || "./data/brain.json";
@@ -25,13 +32,13 @@ async function save(db) {
   await writeFile(STORE_PATH, JSON.stringify(db, null, 2));
 }
 
-// Placeholder embedding so the scaffold runs with zero extra services.
-// Replace with a real embedding model for meaningful semantic recall.
-function embedHash(text, dims = 64) {
-  const v = new Array(dims).fill(0);
-  for (let i = 0; i < text.length; i++) v[i % dims] += text.charCodeAt(i);
-  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-  return v.map((x) => x / norm);
+// Compute the stored vector for a fact. Returns { embedding, embModel } where
+// embedding is null when embeddings are disabled/unavailable (recall then leans
+// on the lexical score below). Tagging the model lets recall ignore vectors
+// produced by a different model rather than comparing incompatible spaces.
+async function embedItem(text) {
+  const embedding = await embed(text);
+  return { embedding, embModel: embedding ? MODEL_ID : null };
 }
 // --- Lexical recall (TF-IDF cosine over word tokens) -----------------------
 // The stored embedHash() vector is a character-frequency hash: it does NOT
@@ -66,7 +73,8 @@ function termCounts(tokens) {
 
 export async function remember(text, meta = {}) {
   const db = await load();
-  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding: embedHash(text) });
+  const { embedding, embModel } = await embedItem(text);
+  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
   await save(db);
 }
 
@@ -78,10 +86,47 @@ export async function remember(text, meta = {}) {
 export async function rememberOnce(text, meta = {}) {
   const db = await load();
   if (db.items.some((it) => it.text === text)) return false;
-  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding: embedHash(text) });
+  const { embedding, embModel } = await embedItem(text);
+  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
   await save(db);
   return true;
 }
+
+/**
+ * Return the top-k most relevant memories for a query string.
+ * Pass { agent } to scope recall to one specialist's memories plus unscoped
+ * (shared) facts, so finance memories don't surface for resale and vice versa.
+ * Omitting it (the chief of staff) searches everything.
+ */
+// Lexical TF-IDF cosine of `query` against each item in `pool` (aligned array).
+// Pure, dependency-free; this is the always-available baseline.
+function lexicalScores(pool, query) {
+  const docs = pool.map((it) => termCounts(tokenize(it.text)));
+  const N = docs.length;
+  const df = new Map();
+  for (const d of docs) for (const t of d.keys()) df.set(t, (df.get(t) || 0) + 1);
+  const idf = (t) => Math.log((N + 1) / ((df.get(t) || 0) + 1)) + 1;
+
+  const q = termCounts(tokenize(query));
+  let qNorm = 0;
+  for (const [t, c] of q) { const w = c * idf(t); qNorm += w * w; }
+  qNorm = Math.sqrt(qNorm) || 1;
+
+  return docs.map((d) => {
+    let dot = 0, dNorm = 0;
+    for (const [t, c] of d) {
+      const w = c * idf(t);
+      dNorm += w * w;
+      if (q.has(t)) dot += w * (q.get(t) * idf(t));
+    }
+    dNorm = Math.sqrt(dNorm) || 1;
+    return dot / (qNorm * dNorm);
+  });
+}
+
+// Blend weight for the semantic term when an embedding is available for both
+// query and item. Lexical keeps the rest so exact-token matches still count.
+const SEMANTIC_WEIGHT = 0.6;
 
 /**
  * Return the top-k most relevant memories for a query string.
@@ -96,30 +141,20 @@ export async function recall(query, k = 5, { agent } = {}) {
     : db.items;
   if (pool.length === 0) return [];
 
-  // Document frequencies across the (small) pool for idf weighting.
-  const docs = pool.map((it) => termCounts(tokenize(it.text)));
-  const N = docs.length;
-  const df = new Map();
-  for (const d of docs) for (const t of d.keys()) df.set(t, (df.get(t) || 0) + 1);
-  const idf = (t) => Math.log((N + 1) / ((df.get(t) || 0) + 1)) + 1;
+  const lex = lexicalScores(pool, query);
 
-  const q = termCounts(tokenize(query));
-  let qNorm = 0;
-  for (const [t, c] of q) { const w = c * idf(t); qNorm += w * w; }
-  qNorm = Math.sqrt(qNorm) || 1;
+  // Semantic term: embed the query once, cosine against items embedded by the
+  // SAME model. null when embeddings are off/unavailable -> pure lexical.
+  const qEmb = isEnabled() ? await embed(query) : null;
 
-  return pool
-    .map((it, i) => {
-      const d = docs[i];
-      let dot = 0, dNorm = 0;
-      for (const [t, c] of d) {
-        const w = c * idf(t);
-        dNorm += w * w;
-        if (q.has(t)) dot += w * (q.get(t) * idf(t));
-      }
-      dNorm = Math.sqrt(dNorm) || 1;
-      return { text: it.text, meta: it.meta, score: dot / (qNorm * dNorm) };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+  const scored = pool.map((it, i) => {
+    const sem =
+      qEmb && it.embModel === MODEL_ID && Array.isArray(it.embedding)
+        ? cosine(qEmb, it.embedding)
+        : null;
+    const score = sem == null ? lex[i] : SEMANTIC_WEIGHT * sem + (1 - SEMANTIC_WEIGHT) * lex[i];
+    return { text: it.text, meta: it.meta, score };
+  });
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, k);
 }

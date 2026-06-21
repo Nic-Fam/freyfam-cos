@@ -11,11 +11,13 @@
     "dev": "node --watch src/daemon.js",
     "once": "node src/daemon.js --heartbeat-once",
     "seed": "node data/seed.mjs",
+    "reembed": "node data/reembed.mjs",
     "specialist": "node deploy/specialists/local-server.mjs",
-    "test": "node --test"
+    "test": "EMBEDDINGS_PROVIDER=none node --test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
+    "@huggingface/transformers": "^3.0.0",
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.5.0",
     "@azure/storage-queue": "^12.25.0",

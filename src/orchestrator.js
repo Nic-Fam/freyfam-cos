@@ -15,6 +15,7 @@ import { getHouseRules, formatHouseRules } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
+import { webSearch } from "./search.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -144,6 +145,12 @@ const tools = [
     description:
       "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Bright Horizons curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
     input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
+    name: "search",
+    description:
+      "Search the web (read-only) and get back ranked results as {title, url, snippet}. Use it to find an address, hours, a fact, or a listing; then read the best hit with browse_page. Acting on a result (email/buy) still routes through the confirmation gate.",
+    input_schema: { type: "object", properties: { query: { type: "string" }, count: { type: "number" } }, required: ["query"] },
   },
   {
     name: "commute_time",
@@ -307,6 +314,14 @@ function toolHandlers({ images, onDelegate } = {}) {
         return JSON.stringify(await readPage(url, { maxChars }));
       } catch (e) {
         return `Could not read page: ${e.message}`;
+      }
+    },
+    search: async ({ query, count }) => {
+      try {
+        const results = await webSearch(query, count ? { count } : {});
+        return results.length ? JSON.stringify(results) : "No results.";
+      } catch (e) {
+        return `Could not search: ${e.message}`;
       }
     },
     commute_time: async ({ origin, dest }) => {

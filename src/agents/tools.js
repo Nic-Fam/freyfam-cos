@@ -12,6 +12,7 @@
 
 import { recall, remember } from "../memory.js";
 import { logDecision, listDecisions } from "../decisions.js";
+import { webSearch } from "../search.js";
 import { analyzeTransactions } from "../finance.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
@@ -67,6 +68,29 @@ function decisionHandlers(agent) {
   };
 }
 
+// Read-only web search (workstream N). Granted PER AGENT: resale needs it most
+// (hunting listings/comps), security gets it for threat-intel lookups. NOT
+// granted to finance (kept locked down) — exclusion is by omission. Returns
+// [{title, url, snippet}] so the agent can pick a URL to browse next.
+export const searchToolDef = {
+  name: "search",
+  description:
+    "Search the web (read-only) and get back ranked results as {title, url, snippet}. Use it to find URLs/facts/listings; then read the best hit with browse_page. Acting on a result (buy/email) still requires the chief's confirmation.",
+  input_schema: obj({ query: { type: "string" }, count: { type: "number" } }, ["query"]),
+};
+export function searchHandler() {
+  return {
+    search: async ({ query, count }) => {
+      try {
+        const results = await webSearch(query, count ? { count } : {});
+        return results.length ? JSON.stringify(results) : "No results.";
+      } catch (e) {
+        return `Could not search: ${e.message}`;
+      }
+    },
+  };
+}
+
 const REGISTRY = {
   finance: () => ({
     tools: [
@@ -97,6 +121,7 @@ const REGISTRY = {
     tools: [
       ...memoryTools(),
       ...decisionTools(),
+      searchToolDef,
       {
         name: "add_saved_search",
         description: "Register a designer piece to hunt across resale sites.",
@@ -113,6 +138,7 @@ const REGISTRY = {
     handlers: {
       ...memoryHandlers("resale"),
       ...decisionHandlers("resale"),
+      ...searchHandler(),
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
       list_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
@@ -206,6 +232,7 @@ const REGISTRY = {
     tools: [
       ...memoryTools(),
       ...decisionTools(),
+      searchToolDef,
       {
         name: "log_security_finding",
         description: "Record a security finding/advisory for a human to review. Read-only: does NOT take any control action (no arm/disarm, lock, or credential change).",
@@ -221,6 +248,7 @@ const REGISTRY = {
     handlers: {
       ...memoryHandlers("security"),
       ...decisionHandlers("security"),
+      ...searchHandler(),
       log_security_finding: async (input) => JSON.stringify(await addFinding(input)),
       list_security_findings: async () => JSON.stringify(await listFindings()),
     },

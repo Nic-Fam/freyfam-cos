@@ -161,3 +161,20 @@ export const DIGEST = {
 export const MAPS = {
   key: process.env.AZURE_MAPS_KEY || "",
 };
+
+// Web search (workstream N). Read-only provider wrapper behind the `search`
+// tool. Brave by default; degrades to "unavailable" when no key is set.
+export const SEARCH = {
+  provider: process.env.SEARCH_PROVIDER || "brave",
+  key: process.env.BRAVE_SEARCH_KEY || "",
+  count: Number(process.env.SEARCH_RESULT_COUNT ?? 5),
+};
+
+// Local semantic embeddings (workstream E). provider "local" runs a small
+// sentence-transformer on the Mac via transformers.js; "none" keeps the
+// dependency-free lexical recall. Model caches under cacheDir (downloaded once).
+export const EMBEDDINGS = {
+  provider: process.env.EMBEDDINGS_PROVIDER || "local",
+  model: process.env.EMBEDDINGS_MODEL || "Xenova/all-MiniLM-L6-v2",
+  cacheDir: process.env.EMBEDDINGS_CACHE_DIR || "./data/models",
+};
