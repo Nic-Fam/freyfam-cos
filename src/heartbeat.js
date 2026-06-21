@@ -6,6 +6,7 @@ import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest } from "./digest.js";
+import { shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -22,7 +23,10 @@ const log = createLogger("heartbeat");
 async function gatherSignals() {
   const signals = [];
   try {
-    signals.push(...(await recentMailSignals({ top: 15 })));
+    // Drop bounce/no-reply/automated/self mail so a delivery loop or our own
+    // outbound never becomes a proactive escalation (shouldAutoReply == legit human).
+    const mail = (await recentMailSignals({ top: 15 })).filter((s) => shouldAutoReply(s.from));
+    signals.push(...mail);
   } catch (err) {
     log.error("mail signal fetch failed", { reason: err.message });
   }
