@@ -419,9 +419,10 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
   media URLs. Do NOT inline bytes — Storage Queue messages cap at 64KB.
 
 **`src/documents.js`** (parallel to `media.js`) — BUILT (commit `f10dd4a`):
-- [x] `application/pdf` → text via a lazy-imported parser; cap `DOC_MAX_CHARS` +
-      truncation note. Degrades to a logged skip if no parser installed (so the
-      daemon/tests run without it). Scanned PDFs out of scope v1.
+- [x] `application/pdf` → text. NOW WORKING (2026-06-20): `pdf-parse@1.1.1` pinned +
+      loaded via `createRequire` (the `import()` path silently threw on v1's debug
+      block, so PDF intake was a no-op before). Cap `DOC_MAX_CHARS`; scanned PDFs out
+      of scope v1. Verified on a real Bright Horizons curriculum PDF.
 - [x] `text/calendar` (.ics) → event parse (summary/start/end/location/attendees),
       dependency-free. Feeds the **calendar/scheduling** gap (Genet's "Claire").
 - [x] `text/vcard` / `text/x-vcard` (.vcf) → contact parse, dependency-free.
@@ -441,6 +442,17 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
       Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
 - [ ] Routing polish: nudge receipts→finance, invites→Lloyd scheduling, etc. (the
       chief already delegates from the extracted text; this is tuning, not blocking).
+- **Bright Horizons curriculum needs NO credentials (verified 2026-06-20).** The BH
+      *email* media links (`mbdgw.brighthorizons.com/api/parent/medias/.../email`) are
+      **public direct-fetch PDFs** — the long media id is the access token; HTTP 200,
+      no login. (The parent *portal UI* is gated; the email links are not.) So the
+      credentials/portal-scrape plan is MOOT for this path.
+- [ ] **Remaining piece for Fox/BH ingestion:** a tool to fetch a document URL (PDF)
+      and parse it — `browse_page` reads HTML, and `documents.js` handles email
+      *attachments*, but the curriculum is a *link in the email body*. Add e.g.
+      `fetch_document(url)` (reuse `parsePdf`) so Lloyd, on a BH email, pulls the link →
+      parses → `set_fox_day`. Then per-day splitting (the PDF is a weekly grid) is a
+      refinement; the week-level wardrobe hint already works.
 
 **Hard constraints (unchanged):** read-only parsing; outbound still via `confirm.js`
 + `guards.js`; no new Graph consent.
