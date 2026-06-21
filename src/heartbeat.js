@@ -1,10 +1,11 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals } from "./channels/graph.js";
 import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
+import { runMorningDigest, shouldRunDigest } from "./digest.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -52,8 +53,26 @@ async function maybeCheckCosts() {
   }
 }
 
+// Morning digest: fire once per local day in the morning window. Lloyd composes
+// it by delegating to the specialists (see digest.js).
+let lastDigestDate = null;
+
+async function maybeRunDigest() {
+  if (!DIGEST.enabled) return;
+  const { run, date } = shouldRunDigest(new Date(), lastDigestDate, DIGEST);
+  if (!run) return;
+  lastDigestDate = date; // record before running so a slow run can't double-fire
+  try {
+    await runMorningDigest();
+    log.info("morning digest sent", { date });
+  } catch (err) {
+    log.error("morning digest failed", { reason: err.message });
+  }
+}
+
 export async function tick() {
   await maybeCheckCosts();
+  await maybeRunDigest();
 
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);
