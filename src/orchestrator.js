@@ -337,7 +337,13 @@ export function nowInFamilyTz(now = new Date()) {
   return `${local} (${FAMILY_TZ})`;
 }
 
-export async function runChief(body, model, { content, images, onDelegate } = {}) {
+// Anthropic server-side web search. Resolves inline within a single API call
+// (no local handler needed), so the agentLoop just sees the final text. Billed
+// per search, so we only attach it when a caller opts in (today: the morning
+// digest, for live weather + traffic along each person's commute).
+const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
+
+export async function runChief(body, model, { content, images, onDelegate, webSearch } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
@@ -353,7 +359,7 @@ export async function runChief(body, model, { content, images, onDelegate } = {}
     system: systemBlocks(p, volatile),
     // `content` (text + image blocks) wins when an MMS carried photos; else plain text.
     messages: [{ role: "user", content: content || body }],
-    tools,
+    tools: webSearch ? [...tools, WEB_SEARCH_TOOL] : tools,
     toolHandlers: toolHandlers({ images, onDelegate }), // images + delegation mirror
   });
   return text;

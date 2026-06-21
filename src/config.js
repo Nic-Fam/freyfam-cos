@@ -150,7 +150,7 @@ export const DIGEST = {
   enabled: String(process.env.DIGEST_ENABLED ?? "true").toLowerCase() === "true",
   // Email recipients for the digest (reliable now; SMS rides Twilio clearance).
   // Comma-separated; empty disables the email copy.
-  emailTo: (process.env.DIGEST_EMAIL_TO || "nic@freyfam.com")
+  emailTo: (process.env.DIGEST_EMAIL_TO || "nic@freyfam.com,shelli@freyfam.com")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),

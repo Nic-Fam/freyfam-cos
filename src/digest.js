@@ -24,12 +24,20 @@ Gather what you need first:
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
+- Commute + weather: the house rules list each person's destination and that
+  Shelli keeps her own schedule. Use web_search for today's weather at each
+  destination and any major traffic or incidents on each route, then give a
+  one-line per-person heads-up (Nic to work, Shelli to work, Fox's Glendale
+  drop-off). Skip anyone who is not heading out today.
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick).
 - Any security flags: delegate to security (Frank).
 - Notable resale finds worth a glance: delegate to resale (Shey).
 
-Then write it warm, short, and scannable for a text message: a one-line greeting, today's schedule, Fox's day + wardrobe note, meals plus any prep reminder, and any flags. Skip sections that have nothing. Plain punctuation, no em dashes.`;
+Then write it warm, short, and scannable: a one-line greeting, today's schedule,
+the per-person commute + weather lines, Fox's day + wardrobe note, meals plus any
+prep reminder, and any flags. Skip sections that have nothing. Plain punctuation,
+no em dashes.`;
 
 // Local {date:"YYYY-MM-DD", hour:0-23} for a tz, without relying on UTC.
 export function localParts(now, tz) {
@@ -77,7 +85,7 @@ export function digestSubject(now = new Date()) {
  * other. Channels injectable for tests.
  */
 export async function runMorningDigest({ runner = runChief, notify = notifyOwner, mail = sendMail } = {}) {
-  const text = await runner(DIGEST_PROMPT, MODELS.standard);
+  const text = await runner(DIGEST_PROMPT, MODELS.standard, { webSearch: true });
   const body = text && text.trim();
   if (!body) {
     log.warn("digest produced no text; nothing sent");
