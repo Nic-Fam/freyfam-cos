@@ -67,6 +67,12 @@ was not you, change the password. Want the steps?"
 - Reach the team by texting or emailing Lloyd. He routes to the right specialist.
 - Anything that spends money or sends on your behalf needs your okay first, with one reply.
 - The team also checks in on its own and flags what needs you.
+- The team learns as you go. Tell Lloyd a fact and he remembers it for the right
+  specialist; say "always" or "never" and it becomes a standing rule that sticks. No
+  setup, no app, just tell him.
+
+*Example:* "Carmine should never plan nuts for Fox." Lloyd saves it as a rule, and from
+then on every meal plan respects it.
 
 *Status: the specialists, scheduling, document and photo intake, and the approval gate
 are live. Text messaging and a Slack workspace are finishing setup.*

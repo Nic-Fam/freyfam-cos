@@ -76,6 +76,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       <li>Reach the team by texting or emailing Lloyd. He routes to the right specialist.</li>
       <li>Anything that spends money or sends on your behalf needs your okay first, with one reply.</li>
       <li>The team also checks in on its own and flags what needs you.</li>
+      <li>The team learns as you go. Tell Lloyd a fact and he remembers it; say "always" or "never" and it becomes a standing rule. For example "Carmine should never plan nuts for Fox" sticks from then on.</li>
     </ul>
   </div>
   <p class="status">Status: the specialists, scheduling, document and photo intake, and the approval gate are live. Text messaging and a Slack workspace are finishing setup.</p>
