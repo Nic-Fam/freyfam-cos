@@ -24,11 +24,12 @@ Gather what you need first:
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
-- Commute + weather: the house rules list each person's destination and that
-  Shelli keeps her own schedule. Use web_search for today's weather at each
-  destination and any major traffic or incidents on each route, then give a
-  one-line per-person heads-up (Nic to work, Shelli to work, Fox's Glendale
-  drop-off). Skip anyone who is not heading out today.
+- Commute + weather: the house rules list home plus each person's destination
+  and that Shelli keeps her own schedule. For each route (home to Nic's work,
+  home to Shelli's work, home to Fox's Glendale drop-off) call commute_time for
+  the precise ETA and any traffic delay, and use web_search for today's weather
+  at each destination. Give a one-line per-person heads-up. Skip anyone who is
+  not heading out today.
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick).
 - Any security flags: delegate to security (Frank).

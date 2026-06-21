@@ -155,3 +155,9 @@ export const DIGEST = {
     .map((s) => s.trim())
     .filter(Boolean),
 };
+
+// Azure Maps: precise commute times with live traffic (geocode + route).
+// Ported from the legacy assistant; powers the chief's commute_time tool.
+export const MAPS = {
+  key: process.env.AZURE_MAPS_KEY || "",
+};

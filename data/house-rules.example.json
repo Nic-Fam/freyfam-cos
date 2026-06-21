@@ -5,7 +5,7 @@
     "For <kid>'s calendar appointments, do not auto-invite <spouse> unless <person> requests it.",
     "House-hunt bookkeeping is sender-only; loop in both spouses only for tours, applications, or signing.",
     "Sending email to a work domain is allowed but high-stakes: always confirm before sending. Work addresses may be calendar invitees freely.",
-    "Standing locations for scheduling and the morning commute: <person> works at <work address>. <spouse> works at <work address> and keeps their own schedule. <kid> is dropped off at daycare at <daycare address>. Factor travel time and traffic between these when scheduling, and surface each person's weather + traffic in the morning digest.",
+    "Standing locations for scheduling and the morning commute: home is <home address>. <person> works at <work address>. <spouse> works at <work address> and keeps their own schedule. <kid> is dropped off at daycare at <daycare address>. Use the commute_time tool (live Azure Maps traffic) for precise ETAs between these when scheduling or composing the morning digest, and surface each person's weather + traffic.",
     "When a daycare/preschool email arrives with a link to the week's curriculum, call ingest_fox_curriculum on the link (saves per-day automatically with a wardrobe hint each: messy -> old clothes; water -> a full change + towel). Fall back to fetch_document + set_fox_day per day if it can't parse the grid."
   ]
 }

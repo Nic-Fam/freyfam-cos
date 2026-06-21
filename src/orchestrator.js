@@ -14,6 +14,7 @@ import { extractDocuments, fetchDocument } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
+import { getCommuteTime, formatCommute } from "./commute.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -143,6 +144,19 @@ const tools = [
     description:
       "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Bright Horizons curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
     input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
+    name: "commute_time",
+    description:
+      "Precise door-to-door driving time with LIVE traffic between two addresses (Azure Maps). Returns minutes, miles, current delay, and a traffic label. Use this for real commute ETAs (e.g. the morning digest's per-person routes); it is accurate where web search is not. The standing locations are in the house rules.",
+    input_schema: {
+      type: "object",
+      properties: {
+        origin: { type: "string", description: "Start address (usually home)." },
+        dest: { type: "string", description: "Destination address." },
+      },
+      required: ["origin", "dest"],
+    },
   },
   {
     name: "place_order",
@@ -293,6 +307,14 @@ function toolHandlers({ images, onDelegate } = {}) {
         return JSON.stringify(await readPage(url, { maxChars }));
       } catch (e) {
         return `Could not read page: ${e.message}`;
+      }
+    },
+    commute_time: async ({ origin, dest }) => {
+      try {
+        const r = await getCommuteTime(origin, dest);
+        return `${origin} to ${dest}: ${formatCommute(r)}`;
+      } catch (e) {
+        return `Could not get commute time: ${e.message}`;
       }
     },
     place_order: async ({ url, summary, steps }) => {
