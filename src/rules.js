@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 // ===========================================================================
 // House rules = always-on operating policy, distinct from RAG memory. A fact you
@@ -56,4 +57,83 @@ export async function getAgentRules(agent) {
 export function formatAgentRules(rules) {
   if (!rules || !rules.length) return "";
   return "Your standing rules (always apply on your beat):\n" + rules.map((r) => "- " + r).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Writers. The family adds rules over time by just messaging Lloyd; he calls the
+// add_rule / remove_rule / list_rules tools (orchestrator.js), which call these.
+// getHouseRules()/getAgentRules() re-read the file on every turn, so a written
+// rule applies on the NEXT message with no daemon restart. The JSON stays the
+// single source of truth, so hand-editing the file still works too.
+// ---------------------------------------------------------------------------
+
+// Valid agentRules keys, so a typo ("chiff") can't create a dead rule no agent reads.
+export const KNOWN_AGENTS = ["chief", "finance", "dev", "resale", "chef", "security"];
+
+async function loadRaw() {
+  try {
+    const data = JSON.parse(await readFile(RULES_PATH, "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+async function saveRaw(data) {
+  await mkdir(dirname(RULES_PATH), { recursive: true });
+  await writeFile(RULES_PATH, JSON.stringify(data, null, 2));
+}
+
+/**
+ * Add a standing rule. Omit `agent` for a house rule (chief); pass one of
+ * KNOWN_AGENTS for a per-agent rule. Idempotent on exact text. Preserves all
+ * other keys in the file. Returns { added, scope, text }.
+ */
+export async function addRule(text, { agent } = {}) {
+  const t = String(text || "").trim();
+  if (!t) throw new Error("rule text is required");
+  if (agent && !KNOWN_AGENTS.includes(agent)) {
+    throw new Error(`unknown agent "${agent}" (expected one of: ${KNOWN_AGENTS.join(", ")})`);
+  }
+  const data = await loadRaw();
+  if (agent) {
+    data.agentRules = data.agentRules && typeof data.agentRules === "object" ? data.agentRules : {};
+    const list = Array.isArray(data.agentRules[agent]) ? data.agentRules[agent] : [];
+    if (list.includes(t)) return { added: false, scope: agent, text: t };
+    list.push(t);
+    data.agentRules[agent] = list;
+  } else {
+    const list = Array.isArray(data.rules) ? data.rules : [];
+    if (list.includes(t)) return { added: false, scope: "house", text: t };
+    list.push(t);
+    data.rules = list;
+  }
+  await saveRaw(data);
+  return { added: true, scope: agent || "house", text: t };
+}
+
+/**
+ * Remove a standing rule by exact text OR 1-based index (as shown by list).
+ * Omit `agent` for a house rule. Returns the removed text, or null if no match.
+ */
+export async function removeRule(match, { agent } = {}) {
+  if (agent && !KNOWN_AGENTS.includes(agent)) {
+    throw new Error(`unknown agent "${agent}" (expected one of: ${KNOWN_AGENTS.join(", ")})`);
+  }
+  const data = await loadRaw();
+  const list = agent
+    ? (Array.isArray(data.agentRules?.[agent]) ? data.agentRules[agent] : [])
+    : (Array.isArray(data.rules) ? data.rules : []);
+  if (!list.length) return null;
+
+  let idx = -1;
+  const asNum = Number(match);
+  if (Number.isInteger(asNum) && asNum >= 1 && asNum <= list.length) idx = asNum - 1;
+  else idx = list.findIndex((r) => r === String(match || "").trim());
+  if (idx < 0) return null;
+
+  const [removed] = list.splice(idx, 1);
+  if (agent) data.agentRules[agent] = list;
+  else data.rules = list;
+  await saveRaw(data);
+  return removed;
 }

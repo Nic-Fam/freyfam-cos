@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-house-rules-test.json");
 process.env.HOUSE_RULES_PATH = TMP;
-const { getHouseRules, formatHouseRules, getAgentRules, formatAgentRules } = await import("../src/rules.js");
+const { getHouseRules, formatHouseRules, getAgentRules, formatAgentRules, addRule, removeRule } = await import("../src/rules.js");
 
 after(() => rm(TMP, { force: true }));
 
@@ -51,4 +51,46 @@ test("formatAgentRules renders a bulleted block, empty string when none", () => 
   const out = formatAgentRules(["no nuts for Fox"]);
   assert.match(out, /standing rules/i);
   assert.match(out, /- no nuts for Fox/);
+});
+
+test("addRule writes house + per-agent rules, creating the file, and getters read them back", async () => {
+  await rm(TMP, { force: true }); // start from no file
+  const a = await addRule("  Always confirm before booking travel  ");
+  assert.deepEqual(a, { added: true, scope: "house", text: "Always confirm before booking travel" });
+  await addRule("Never plan a meal with nuts for Fox", { agent: "chef" });
+
+  assert.deepEqual(await getHouseRules(), ["Always confirm before booking travel"]);
+  assert.deepEqual(await getAgentRules("chef"), ["Never plan a meal with nuts for Fox"]);
+});
+
+test("addRule is idempotent on exact text and rejects unknown agents", async () => {
+  await rm(TMP, { force: true });
+  await addRule("rule one", { agent: "chef" });
+  const dup = await addRule("rule one", { agent: "chef" });
+  assert.equal(dup.added, false);
+  assert.deepEqual(await getAgentRules("chef"), ["rule one"]);
+  await assert.rejects(() => addRule("x", { agent: "chiff" }), /unknown agent/);
+});
+
+test("removeRule removes by 1-based index or exact text, preserving the rest", async () => {
+  await rm(TMP, { force: true });
+  await addRule("first");
+  await addRule("second");
+  await addRule("third");
+  assert.equal(await removeRule(2), "second"); // by index
+  assert.deepEqual(await getHouseRules(), ["first", "third"]);
+  assert.equal(await removeRule("first"), "first"); // by exact text
+  assert.deepEqual(await getHouseRules(), ["third"]);
+  assert.equal(await removeRule("nope"), null); // no match
+});
+
+test("addRule preserves unrelated keys already in the file", async () => {
+  await rm(TMP, { force: true });
+  await writeFile(TMP, JSON.stringify({ _comment: "keep me", rules: ["existing"] }));
+  await addRule("added", { agent: "security" });
+  const { readFile } = await import("node:fs/promises");
+  const data = JSON.parse(await readFile(TMP, "utf8"));
+  assert.equal(data._comment, "keep me");
+  assert.deepEqual(data.rules, ["existing"]);
+  assert.deepEqual(data.agentRules.security, ["added"]);
 });

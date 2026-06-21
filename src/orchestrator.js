@@ -11,7 +11,7 @@ import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
-import { getHouseRules, formatHouseRules } from "./rules.js";
+import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KNOWN_AGENTS } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
@@ -34,8 +34,33 @@ const tools = [
   },
   {
     name: "remember",
-    description: "Save a durable fact or preference to the family's memory.",
-    input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    description:
+      "Save a durable fact or preference to memory. Omit `agent` for a shared/household fact; set `agent` (finance, dev, resale, chef, security) to seed THAT specialist's brain (e.g. an allergy for chef, a target brand for resale). Use this whenever the family tells you something worth keeping.",
+    input_schema: {
+      type: "object",
+      properties: { text: { type: "string" }, agent: { type: "string", enum: KNOWN_AGENTS.filter((a) => a !== "chief") } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "add_rule",
+    description:
+      "Save a STANDING RULE the family wants always applied (not a one-off fact). Omit `agent` for a household rule you (the chief) follow; set `agent` (finance, dev, resale, chef, security) for a rule that specialist must always follow (e.g. chef: 'never plan a meal with nuts for Fox'). Rules apply on the next message, no restart. Use this when the family says 'always', 'never', or 'from now on'.",
+    input_schema: {
+      type: "object",
+      properties: { text: { type: "string" }, agent: { type: "string", enum: KNOWN_AGENTS } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "list_rules",
+    description: "List the current standing rules. Omit `agent` for the household rules; set `agent` to see that specialist's rules. Use it to review before adding or removing.",
+    input_schema: { type: "object", properties: { agent: { type: "string", enum: KNOWN_AGENTS } } },
+  },
+  {
+    name: "remove_rule",
+    description: "Remove a standing rule by its number (as shown by list_rules) or exact text. Omit `agent` for a household rule; set `agent` for a specialist's rule.",
+    input_schema: { type: "object", properties: { match: { type: "string" }, agent: { type: "string", enum: KNOWN_AGENTS } }, required: ["match"] },
   },
   {
     name: "log_decision",
@@ -249,9 +274,33 @@ export function wrapDelegateWithMirror(delegateFn, { onDelegate, images } = {}) 
 function toolHandlers({ images, onDelegate } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
-    remember: async ({ text }) => {
-      await remember(text);
-      return "saved";
+    // Optional `agent` routes the fact to that specialist's scoped brain; omit for shared.
+    remember: async ({ text, agent }) => {
+      await remember(text, agent ? { agent } : {});
+      return agent ? `saved to ${agent}'s memory` : "saved";
+    },
+    add_rule: async ({ text, agent }) => {
+      try {
+        const r = await addRule(text, agent ? { agent } : {});
+        const where = r.scope === "house" ? "household" : `${r.scope}'s`;
+        return r.added ? `Saved a ${where} rule: "${r.text}"` : `That ${where} rule already exists.`;
+      } catch (e) {
+        return `Could not add rule: ${e.message}`;
+      }
+    },
+    list_rules: async ({ agent } = {}) => {
+      const rules = agent ? await getAgentRules(agent) : await getHouseRules();
+      const label = agent ? `${agent}'s rules` : "household rules";
+      if (!rules.length) return `No ${label} yet.`;
+      return `${label}:\n` + rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    },
+    remove_rule: async ({ match, agent }) => {
+      try {
+        const removed = await removeRule(match, agent ? { agent } : {});
+        return removed ? `Removed: "${removed}"` : "No matching rule found.";
+      } catch (e) {
+        return `Could not remove rule: ${e.message}`;
+      }
     },
     log_decision: async (input) => JSON.stringify(await logDecision("chief-of-staff", input)),
     list_decisions: async ({ agent } = {}) => JSON.stringify(await listDecisions(agent || "chief-of-staff")),
