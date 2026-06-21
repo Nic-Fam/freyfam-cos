@@ -453,8 +453,12 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
       `fetch_document`s the curriculum link → `set_fox_day` per day → the morning digest
       surfaces Fox's activities + wardrobe hint. Verified live on the real BH media URL
       (public PDF, 5pp). No credentials anywhere.
-- [ ] Refinement (not blocking): per-DAY splitting of the weekly curriculum grid (the
-      PDF flattens Mon–Fri columns); today the wardrobe hint is week-level.
+- [x] **Per-DAY curriculum (2026-06-20):** `src/fox-curriculum.js` parses the weekly
+      grid per day by anchoring on each weekday name's x-position (robust to irregular
+      column widths + gap-bridging items). `ingest_fox_curriculum(url)` tool fetches +
+      parses + `set_fox_day` per day, with each day's date from the "Week of" anchor.
+      Digest reads `fox_today` → shows today's activities + wardrobe hint. Verified
+      live (Mon 6/15..Fri 6/19, per-day hints). `weekDates` unit-tested.
 
 **Hard constraints (unchanged):** read-only parsing; outbound still via `confirm.js`
 + `guards.js`; no new Graph consent.
