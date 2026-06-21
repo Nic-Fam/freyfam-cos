@@ -12,7 +12,10 @@ import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments } from "./documents.js";
 import { getHouseRules, formatHouseRules } from "./rules.js";
-import { isWorkDomain } from "./guards.js";
+import { isWorkDomain, shouldAutoReply } from "./guards.js";
+import { createLogger } from "./log.js";
+
+const log = createLogger("orchestrator");
 
 // --- Tools available to the chief of staff -------------------------------
 // Sub-agents are exposed as delegate tools: the chief decides scope, the
@@ -306,6 +309,15 @@ async function collectAttachments(msg) {
 export async function handleInbound(msg, transport = transportFor(msg)) {
   // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
   if (tryResolveConfirmation(msg.body)) return;
+
+  // 0b. Never auto-reply to machine senders (bounces, no-reply, marketing) or to
+  //     our own mailbox. The email front door enqueues everything in the mailbox,
+  //     so this is the chokepoint that stops bounce loops and saves tokens. SMS /
+  //     Slack senders never match, so they always pass.
+  if (!shouldAutoReply(msg.from)) {
+    log.info("auto-reply suppressed (automated/self sender)", { from: msg.from, channel: msg.channel });
+    return;
+  }
 
   // 1. Gather non-text content (all non-fatal): MMS photos -> Claude image blocks
   //    (vision); email attachments -> document text blocks (PDF/.ics/.vcf). Lloyd
