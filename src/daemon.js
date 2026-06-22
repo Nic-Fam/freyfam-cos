@@ -30,7 +30,12 @@ function shutdown(hb) {
   clearInterval(hb);
   stopQueueConsumer();
   closeBrowser(); // release the headless browser if one was launched (no-op otherwise)
-  setTimeout(() => process.exit(0), 500);
+  // Give in-flight work 500ms to drain, then SIGKILL rather than exit(0).
+  // onnxruntime-node (pulled in by the local embeddings brain) aborts in its
+  // native static destructor at normal exit ("mutex lock failed") on Intel macOS,
+  // turning a clean shutdown into SIGABRT/134 and spamming the error log. The
+  // embedding work itself is unaffected; this just skips the buggy teardown.
+  setTimeout(() => process.kill(process.pid, "SIGKILL"), 500);
 }
 
 main().catch((err) => {
