@@ -119,14 +119,31 @@ export async function resolveByCode(code, approved, { now = Date.now() } = {}) {
  * @returns {Promise<{handled:boolean, message?:string}>}
  */
 export async function tryResolveConfirmation(messageBody) {
-  const m = /^\s*(yes|no)\s+([A-Za-z0-9]{4})\s*$/i.exec(messageBody || "");
-  if (!m) return { handled: false };
-  const approved = m[1].toLowerCase() === "yes";
-  const res = await resolveByCode(m[2], approved);
-  if (!res.found) {
-    return { handled: true, message: `That approval code (${m[2].toUpperCase()}) is unknown or expired. Ask me again and I'll send a fresh one.` };
+  const raw = String(messageBody || "");
+  // Strip quoted history / signature so an EMAIL reply ("YES 1234" above a quoted
+  // thread, "On ... wrote:", "----", or "> ...") still parses as an approval.
+  const head = raw.split(/\n\s*>|\nOn\b.+\bwrote:|\n-{2,}|\n_{2,}|\nSent from /i)[0].trim();
+  // Approval replies are short. A long prose message that merely happens to
+  // contain "yes" + a 4-char token is NOT an approval -> let it route normally.
+  if (!head || head.length > 200) return { handled: false };
+
+  // A 4-char code token (codes are uppercase hex) anywhere in the head, plus a
+  // clear yes/no intent. Tolerates punctuation and a few extra words ("Yes, 1234
+  // thanks", "approve 1234", "no 1234 cancel that").
+  const code = (head.match(/\b([0-9a-f]{4})\b/i) || [])[1];
+  const affirm = /\b(yes|yep|yeah|approve[d]?|confirm(?:ed)?|ok|okay|go ahead|do it|send it)\b/i.test(head);
+  const negate = /\b(no|nope|deny|denied|cancel(?:led)?|don'?t|do not|stop|reject)\b/i.test(head);
+  if (!code || (!affirm && !negate)) return { handled: false }; // not an approval reply
+
+  const CODE = code.toUpperCase();
+  if (affirm && negate) {
+    return { handled: true, message: `Did you mean yes or no for code ${CODE}? Reply just "YES ${CODE}" or "NO ${CODE}".` };
   }
-  if (!approved) return { handled: true, message: `Cancelled: ${res.action}` };
+  const res = await resolveByCode(CODE, affirm);
+  if (!res.found) {
+    return { handled: true, message: `That approval code (${CODE}) is unknown or expired. Ask me again and I'll send a fresh one.` };
+  }
+  if (!affirm) return { handled: true, message: `Cancelled: ${res.action}` };
   if (res.error) return { handled: true, message: `I tried, but it failed: ${res.error}` };
   return { handled: true, message: res.result };
 }

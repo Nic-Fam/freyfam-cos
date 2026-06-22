@@ -54,9 +54,37 @@ test("a code resolves only once", async () => {
   assert.equal((await resolveByCode(code, true)).found, false);
 });
 
-test("unknown/expired code is handled, non-approval text is not", async () => {
-  assert.match((await tryResolveConfirmation("YES ZZZZ")).message, /unknown or expired/i);
+test("an expired/unknown code is answered gracefully, NOT routed as a new message", async () => {
+  // The bug behind Frank's freakout: a late/expired approval reply fell through to
+  // normal routing. It must be handled with an "expired" note instead.
+  const res = await tryResolveConfirmation("YES AB12"); // hex-shaped code, not pending
+  assert.equal(res.handled, true);
+  assert.match(res.message, /unknown or expired/i);
+});
+
+test("non-approval text routes normally (handled:false)", async () => {
   assert.equal((await tryResolveConfirmation("what's on the calendar?")).handled, false);
+  assert.equal((await tryResolveConfirmation("yes please book the dentist sometime")).handled, false); // no code token
+});
+
+test("tolerant matching: punctuation + extra words still approves", async () => {
+  const { code } = await requestConfirmation("book it", "test", { what: "tol" });
+  const res = await tryResolveConfirmation(`Yes, ${code} -- thanks!`);
+  assert.equal(res.message, "did: tol");
+});
+
+test("tolerant matching: an email reply with a quoted thread still approves", async () => {
+  const { code } = await requestConfirmation("book it", "test", { what: "email" });
+  const body = `YES ${code}\n\nOn Mon, Jun 23, 2026 at 9:00 AM Lloyd wrote:\n> Approval needed: ...\n> Reply YES ${code}`;
+  const res = await tryResolveConfirmation(body);
+  assert.equal(res.message, "did: email");
+});
+
+test("a long prose message with an incidental yes + token is NOT treated as an approval", async () => {
+  const { code } = await requestConfirmation("x", "test", { what: "noprose" });
+  const long = `Yes I was thinking about the trip in ${code} and also a bunch of other plans `.repeat(4);
+  assert.equal((await tryResolveConfirmation(long)).handled, false);
+  assert.deepEqual(ran, []); // nothing executed
 });
 
 test("a failing action surfaces as an error message, not a throw", async () => {
