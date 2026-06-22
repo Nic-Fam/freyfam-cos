@@ -112,6 +112,27 @@ export const SPECIALISTS = {
 };
 
 // ---------------------------------------------------------------------------
+// Dev backend (workstream Q). Steve (dev) can run on a flat-rate Claude Code
+// SUBSCRIPTION instead of the metered API: `backend=claude-code` shells out to
+// headless `claude -p` (resolving the OAuth profile) on the MacBook where Steve
+// already runs. This takes the heaviest agent off per-token cost AND gives Steve
+// real file/bash/build tools. The {agent,task}->text contract is unchanged.
+//
+// CRITICAL: the child must run with ANTHROPIC_API_KEY unset or it shadows the
+// subscription (handled in dev-claude-code.js: subscriptionEnv). Default backend
+// stays `api`, so nothing changes until this is flipped on the dev host.
+// ---------------------------------------------------------------------------
+export const DEV = {
+  backend: process.env.COS_DEV_BACKEND || "api",          // 'api' | 'claude-code'
+  bin: process.env.CLAUDE_CODE_BIN || "claude",           // headless Claude Code binary
+  cwd: process.env.COS_DEV_CWD || process.cwd(),          // workspace Steve operates in
+  timeoutMs: Number(process.env.COS_DEV_TIMEOUT_MS || 180000), // a dev task can build/test
+  // On a usage cap or backend failure, spill back to the metered API path so a
+  // capped subscription degrades to "still works, just metered" instead of erroring.
+  fallbackToApi: String(process.env.COS_DEV_FALLBACK_API ?? "true").toLowerCase() === "true",
+};
+
+// ---------------------------------------------------------------------------
 // Cost watchdog. Reads month-to-date spend from the Anthropic Console (Admin
 // API) and Azure (Cost Management) on a throttled cadence and texts the owner
 // when a billing cycle crosses the threshold. All reads are plain API calls;
