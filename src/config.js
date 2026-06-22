@@ -71,7 +71,7 @@ export const GRAPH = {
   // Where NEW events are created so they land on the family calendar Lloyd reads.
   calendarWrite: process.env.GRAPH_CALENDAR_WRITE || "nic@freyfam.com",
   // How many days forward the schedule view spans (from start of today, local).
-  calendarDays: Number(process.env.GRAPH_CALENDAR_DAYS ?? 7),
+  calendarDays: Number(process.env.GRAPH_CALENDAR_DAYS ?? 14),
   // Signature appended to emails Lloyd composes (send_email) and replies. \n
   // separated; no em dashes (family style). Override with COS_EMAIL_SIGNATURE.
   signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nChief of Staff to the Frey Family\n(an automated assistant writing on the family's behalf)")

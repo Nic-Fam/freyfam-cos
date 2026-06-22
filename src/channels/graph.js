@@ -168,6 +168,10 @@ async function calendarViewFor(mailbox, window) {
   for (const r of per) {
     if (r.status !== "fulfilled") continue;
     for (const e of r.value.value || []) {
+      // Drop pure free/busy "Free" markers (a shared work calendar emits a "Free"
+      // block per open slot). They carry no scheduling value and would bury real
+      // events; busy/tentative blockers and real free events (House Cleaning) stay.
+      if (e.showAs === "free" && /^(free|available)$/i.test(String(e.subject || "").trim())) continue;
       events.push({
         subject: e.subject,
         start: e.start?.dateTime,
@@ -193,8 +197,12 @@ function calendarOwner(mailbox) {
  * the union of owners in `calendars`. One mailbox erroring does not sink the
  * rest. `top` caps the merged result.
  */
-export async function listEvents({ top = 50, days = GRAPH.calendarDays } = {}) {
-  const window = familyDateWindow(days);
+export async function listEvents({ top, days = GRAPH.calendarDays } = {}) {
+  const win = Math.min(Math.max(1, Math.round(days || GRAPH.calendarDays)), 120); // clamp 1..120 days
+  // Scale the cap with the window so a longer look-ahead isn't silently truncated
+  // (work free/busy adds several blocks/day). Caller can still override `top`.
+  const cap = top ?? Math.min(300, Math.max(50, win * 8));
+  const window = familyDateWindow(win);
   const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
   const byKey = new Map();
   for (const r of per) {
@@ -208,7 +216,7 @@ export async function listEvents({ top = 50, days = GRAPH.calendarDays } = {}) {
   }
   return [...byKey.values()]
     .sort((a, b) => String(a.start).localeCompare(String(b.start)))
-    .slice(0, top);
+    .slice(0, cap);
 }
 
 /** Create an event on the family calendar (sends invites). High-stakes: confirm upstream. */
