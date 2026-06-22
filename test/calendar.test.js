@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildEventPayload, familyDateWindow } from "../src/channels/graph.js";
+import { buildEventPayload, familyDateWindow, reSubject } from "../src/channels/graph.js";
+
+test("reSubject adds Re: once and tolerates blanks", () => {
+  assert.equal(reSubject("Fwd: house on Oak St"), "Re: Fwd: house on Oak St");
+  assert.equal(reSubject("Re: already"), "Re: already");
+  assert.equal(reSubject(""), "Re: your note");
+});
 
 test("buildEventPayload requires subject + start", () => {
   assert.throws(() => buildEventPayload({ start: "2026-06-25T14:00:00" }), /subject is required/);

@@ -184,18 +184,42 @@ export async function createEvent(input) {
   return { id: res.id, webLink: res.webLink, subject: res.subject };
 }
 
+/** "Re:"-prefix a subject without doubling it. */
+export function reSubject(subject) {
+  const s = String(subject || "").trim();
+  if (!s) return "Re: your note";
+  return /^re:\s/i.test(s) ? s : `Re: ${s}`;
+}
+
 /**
- * Reply to an existing message IN-THREAD. Graph's reply action preserves the
- * conversation + sets In-Reply-To/References, so the reply collapses into the same
- * email thread in the client (true continuity, beyond a matching subject line).
- * Replies to the original sender. Needs the front door to pass `graphMessageId`
- * and to NOT delete the message. Uses Mail.Send/Read (already granted — no new
- * consent). Falls back to sendMail when no messageId is available.
+ * Reply to an existing message by sending a CLEAN, standalone email to its
+ * sender (Mail.Read to look up sender+subject, Mail.Send to send).
+ *
+ * We deliberately do NOT use Graph's /reply action: it prepends our text into the
+ * ORIGINAL message's body, and a realtor/marketing email's HTML (tables, inline
+ * CSS, positioned elements) rendered our reply overlaid and unreadable. A fresh
+ * message with our text as the whole body cannot be overlaid. Threading is by
+ * "Re:" subject (clients still group it); we trade In-Reply-To headers for a
+ * reply that is always legible. Falls back to a plain send if lookup fails.
  */
 export async function replyToMessage(messageId, text) {
-  await graph()
-    .api(`/users/${GRAPH.mailbox}/messages/${messageId}/reply`)
-    .post({ comment: String(text ?? "") });
+  let to;
+  let subject = "your note";
+  try {
+    const orig = await graph()
+      .api(`/users/${GRAPH.mailbox}/messages/${messageId}`)
+      .select("subject,from,sender,replyTo")
+      .get();
+    subject = orig.subject || subject;
+    to =
+      orig.replyTo?.[0]?.emailAddress?.address ||
+      orig.from?.emailAddress?.address ||
+      orig.sender?.emailAddress?.address;
+  } catch (err) {
+    throw new Error(`could not load message ${messageId} to reply: ${err.message}`);
+  }
+  if (!to) throw new Error(`no reply address on message ${messageId}`);
+  await sendMail({ to, subject: reSubject(subject), body: text });
 }
 
 /**
