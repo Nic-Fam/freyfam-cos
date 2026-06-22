@@ -101,7 +101,7 @@ const tools = [
   {
     name: "list_calendar",
     description:
-      "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `calendars` field naming whose calendar it is on. Defaults to the next several days; pass `days: 1` for just today (e.g. the morning digest).",
+      "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `calendars` field naming whose calendar it is on and a `showAs` field. For availability, treat showAs 'busy' OR 'tentative' as UNAVAILABLE (work calendars surface as free/busy only); only open time or showAs 'free' is bookable. Defaults to the next several days; pass `days: 1` for just today (e.g. the morning digest).",
     input_schema: { type: "object", properties: { top: { type: "number" } } },
   },
   {
