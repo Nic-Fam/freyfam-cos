@@ -1,5 +1,6 @@
 import { agentLoop, systemBlocks } from "./claude.js";
-import { modelForComplexity } from "./config.js";
+import { modelForComplexity, GRAPH } from "./config.js";
+import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -231,6 +232,7 @@ registerActionHandler("calendar", async (input) => {
 });
 registerActionHandler("email", async ({ to, subject, body }) => {
   await sendMail({ to, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
+  await recordEmailContact(to); // remember we've now written them, so next time isn't "first contact"
   return "Email sent.";
 });
 registerActionHandler("order", async ({ url, steps }) => {
@@ -367,10 +369,14 @@ function toolHandlers({ images, onDelegate } = {}) {
     },
     send_email: async ({ to, subject, body }) => {
       const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
+      // Append Lloyd's signature so every outbound email is signed consistently
+      // (he's told not to add his own sign-off). Stored on the staged action so
+      // the approved send matches the preview.
+      const signed = `${String(body).trimEnd()}\n\n${GRAPH.signature}`;
       const { instruction } = await requestConfirmation(
-        `Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`,
+        `Email to ${to}${flag}\nSubject: ${subject}\n${signed.slice(0, 220)}`,
         "email",
-        { to, subject, body }
+        { to, subject, body: signed }
       );
       return `Ready to email ${to}${flag} (subject: ${subject}). ${instruction}`;
     },
@@ -452,9 +458,13 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
+  const contacts = await getEmailContacts(); // so Lloyd knows who is NOT a first contact
   const volatile = [
     `Now: ${nowInFamilyTz()}`,
     formatHouseRules(rules),
+    contacts.length
+      ? `Email addresses you have written before (anyone NOT on this list is a first contact, so introduce yourself): ${contacts.join(", ")}`
+      : "You have no record of emailing anyone yet, so treat any outbound email as a first contact and introduce yourself.",
     mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
   ]
     .filter(Boolean)

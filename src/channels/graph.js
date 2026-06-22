@@ -219,7 +219,8 @@ export async function replyToMessage(messageId, text) {
     throw new Error(`could not load message ${messageId} to reply: ${err.message}`);
   }
   if (!to) throw new Error(`no reply address on message ${messageId}`);
-  await sendMail({ to, subject: reSubject(subject), body: text });
+  const signed = `${String(text).trimEnd()}\n\n${GRAPH.signature}`;
+  await sendMail({ to, subject: reSubject(subject), body: signed });
 }
 
 /**
