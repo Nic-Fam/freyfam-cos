@@ -320,7 +320,7 @@ repo's `queue.js`/`orchestrator.js`.
       the daemon (Lloyd-side intake + forwarding); (4) merge + CI-deploy the front door.
 - Parallel-safe: yes — contract pinned; front-door deploy lands independently.
 
-### J. Cost watchdog  `[~]`  — code done & green; needs creds + live verify
+### J. Cost watchdog  `[x]`  — LIVE + verified 2026-06-21 (both meters read real spend)
 
 Built 2026-06-19. Hourly, zero-model-token reads of month-to-date spend → SMS to
 `OWNER_PHONE` (via the guarded Twilio path) when a billing cycle crosses
@@ -336,12 +336,14 @@ Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
       its own hourly cadence (`COST_CHECK_INTERVAL_MS`). Tests green.
 - [x] `deploy/azure-budget.sh`: independent Azure-side budget backstop (action
       group + SMS at 80% / 100% / forecasted) that fires even when the Mac is off.
-- [ ] **LATER — provision creds (no code, just `.env`):** `ANTHROPIC_ADMIN_KEY`
-      (Console → Settings → Admin keys, org owner) and an Azure SP with the
-      **Cost Management Reader** role (`az ad sp create-for-rbac --role
-      "Cost Management Reader" --scopes /subscriptions/<id>`) → `AZURE_CLIENT_ID/
-      SECRET/TENANT_ID` + `AZURE_SUBSCRIPTION_ID`. Keys already scaffolded (blank)
-      in `.env`.
+- [x] **Creds provisioned + verified LIVE 2026-06-21.** `ANTHROPIC_ADMIN_KEY` set;
+      the Graph SP was granted **Cost Management Reader** on the subscription
+      (`az role assignment create --assignee <sp> --role "Cost Management Reader"
+      --scope /subscriptions/<id>`), clearing the prior 403. Live read: Azure MTD
+      $13.65, Anthropic MTD $29.90 (both tier 0, no alert — correct). The integrated
+      `checkCostThresholds` runs clean and degrades gracefully on a transient Azure
+      429 (logs + skips that sample, no crash/false-alert; hourly cadence stays well
+      within Cost Management's rate limit).
 - [ ] **LATER — live-verify the read → SMS path:** `COST_ALERT_USD=0.01 npm run once`
       should text the owner within seconds; then revert. Flips this workstream to `[x]`.
 - [ ] **LATER (optional) — run the Azure budget backstop:** `bash deploy/azure-budget.sh`
