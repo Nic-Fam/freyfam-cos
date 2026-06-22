@@ -650,7 +650,7 @@ heartbeat.
 - Freshness note: today's Fox row is empty until the next Bright Horizons email is
   filed; the digest just skips Fox's section until then. 95/95 daemon tests pass.
 
-### Q. Steve on a Claude Code subscription (not the API)  `[ ]`  — cost lever, designed
+### Q. Steve on a Claude Code subscription (not the API)  `[~]`  — backend BUILT 2026-06-21; go-live is the MacBook login
 
 Run **Steve (dev)** on a **Claude Code / Claude Max subscription** instead of the
 metered Anthropic API. Two reasons it's the right agent for this: dev work (file
@@ -666,18 +666,31 @@ Claude Code (headless `claude -p` or the Agent SDK) for the task instead of the
 `claude.js` → API path. The `delegate` contract `{agent,task} -> text` stays stable;
 only Steve's execution backend changes.
 
-- [ ] Route the `dev` specialist runner to a Claude-Code backend (Agent SDK or
-      `claude -p`) on the MacBook; keep the same return contract.
-- [ ] **Critical gotcha:** `ANTHROPIC_API_KEY` SHADOWS the subscription (it wins
-      credential precedence). Steve's process must run with the API key UNSET (and not
-      both key + auth token, or the API 401s). Give the dev specialist its own env.
-- [ ] Authenticate the subscription once on the MacBook (`claude` `/login`); persist
-      the profile. This is a credential step (per the identity model), not an `.env` key.
-- [ ] Bound it: subscription has **usage limits** (Max/Pro caps) — heavy automated dev
-      can hit them; decide fallback (queue, or spill to API) and watch the cap.
+- [x] **Route the `dev` runner to a Claude-Code backend (2026-06-21).**
+      `src/specialists/dev-claude-code.js`: `runDevViaClaudeCode()` shells out to
+      headless `claude -p <task> --output-format json --append-system-prompt <persona+ctx>`
+      and returns the `result` text. Steve's persona, local-time line, standing rules
+      and recalled memory all ride along, so he's still Steve — now with Claude Code's
+      real file/bash/build tools. `runner.js` branches to it when
+      `agent==="dev" && DEV.backend==="claude-code"` (config block `DEV`,
+      `COS_DEV_BACKEND`). Contract `{agent,task}->text` unchanged. Text-only path:
+      photo turns fall back to the API loop. `runProcess` is injectable;
+      `test/dev-claude-code.test.js` (9 tests) pins parse/scrub/cap/timeout. 134/134 green.
+- [x] **Critical gotcha handled.** `subscriptionEnv()` DELETES both
+      `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child env so the OAuth
+      subscription wins precedence (test asserts the spawned child carries no key).
+      `.env.example` warns to keep Steve's process env clean too.
+- [x] **Usage-cap fallback built.** A cap throws `DevBackendError{code:"usage_limit"}`;
+      with `COS_DEV_FALLBACK_API=true` (default) the runner logs and spills back to the
+      metered API loop, so a capped subscription degrades to "still works, just metered"
+      rather than erroring. Same for timeouts / nonzero exits.
+- [ ] **GO-LIVE (external, on Steve's Mac):** `claude /login` once (subscription
+      OAuth profile — a credential step, not an `.env` key); ensure `ANTHROPIC_API_KEY`
+      is NOT in that process's env; set `COS_DEV_BACKEND=claude-code`; run a real dev
+      task through `delegate` and confirm it returns text without spending API tokens.
+- [ ] ToS: confirm the subscription terms allow this automated household use.
 - Note: this is a capability upgrade too — Claude Code gives Steve real file/bash/build
   tools (vs the current text-only runner), which is what "build a household app" needs.
-- ToS: confirm subscription terms allow this automated household use.
 
 ---
 
