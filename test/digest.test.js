@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest } from "../src/digest.js";
+import { rm } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
+import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest, getLastDigestDate, setLastDigestDate } from "../src/digest.js";
 
 const TZ = "America/Los_Angeles";
 const opts = { hour: 7, tz: TZ, windowHours: 2 };
@@ -32,6 +35,17 @@ test("fires again the next local day", () => {
   const r = shouldRunDigest(nextDay, "2026-06-21", opts);
   assert.equal(r.run, true);
   assert.equal(r.date, "2026-06-22");
+});
+
+test("last-digest date persists across calls (survives a restart)", async () => {
+  const TMP = join(os.tmpdir(), "cos-digest-state-test.json");
+  process.env.DIGEST_STATE_PATH = TMP;
+  await rm(TMP, { force: true });
+  assert.equal(await getLastDigestDate(), null); // no state yet
+  await setLastDigestDate("2026-06-22");
+  assert.equal(await getLastDigestDate(), "2026-06-22"); // a fresh process would read this and not re-fire
+  await rm(TMP, { force: true });
+  delete process.env.DIGEST_STATE_PATH;
 });
 
 test("buildDigestPrompt injects the authoritative date as ground truth", () => {

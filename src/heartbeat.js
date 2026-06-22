@@ -5,7 +5,7 @@ import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
-import { runMorningDigest, shouldRunDigest } from "./digest.js";
+import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate } from "./digest.js";
 import { shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -58,14 +58,15 @@ async function maybeCheckCosts() {
 }
 
 // Morning digest: fire once per local day in the morning window. Lloyd composes
-// it by delegating to the specialists (see digest.js).
-let lastDigestDate = null;
-
+// it by delegating to the specialists (see digest.js). The once-per-day guard is
+// PERSISTED (digest-state.json) so frequent daemon restarts inside the window
+// don't re-fire it.
 async function maybeRunDigest() {
   if (!DIGEST.enabled) return;
+  const lastDigestDate = await getLastDigestDate();
   const { run, date } = shouldRunDigest(new Date(), lastDigestDate, DIGEST);
   if (!run) return;
-  lastDigestDate = date; // record before running so a slow run can't double-fire
+  await setLastDigestDate(date); // persist BEFORE running so a restart mid-run can't double-fire
   try {
     await runMorningDigest();
     log.info("morning digest sent", { date });

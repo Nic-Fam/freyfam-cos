@@ -1,3 +1,5 @@
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { MODELS, DIGEST } from "./config.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
@@ -92,6 +94,25 @@ export function shouldRunDigest(now, lastRunDate, { hour = 7, tz = "America/Los_
   const { date, hour: h } = localParts(now, tz);
   const inWindow = h >= hour && h < hour + windowHours;
   return { run: inWindow && lastRunDate !== date, date };
+}
+
+// Persisted "last digest date" so the once-per-day guard survives a daemon
+// restart. It was in-memory, so a restart inside the morning catch-up window
+// reset it to null and the digest fired again (it sent 3x on 6/21 across
+// restarts). The file is the source of truth across process lifetimes.
+const statePath = () => process.env.DIGEST_STATE_PATH || "./data/digest-state.json";
+
+export async function getLastDigestDate() {
+  try {
+    return JSON.parse(await readFile(statePath(), "utf8")).lastRunDate || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setLastDigestDate(date) {
+  await mkdir(dirname(statePath()), { recursive: true });
+  await writeFile(statePath(), JSON.stringify({ lastRunDate: date }, null, 2));
 }
 
 /** Subject line for the emailed digest, dated in the family timezone. */
