@@ -229,7 +229,13 @@ export async function replyToMessage(messageId, text) {
  * 2026-06-20 policy (no hard block; confirmation is the gate).
  */
 export async function sendMail({ to, subject, body }) {
-  const recipients = Array.isArray(to) ? to : [to];
+  // Accept an array OR a comma/semicolon-separated string. Lloyd often passes
+  // "a@x.com, b@y.com" as one string; without splitting, Graph treats the whole
+  // string as a single recipient and rejects it ("recipient not resolved").
+  const recipients = (Array.isArray(to) ? to : String(to ?? "").split(/[,;]/))
+    .map((a) => a.trim())
+    .filter(Boolean);
+  if (!recipients.length) throw new Error("sendMail: no valid recipient");
   await graph()
     .api(`/users/${GRAPH.mailbox}/sendMail`)
     .post({
