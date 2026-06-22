@@ -74,7 +74,7 @@ export const GRAPH = {
   calendarDays: Number(process.env.GRAPH_CALENDAR_DAYS ?? 7),
   // Signature appended to emails Lloyd composes (send_email) and replies. \n
   // separated; no em dashes (family style). Override with COS_EMAIL_SIGNATURE.
-  signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nChief of Staff to the Frey Family")
+  signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nAI Chief of Staff to the Frey Family\n(an automated assistant writing on the family's behalf)")
     .replace(/\\n/g, "\n"),
 };
 
