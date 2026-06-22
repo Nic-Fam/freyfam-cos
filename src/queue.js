@@ -1,6 +1,7 @@
 import { QueueClient } from "@azure/storage-queue";
 import { AZURE } from "./config.js";
 import { handleInbound } from "./orchestrator.js";
+import { isProcessed, markProcessed, unmarkProcessed } from "./processed-messages.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
@@ -76,11 +77,21 @@ export async function startQueueConsumer() {
     idleBackoff = 1000;
 
     for (const m of msgs) {
+      // At-least-once dedup: skip a message we already handled (redelivered after a
+      // reset/visibility-timeout before it was acked) so confirmations and "YES"
+      // approvals never refire. Mark BEFORE handling; unmark on failure to retry.
+      if (await isProcessed(m.messageId)) {
+        log.info("skipping already-processed message", { messageId: m.messageId, dequeueCount: m.dequeueCount });
+        await queue.deleteMessage(m.messageId, m.popReceipt).catch(() => {});
+        continue;
+      }
+      await markProcessed(m.messageId);
       try {
         const payload = JSON.parse(Buffer.from(m.messageText, "base64").toString("utf8"));
         await handleInbound(payload);
         await queue.deleteMessage(m.messageId, m.popReceipt); // ack only on success
       } catch (err) {
+        await unmarkProcessed(m.messageId); // let the visibility-timeout redelivery retry a transient failure
         if (m.dequeueCount >= MAX_DEQUEUE) {
           try {
             await deadLetterMessage(m, err);
