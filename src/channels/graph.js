@@ -128,25 +128,58 @@ export function familyDateWindow(days = 7, now = new Date()) {
   };
 }
 
-// Read one mailbox's events in the window via calendarView (expands recurrences).
+// Calendars to ignore for scheduling (all-day "free" noise). A shared WORK
+// calendar (e.g. "Nic Work", free/busy only) is NOT excluded, so its
+// busy/tentative blocks count. Override with GRAPH_CALENDAR_EXCLUDE.
+const CALENDAR_EXCLUDE = (process.env.GRAPH_CALENDAR_EXCLUDE || "holiday,birthday")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// Cache each mailbox's calendar list (ids are stable; cleared on restart).
+const _calendarsCache = new Map();
+async function calendarsFor(mailbox) {
+  if (_calendarsCache.has(mailbox)) return _calendarsCache.get(mailbox);
+  const res = await graph().api(`/users/${mailbox}/calendars`).select("id,name").top(50).get();
+  const cals = (res.value || []).filter(
+    (cal) => !CALENDAR_EXCLUDE.some((tok) => String(cal.name || "").toLowerCase().includes(tok))
+  );
+  _calendarsCache.set(mailbox, cals);
+  return cals;
+}
+
+// Read ALL of a mailbox's calendars (default + secondaries like a shared "Nic
+// Work" free/busy calendar) in the window via calendarView (expands recurrences).
+// Without this Lloyd saw only the default calendar and missed work busy/tentative.
 async function calendarViewFor(mailbox, window) {
-  const res = await graph()
-    .api(`/users/${mailbox}/calendarView`)
-    .query({ startDateTime: window.startDateTime, endDateTime: window.endDateTime })
-    .header("Prefer", `outlook.timezone="${FAMILY_TZ}"`)
-    .select("subject,start,end,location,showAs,attendees")
-    .top(50)
-    .orderby("start/dateTime")
-    .get();
-  return (res.value || []).map((e) => ({
-    subject: e.subject,
-    start: e.start?.dateTime,
-    end: e.end?.dateTime,
-    location: e.location?.displayName,
-    showAs: e.showAs,
-    attendees: (e.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean),
-    calendars: [calendarOwner(mailbox)],
-  }));
+  const cals = await calendarsFor(mailbox);
+  const owner = calendarOwner(mailbox);
+  const per = await Promise.allSettled(
+    cals.map((cal) =>
+      graph()
+        .api(`/users/${mailbox}/calendars/${cal.id}/calendarView`)
+        .query({ startDateTime: window.startDateTime, endDateTime: window.endDateTime })
+        .header("Prefer", `outlook.timezone="${FAMILY_TZ}"`)
+        .select("subject,start,end,location,showAs,attendees")
+        .top(50)
+        .orderby("start/dateTime")
+        .get()
+    )
+  );
+  const events = [];
+  for (const r of per) {
+    if (r.status !== "fulfilled") continue;
+    for (const e of r.value.value || []) {
+      events.push({
+        subject: e.subject,
+        start: e.start?.dateTime,
+        end: e.end?.dateTime,
+        location: e.location?.displayName,
+        showAs: e.showAs,
+        attendees: (e.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean),
+        calendars: [owner],
+      });
+    }
+  }
+  return events;
 }
 
 // Short owner label (local-part) so the digest can say whose calendar it is.
@@ -160,7 +193,7 @@ function calendarOwner(mailbox) {
  * the union of owners in `calendars`. One mailbox erroring does not sink the
  * rest. `top` caps the merged result.
  */
-export async function listEvents({ top = 20, days = GRAPH.calendarDays } = {}) {
+export async function listEvents({ top = 50, days = GRAPH.calendarDays } = {}) {
   const window = familyDateWindow(days);
   const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
   const byKey = new Map();
