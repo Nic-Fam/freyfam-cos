@@ -20,7 +20,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ClientSecretCredential } from "@azure/identity";
-import { COST } from "./config.js";
+import { COST, MODELS, ANTHROPIC_API_KEY } from "./config.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("cost");
@@ -159,6 +159,35 @@ export async function azureMonthToDateUsd() {
   return total;
 }
 
+// --- Anthropic credit-balance health -----------------------------------------
+// There is no public "remaining balance" endpoint, so we detect the failure that
+// actually matters: when the API rejects calls because credits are exhausted/too
+// low (a 400 invalid_request_error mentioning the credit balance). A silent
+// version of this took the daemon down — every agent run failed but nothing told
+// the owner. A tiny 1-token ping turns that into an immediate, actionable alert.
+// fetchImpl injectable for tests.
+export async function anthropicCreditStatus({ fetchImpl = fetch } = {}) {
+  if (!ANTHROPIC_API_KEY) return { ok: true }; // not configured -> nothing to check
+  let res;
+  try {
+    res = await fetchImpl("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: MODELS.triage, max_tokens: 1, messages: [{ role: "user", content: "ok" }] }),
+    });
+  } catch {
+    return { ok: true }; // network blip is not a balance problem; don't false-alarm
+  }
+  if (res.ok) return { ok: true };
+  let body = "";
+  try { body = await res.text(); } catch { /* ignore */ }
+  // Credit/billing problems read as "credit balance is too low" / payment / billing.
+  if (/credit balance|too low|billing|payment required|insufficient/i.test(body) || res.status === 402) {
+    return { ok: false, reason: "Anthropic API credit balance is too low" };
+  }
+  return { ok: true }; // other errors (rate limit, 500) are not a balance signal
+}
+
 // --- Brave Search overage (metered locally; no Brave billing API) -----------
 
 async function loadUsage() {
@@ -255,6 +284,30 @@ export async function checkCostThresholds(now = new Date(), { notify } = {}) {
     }
   }
 
-  if (alerts.length) await saveState(state);
+  let dirty = alerts.length > 0;
+
+  // Credit-balance health (not cycle-scoped: an empty balance is urgent whenever it
+  // happens). Alert the FIRST time we see it fail, then at most once per 24h while
+  // still down; clear on recovery so the next outage alerts again.
+  try {
+    const credit = await anthropicCreditStatus();
+    if (!credit.ok) {
+      const last = state.creditAlertAt || 0;
+      if (now.getTime() - last > 24 * 60 * 60 * 1000) {
+        const msg = `Cost alert: ${credit.reason}. Lloyd cannot run until you add credits at console.anthropic.com/settings/billing.`;
+        alerts.push(msg);
+        state.creditAlertAt = now.getTime();
+        dirty = true;
+        if (notify) await notify(msg);
+      }
+    } else if (state.creditAlertAt) {
+      delete state.creditAlertAt; // recovered -> reset so a future outage alerts again
+      dirty = true;
+    }
+  } catch (err) {
+    log.error("credit-balance check failed", { reason: err.message });
+  }
+
+  if (dirty) await saveState(state);
   return alerts;
 }
