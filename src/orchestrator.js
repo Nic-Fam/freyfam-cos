@@ -3,7 +3,7 @@ import { modelForComplexity } from "./config.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
-import { requestConfirmation, tryResolveConfirmation } from "./confirm.js";
+import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage } from "./channels/graph.js";
 import { persona } from "./persona.js";
@@ -221,6 +221,23 @@ const tools = [
   },
 ];
 
+// Executors for the gated actions, keyed by the `kind` staged in confirm.js. They
+// run ONLY when an approval is confirmed (the YES reply or a Slack Approve tap),
+// possibly in a different process than the one that staged it (restart-safe), so
+// they take serializable params, not closures. Registered once at module load.
+registerActionHandler("calendar", async (input) => {
+  const r = await createEvent(input);
+  return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
+});
+registerActionHandler("email", async ({ to, subject, body }) => {
+  await sendMail({ to, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
+  return "Email sent.";
+});
+registerActionHandler("order", async ({ url, steps }) => {
+  const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
+  return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
+});
+
 // --- Transports: how one turn delivers its result + mirrors its work --------
 // A transport is { reply(text), mirror(event) }. SMS and email are built in;
 // SMS/email have no observability channel so their mirror is a no-op. Slack
@@ -335,29 +352,25 @@ function toolHandlers({ images, onDelegate } = {}) {
       return `Saved Fox's day ${date}. Wardrobe: ${row.clothingHint || "(none derived)"}`;
     },
     // Gated actions STAGE the side effect and return the approval ask. They do
-    // NOT block the turn (that dead-locked the serial queue consumer: the turn
-    // held the consumer, so the YES reply could never be read). The action runs
-    // only when the family replies "YES <code>" (confirm.js executes it then).
+    // NOT block the turn (that dead-locked the serial queue consumer). The action
+    // runs only when the family replies "YES <code>"; the staged kind+params are
+    // persisted (confirm.js) so a restart can't drop a pending approval.
     create_calendar_event: async (input) => {
       const who = (input.attendees || []).join(", ") || "(no invitees)";
       const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
-      const { instruction } = requestConfirmation(
+      const { instruction } = await requestConfirmation(
         `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`,
-        async () => {
-          const r = await createEvent(input);
-          return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
-        }
+        "calendar",
+        input
       );
       return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
     },
     send_email: async ({ to, subject, body }) => {
       const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
-      const { instruction } = requestConfirmation(
+      const { instruction } = await requestConfirmation(
         `Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`,
-        async () => {
-          await sendMail({ to, subject, body }); // the confirmation IS the gate (work domains flagged)
-          return "Email sent.";
-        }
+        "email",
+        { to, subject, body }
       );
       return `Ready to email ${to}${flag} (subject: ${subject}). ${instruction}`;
     },
@@ -390,12 +403,10 @@ function toolHandlers({ images, onDelegate } = {}) {
       }
     },
     place_order: async ({ url, summary, steps }) => {
-      const { instruction } = requestConfirmation(
+      const { instruction } = await requestConfirmation(
         `Place order via browser:\n${summary}\n${url}`,
-        async () => {
-          const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
-          return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
-        }
+        "order",
+        { url, summary, steps }
       );
       return `Ready to place this order: ${summary}. ${instruction}`;
     },

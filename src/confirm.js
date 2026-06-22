@@ -1,105 +1,121 @@
 import { randomUUID } from "node:crypto";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { notifyOwner } from "./channels/twilio.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
-// Human-in-the-loop gate. Any high-stakes action (sending mail/SMS on the
-// family's behalf, a purchase, anything irreversible) must pass through here.
+// Human-in-the-loop gate (hard constraint #2). Any high-stakes action — sending
+// mail on the family's behalf, a purchase, a calendar invite — must pass through
+// here. The action runs ONLY on an explicit approval.
 //
-// DEFERRED, NON-BLOCKING by design. The queue consumer processes messages
-// serially, so a confirmation that BLOCKED the turn awaiting a "YES" reply
-// dead-locked the whole daemon: the turn held the consumer, so the approval
-// reply could never be read to release it. Instead we STAGE the action and
-// return immediately with a code; the turn ends, the consumer is free, and the
-// "YES <code>" reply (SMS) or a Slack button executes the staged action then.
+// DEFERRED + PERSISTED by design:
+//  - Deferred (non-blocking): the queue consumer is serial, so a confirmation
+//    that blocked the turn awaiting "YES" dead-locked the daemon (the turn held
+//    the consumer, so the reply could never be read). We stage and return a code
+//    immediately; the turn ends; the reply resolves it later.
+//  - Persisted: a staged action is stored by KIND + serializable PARAMS (NOT a
+//    closure), so it survives a daemon restart — the nightly 4am restart used to
+//    silently drop pending approvals. The orchestrator registers a handler per
+//    kind at boot; resolving an approval dispatches to it.
 //
-// The gate is still absolute: the action's `execute` only runs on an explicit
-// approval. Staged actions live in memory, so a daemon restart drops anything
-// not yet approved (the requester just re-asks) — acceptable and far better
-// than a deadlock.
-//
-// Slack is wired without an import cycle: slack.js calls registerApprovalNotifier()
-// to receive each request and resolveByCode() to resolve a button tap. confirm.js
-// never imports slack.js.
+// Slack is wired without an import cycle: slack.js registers a notifier and calls
+// resolveByCode for button taps. confirm.js never imports slack.js or the
+// orchestrator (handlers come in via registerActionHandler).
 // ===========================================================================
 
 const log = createLogger("confirm");
 
-const pending = new Map(); // code -> { action, execute, createdAt, timer }
+const PENDING_PATH = () => process.env.PENDING_APPROVALS_PATH || "./data/pending-approvals.json";
+const TTL_MS = Number(process.env.APPROVAL_TTL_MS ?? 12 * 60 * 60 * 1000); // 12h: survive an overnight restart
+
+const handlers = new Map(); // kind -> async (params) => resultString
 const notifiers = new Set(); // extra approval channels (e.g. Slack) -> fn({code, action})
 
-const DEFAULT_TTL_MS = 60 * 60 * 1000; // an approval is good for an hour
+/** Register the executor for an action kind (called once at boot by the orchestrator). */
+export function registerActionHandler(kind, fn) {
+  handlers.set(kind, fn);
+}
 
-/**
- * Register an extra approval notifier, called IN ADDITION to the SMS path so you
- * can approve from desk (Slack) or phone (SMS). Returns an unregister fn.
- */
+/** Register an extra approval notifier (e.g. Slack). Returns an unregister fn. */
 export function registerApprovalNotifier(fn) {
   notifiers.add(fn);
   return () => notifiers.delete(fn);
 }
 
+// --- persisted pending store (prune expired on every read/write) ------------
+
+async function loadPending(now = Date.now()) {
+  let obj = {};
+  try {
+    obj = JSON.parse(await readFile(PENDING_PATH(), "utf8"));
+  } catch {
+    return new Map();
+  }
+  const map = new Map();
+  for (const [code, e] of Object.entries(obj || {})) {
+    if (e && now - (e.createdAt || 0) <= TTL_MS) map.set(code, e);
+  }
+  return map;
+}
+
+async function savePending(map) {
+  await mkdir(dirname(PENDING_PATH()), { recursive: true });
+  await writeFile(PENDING_PATH(), JSON.stringify(Object.fromEntries(map), null, 2));
+}
+
 /**
  * Stage a high-stakes action for approval and return its code immediately (does
- * NOT block). The caller returns a message telling the family to reply
- * "YES <code>". `execute` is an async fn run only on approval; its return value
- * (a short status string) is delivered back to whoever approves.
- *
- * @param {string} actionDescription  human summary shown in the approval prompt
- * @param {() => Promise<string>} execute  the actual side effect, run on YES
- * @returns {{ code: string, instruction: string }}
+ * NOT block, persists across restarts). `kind` selects the registered executor;
+ * `params` must be JSON-serializable and is passed to that executor on approval.
+ * @returns {Promise<{code:string, instruction:string}>}
  */
-export function requestConfirmation(actionDescription, execute, { timeoutMs = DEFAULT_TTL_MS } = {}) {
-  if (typeof execute !== "function") {
-    throw new Error("requestConfirmation requires an execute() callback (deferred model)");
-  }
+export async function requestConfirmation(actionDescription, kind, params, { now = Date.now() } = {}) {
+  if (!handlers.has(kind)) throw new Error(`no action handler registered for kind "${kind}"`);
   const code = randomUUID().slice(0, 4).toUpperCase();
-  const timer = setTimeout(() => {
-    if (pending.delete(code)) log.info("approval expired", { code });
-  }, timeoutMs);
-  if (timer.unref) timer.unref(); // never keep the process alive just for a pending approval
-  pending.set(code, { action: actionDescription, execute, createdAt: Date.now(), timer });
+  const pending = await loadPending(now);
+  pending.set(code, { kind, params, action: actionDescription, createdAt: now });
+  await savePending(pending);
 
-  // SMS delivery is best-effort (the code is also returned in-thread). Defer +
-  // catch so a Twilio misconfig — sync OR async — can never break staging.
+  // SMS is best-effort (the code is also returned in-thread). Defer + catch so a
+  // Twilio misconfig — sync OR async — can never break staging.
   Promise.resolve()
     .then(() => notifyOwner(`Approval needed:\n${actionDescription}\n\nReply "YES ${code}" to approve or "NO ${code}" to cancel.`))
     .catch(() => {});
   for (const n of notifiers) {
     try { n({ code, action: actionDescription }); } catch { /* a broken notifier must never block */ }
   }
-
-  return {
-    code,
-    instruction: `Reply "YES ${code}" to confirm or "NO ${code}" to cancel.`,
-  };
+  return { code, instruction: `Reply "YES ${code}" to confirm or "NO ${code}" to cancel.` };
 }
 
 /**
- * Resolve a pending approval by code. On approval, runs the staged action and
- * returns its result. Used by the Slack button and, underneath, the SMS parser.
+ * Resolve a pending approval by code. On approval, dispatches to the registered
+ * handler for its kind and returns the result.
  * @returns {Promise<{found:boolean, approved?:boolean, action?:string, result?:string, error?:string}>}
  */
-export async function resolveByCode(code, approved) {
-  const entry = pending.get(String(code || "").toUpperCase());
+export async function resolveByCode(code, approved, { now = Date.now() } = {}) {
+  const key = String(code || "").toUpperCase();
+  const pending = await loadPending(now);
+  const entry = pending.get(key);
   if (!entry) return { found: false };
-  clearTimeout(entry.timer);
-  pending.delete(String(code || "").toUpperCase());
+  pending.delete(key);
+  await savePending(pending);
   if (!approved) return { found: true, approved: false, action: entry.action };
+  const handler = handlers.get(entry.kind);
+  if (!handler) return { found: true, approved: true, action: entry.action, error: `no handler for "${entry.kind}"` };
   try {
-    const result = await entry.execute();
+    const result = await handler(entry.params);
     return { found: true, approved: true, action: entry.action, result: result || "Done." };
   } catch (err) {
-    log.error("approved action failed", { reason: err.message });
+    log.error("approved action failed", { reason: err.message, kind: entry.kind });
     return { found: true, approved: true, action: entry.action, error: err.message };
   }
 }
 
 /**
- * SMS path: if the message is a "YES <code>" / "NO <code>" reply to a pending
- * action, resolve it (running the action on YES) and return a result the caller
- * can relay to the family. `handled:false` means it was not an approval reply,
- * so normal routing should continue.
+ * SMS path: if the message is a "YES <code>" / "NO <code>" reply, resolve it
+ * (running the staged action on YES) and return a result to relay to the family.
+ * `handled:false` means it was not an approval reply (normal routing continues).
  * @returns {Promise<{handled:boolean, message?:string}>}
  */
 export async function tryResolveConfirmation(messageBody) {
