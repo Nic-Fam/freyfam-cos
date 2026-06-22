@@ -650,7 +650,7 @@ heartbeat.
 - Freshness note: today's Fox row is empty until the next Bright Horizons email is
   filed; the digest just skips Fox's section until then. 95/95 daemon tests pass.
 
-### Q. Steve on a Claude Code subscription (not the API)  `[~]`  — backend BUILT 2026-06-21; go-live is the MacBook login
+### Q. Steve on a Claude Code subscription (not the API)  `[~]`  — backend BUILT + VERIFIED LIVE 2026-06-22 (merged to main); go-live is the MacBook login
 
 Run **Steve (dev)** on a **Claude Code / Claude Max subscription** instead of the
 metered Anthropic API. Two reasons it's the right agent for this: dev work (file
@@ -684,6 +684,12 @@ only Steve's execution backend changes.
       with `COS_DEV_FALLBACK_API=true` (default) the runner logs and spills back to the
       metered API loop, so a capped subscription degrades to "still works, just metered"
       rather than erroring. Same for timeouts / nonzero exits.
+- [x] **Backend VERIFIED LIVE on Nic's Mac (2026-06-22).** Merged to main
+      (cherry-pick b9e926a). A real dev task via `delegate({agent:"dev"})` with
+      `COS_DEV_BACKEND=claude-code` and fallback OFF returned "READY" in 2.1s through
+      headless `claude` v2.1.81 — the child env had `ANTHROPIC_API_KEY` stripped, so it
+      resolved via the subscription OAuth profile, not the metered API. Confirms the
+      backend works end-to-end; only the per-machine login + ToS remain for Steve's Mac.
 - [ ] **GO-LIVE (external, on Steve's Mac):** `claude /login` once (subscription
       OAuth profile — a credential step, not an `.env` key); ensure `ANTHROPIC_API_KEY`
       is NOT in that process's env; set `COS_DEV_BACKEND=claude-code`; run a real dev
