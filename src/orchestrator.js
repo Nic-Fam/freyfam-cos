@@ -1,6 +1,7 @@
 import { agentLoop, systemBlocks } from "./claude.js";
 import { modelForComplexity, GRAPH } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
+import { processShipmentEmail, listActivePackages, formatPackages } from "./packages.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -173,6 +174,25 @@ const tools = [
     description:
       "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Bright Horizons curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
     input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
+    name: "track_shipment",
+    description:
+      "Track a package from a shipping or delivery email. Pass the email's subject and body; it extracts UPS/Amazon/USPS/FedEx tracking numbers and either records the package (shipping notice) or marks it delivered (delivery confirmation). Use this whenever a shipping/delivery email arrives. Read-only to the outside world (it just stores tracking state). Returns what was tracked/delivered.",
+    input_schema: {
+      type: "object",
+      properties: {
+        subject: { type: "string" },
+        body: { type: "string", description: "the email body (or full text)" },
+        description: { type: "string", description: "optional: what the package is" },
+      },
+      required: ["body"],
+    },
+  },
+  {
+    name: "list_packages",
+    description: "List the packages currently being tracked (not yet delivered). Use for 'where's my package?' / 'what's on the way?'.",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "search",
@@ -392,6 +412,14 @@ function toolHandlers({ images, onDelegate } = {}) {
         return `Could not read page: ${e.message}`;
       }
     },
+    track_shipment: async ({ subject, body, description }) => {
+      const r = await processShipmentEmail({ subject, body, description });
+      if (!r.found.length) return "No tracking numbers found in that email.";
+      const fmt = (a) => a.map((n) => `${n.carrier} ${n.trackingNumber}`).join(", ");
+      if (r.isDelivery) return `Marked delivered: ${fmt(r.delivered)}.`;
+      return `Now tracking: ${fmt(r.tracked)}.`;
+    },
+    list_packages: async () => formatPackages(await listActivePackages()),
     search: async ({ query, count }) => {
       try {
         const results = await webSearch(query, count ? { count } : {});
