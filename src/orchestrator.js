@@ -16,6 +16,7 @@ import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
 import { webSearch } from "./search.js";
+import { conversationKey, getHistory, appendTurn } from "./conversation.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -436,7 +437,7 @@ export function nowInFamilyTz(now = new Date()) {
 // digest, for live weather + traffic along each person's commute).
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
 
-export async function runChief(body, model, { content, images, onDelegate, webSearch } = {}) {
+export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [] } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
@@ -450,8 +451,10 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
   const { text } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
-    // `content` (text + image blocks) wins when an MMS carried photos; else plain text.
-    messages: [{ role: "user", content: content || body }],
+    // Prior turns (short-term memory) precede the current one so a follow-up like
+    // "Nic's" resolves against "whose haircut?". `content` (text + image blocks)
+    // wins for the current turn when an MMS carried photos; else plain text.
+    messages: [...history, { role: "user", content: content || body }],
     tools: webSearch ? [...tools, WEB_SEARCH_TOOL] : tools,
     toolHandlers: toolHandlers({ images, onDelegate }), // images + delegation mirror
   });
@@ -542,16 +545,21 @@ export async function handleInbound(msg, transport = transportFor(msg)) {
 
   // 3. Run the chief of staff (or answer trivially on Haiku). recall keys off the
   //    text; `content` carries the images to Lloyd, `images` forwards them to any
-  //    specialist he delegates to this turn; `onDelegate` mirrors each handoff to
-  //    the transport's observability channel (no-op for SMS/email).
+  //    specialist he delegates to this turn; `history` is the short-term thread
+  //    so a follow-up keeps context; `onDelegate` mirrors each handoff.
+  const convoKey = conversationKey(msg);
+  const history = await getHistory(convoKey);
   const text = await runChief(msg.body || "(photo message)", model, {
     content,
     images,
+    history,
     onDelegate: (event) => transport.mirror(event),
   });
 
   // 4. Deliver via the transport (channel reply for SMS/email; channel post for Slack).
   await transport.reply(text);
+  // 5. Record the exchange so the next message from this sender has context.
+  await appendTurn(convoKey, triageText || msg.body || "(photo message)", text);
   return text;
 }
 
