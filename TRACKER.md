@@ -534,7 +534,7 @@ must not expose. So real-time voice cannot live on Lloyd's Mac the way SMS does.
 - Parallel-safe: Tier 1 reuses the queue contract (add `channel:"voice"`) + front
   door; Tier 2 is an Azure-side build independent of Lloyd. Sequence Tier 1 first.
 
-### N. Web search tool  `[x]`  — built 2026-06-20 (Brave; key-gated to go live)
+### N. Web search tool  `[x]`  — LIVE + verified 2026-06-22 (Brave key in)
 
 A read-only `search` capability (query → ranked results) so Lloyd can "look up an
 address / hours / a fact" and Shey can hunt listings. Distinct from `browse_page`,
@@ -565,8 +565,9 @@ can't, regardless of channel):
       `browse_page` (search finds the URL, browse reads it).
 - [x] Tests `test/search.test.js`: result mapping + the allowlist (present for
       chief/resale/security, ABSENT for finance/chef/dev).
-- [ ] **GO-LIVE: add `BRAVE_SEARCH_KEY` to `.env`** (free tier at
-      api.search.brave.com). Until then the tool returns "search unavailable".
+- [x] **LIVE 2026-06-22:** `BRAVE_SEARCH_KEY` set in `.env`; verified a real query
+      ("La Canada Flintridge city hall address") returned ranked results through
+      `webSearch`. Lloyd / Shey / Frank can now search.
 
 **Constraints/notes:** read-only — no `confirm`/`guards` needed for the search call
 itself; acting on a result (buy/email) still hits `confirm.js` + `guards.js`.
