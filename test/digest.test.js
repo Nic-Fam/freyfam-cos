@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { shouldRunDigest, runMorningDigest } from "../src/digest.js";
+import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest } from "../src/digest.js";
 
 const TZ = "America/Los_Angeles";
 const opts = { hour: 7, tz: TZ, windowHours: 2 };
@@ -32,6 +32,23 @@ test("fires again the next local day", () => {
   const r = shouldRunDigest(nextDay, "2026-06-21", opts);
   assert.equal(r.run, true);
   assert.equal(r.date, "2026-06-22");
+});
+
+test("buildDigestPrompt injects the authoritative date as ground truth", () => {
+  const p = buildDigestPrompt(new Date("2026-06-21T19:00:00Z"), TZ); // Sunday in PT
+  assert.match(p, /Today is Sunday, June 21, 2026 \(2026-06-21\)/);
+  assert.match(p, /treat a calendar event dated 2026-06-21 as TODAY/);
+  assert.match(p, /<digest> and <\/digest>/);
+});
+
+test("extractDigest pulls fenced content and drops any preamble", () => {
+  const raw = "Now I have everything I need. Note: today is...\n<digest>Good morning. Clear day.</digest>\ntrailing";
+  assert.equal(extractDigest(raw), "Good morning. Clear day.");
+});
+
+test("extractDigest falls back to raw text when tags are absent", () => {
+  assert.equal(extractDigest("Good morning. Clear day."), "Good morning. Clear day.");
+  assert.equal(extractDigest("   "), "");
 });
 
 test("runMorningDigest delivers over BOTH sms and email", async () => {

@@ -24,17 +24,24 @@ test("buildEventPayload maps attendees and defaults end + showAs", () => {
   assert.ok(p.start.dateTime && p.start.timeZone, "start shaped as Graph dateTime");
 });
 
-test("familyDateWindow spans [start-of-today, +days] as naive local datetimes", () => {
-  // Noon UTC on 6/21 is still 6/21 in America/Los_Angeles (UTC-7), so the day is stable.
+test("familyDateWindow anchors bounds to Pacific midnight with the DST offset", () => {
+  // Summer => PDT (-07:00). Bounds MUST carry the offset or Graph reads them as UTC.
   const w = familyDateWindow(1, new Date("2026-06-21T19:00:00Z"));
-  assert.equal(w.startDateTime, "2026-06-21T00:00:00");
-  assert.equal(w.endDateTime, "2026-06-22T00:00:00");
+  assert.equal(w.startDateTime, "2026-06-21T00:00:00-07:00");
+  assert.equal(w.endDateTime, "2026-06-22T00:00:00-07:00");
+});
+
+test("familyDateWindow uses the winter offset (PST) when applicable", () => {
+  // January => PST (-08:00). Proves DST is reflected in the offset, not hardcoded.
+  const w = familyDateWindow(1, new Date("2026-01-15T19:00:00Z"));
+  assert.equal(w.startDateTime, "2026-01-15T00:00:00-08:00");
+  assert.equal(w.endDateTime, "2026-01-16T00:00:00-08:00");
 });
 
 test("familyDateWindow rolls the end date across a month boundary", () => {
   const w = familyDateWindow(7, new Date("2026-06-28T19:00:00Z"));
-  assert.equal(w.startDateTime, "2026-06-28T00:00:00");
-  assert.equal(w.endDateTime, "2026-07-05T00:00:00");
+  assert.equal(w.startDateTime, "2026-06-28T00:00:00-07:00");
+  assert.equal(w.endDateTime, "2026-07-05T00:00:00-07:00");
 });
 
 test("buildEventPayload carries showAs=free + location (House Cleaning rule)", () => {

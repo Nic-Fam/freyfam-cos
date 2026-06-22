@@ -17,11 +17,24 @@ import { createLogger } from "./log.js";
 
 const log = createLogger("digest");
 
-const DIGEST_PROMPT = `It is morning. Compose a brief MORNING DIGEST for the family, then output ONLY the digest text (it is sent as a message, so no preamble).
+// The prompt is built per-run so TODAY's date is injected as ground truth. The
+// model was unreliable at computing the date itself (it once wrote "June 22 /
+// Monday" on Sunday the 21st and then dropped that day's events as "past"), so we
+// hand it the authoritative weekday + ISO key and tell it to anchor on them.
+export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz) {
+  const human = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric",
+  }).format(now);
+  const { date } = localParts(now, tz); // YYYY-MM-DD
+  return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
+
+Compose a brief MORNING DIGEST for the family.
 
 Gather what you need first:
 - Today's schedule: call list_calendar with days 1 (it merges Nic's and Shelli's
-  calendars; each event names whose calendar it is on). Note who has what today.
+  calendars; each event names whose calendar it is on). Anything dated ${date} is
+  today. List EVERY event returned for today with its time and whose it is; do not
+  omit or merge them away (an all-day event does not cover timed ones).
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
@@ -30,16 +43,28 @@ Gather what you need first:
   home to Shelli's work, home to Fox's Glendale drop-off) call commute_time for
   the precise ETA and any traffic delay, and use web_search for today's weather
   at each destination. Give a one-line per-person heads-up. Skip anyone who is
-  not heading out today.
+  not heading out today (e.g. on a weekend, skip work commutes).
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick).
 - Any security flags: delegate to security (Frank).
 - Notable resale finds worth a glance: delegate to resale (Shey).
 
-Then write it warm, short, and scannable: a one-line greeting, today's schedule,
-the per-person commute + weather lines, Fox's day + wardrobe note, meals plus any
-prep reminder, and any flags. Skip sections that have nothing. Plain punctuation,
-no em dashes.`;
+Then write it warm, short, and scannable: a one-line greeting that names ${human},
+today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
+note, meals plus any prep reminder, and any flags. Skip sections that have nothing.
+Plain punctuation, no em dashes.
+
+Output ONLY the finished digest, wrapped exactly in <digest> and </digest> tags,
+with NOTHING before or after the tags (no preamble, no notes to yourself).`;
+}
+
+// Pull the digest out of the fenced tags so any stray model preamble/reasoning
+// before <digest> never reaches the family. Falls back to the raw text if the
+// model omitted the tags.
+export function extractDigest(text) {
+  const m = String(text || "").match(/<digest>([\s\S]*?)<\/digest>/i);
+  return (m ? m[1] : String(text || "")).trim();
+}
 
 // Local {date:"YYYY-MM-DD", hour:0-23} for a tz, without relying on UTC.
 export function localParts(now, tz) {
@@ -87,8 +112,8 @@ export function digestSubject(now = new Date()) {
  * other. Channels injectable for tests.
  */
 export async function runMorningDigest({ runner = runChief, notify = notifyOwner, mail = sendMail } = {}) {
-  const text = await runner(DIGEST_PROMPT, MODELS.standard, { webSearch: true });
-  const body = text && text.trim();
+  const text = await runner(buildDigestPrompt(), MODELS.standard, { webSearch: true });
+  const body = extractDigest(text);
   if (!body) {
     log.warn("digest produced no text; nothing sent");
     return text;

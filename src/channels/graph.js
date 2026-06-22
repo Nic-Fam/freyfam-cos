@@ -98,9 +98,21 @@ export function buildEventPayload({ subject, start, end, attendees = [], locatio
   return payload;
 }
 
-// Local [start-of-today, +days] as naive datetime strings. Paired with the
-// Prefer outlook.timezone header, Graph interprets these in FAMILY_TZ, so the
-// window is honest about "today" regardless of the server's UTC clock. Uses a
+// The UTC offset (e.g. "-07:00" PDT, "-08:00" PST) in FAMILY_TZ on a given
+// calendar date. DST-aware: derived from the IANA zone via Intl, computed at
+// noon UTC of that date (still the same calendar day in PT) so the offset is for
+// the right day. Graph treats calendarView bounds as UTC UNLESS they carry an
+// offset, so we must attach this — the Prefer header only affects the response.
+function tzOffset(dateStr) {
+  const at = new Date(`${dateStr}T12:00:00Z`);
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: FAMILY_TZ, timeZoneName: "longOffset" })
+    .formatToParts(at)
+    .find((p) => p.type === "timeZoneName")?.value || "GMT+00:00";
+  return name.replace("GMT", "") || "+00:00"; // "-07:00"
+}
+
+// Local [start-of-today, +days] as ISO datetimes WITH the family-tz offset, so
+// Graph anchors the window to real Pacific midnight (not UTC midnight). Uses a
 // UTC-noon anchor for the day math so DST never shifts the date. Pure/exported.
 export function familyDateWindow(days = 7, now = new Date()) {
   const today = new Intl.DateTimeFormat("en-CA", {
@@ -110,7 +122,10 @@ export function familyDateWindow(days = 7, now = new Date()) {
   const endAnchor = new Date(Date.UTC(y, m - 1, d, 12));
   endAnchor.setUTCDate(endAnchor.getUTCDate() + days);
   const endDate = endAnchor.toISOString().slice(0, 10);
-  return { startDateTime: `${today}T00:00:00`, endDateTime: `${endDate}T00:00:00` };
+  return {
+    startDateTime: `${today}T00:00:00${tzOffset(today)}`,
+    endDateTime: `${endDate}T00:00:00${tzOffset(endDate)}`,
+  };
 }
 
 // Read one mailbox's events in the window via calendarView (expands recurrences).
