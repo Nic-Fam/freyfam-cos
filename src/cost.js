@@ -4,6 +4,8 @@
 //
 //   - Anthropic Console: month-to-date USD via the Admin "cost_report" endpoint.
 //   - Azure: month-to-date USD via the Cost Management "query" endpoint.
+//   - Brave Search: no billing API exists, so we meter the queries this daemon
+//     makes (src/search.js -> recordBraveQuery) and convert to overage cost.
 //
 // When either crosses the alert threshold for the current billing cycle we text
 // the owner ONCE (via the guarded Twilio path), then re-alert at each further
@@ -157,11 +159,65 @@ export async function azureMonthToDateUsd() {
   return total;
 }
 
+// --- Brave Search overage (metered locally; no Brave billing API) -----------
+
+async function loadUsage() {
+  try {
+    return JSON.parse(await readFile(COST.brave.usagePath, "utf8"));
+  } catch (err) {
+    if (err.code === "ENOENT") return {};
+    throw err;
+  }
+}
+
+async function saveUsage(usage) {
+  await mkdir(dirname(COST.brave.usagePath), { recursive: true });
+  await writeFile(COST.brave.usagePath, JSON.stringify(usage, null, 2));
+}
+
+/**
+ * Count Brave queries made this cycle. Called from src/search.js on every
+ * successful search. Never throws into the caller — metering must not break
+ * search; it just logs and moves on. No-op when the Brave meter is disabled.
+ */
+export async function recordBraveQuery(now = new Date(), n = 1) {
+  if (!COST.brave.enabled) return;
+  try {
+    const key = cycleKey(now);
+    const usage = await loadUsage();
+    usage[key] = (usage[key] || 0) + n;
+    await saveUsage(usage);
+  } catch (err) {
+    log.error("brave usage record failed", { reason: err.message });
+  }
+}
+
+export async function braveQueriesThisCycle(now = new Date()) {
+  const usage = await loadUsage();
+  return usage[cycleKey(now)] || 0;
+}
+
+/** Pure overage math: queries above the plan quota, billed per 1,000. */
+export function braveOverageUsd(
+  used,
+  included = COST.brave.includedQueries,
+  per1k = COST.brave.overageUsdPer1k
+) {
+  return (Math.max(0, used - included) / 1000) * per1k;
+}
+
+/** Month-to-date Brave overage in USD; null when the meter is disabled. */
+export async function braveMonthToDateUsd(now = new Date()) {
+  if (!COST.brave.enabled) return null;
+  return braveOverageUsd(await braveQueriesThisCycle(now));
+}
+
 // --- the check the heartbeat calls ------------------------------------------
 
 const SOURCES = {
   azure: { label: "Azure", read: () => azureMonthToDateUsd() },
   anthropic: { label: "Anthropic API", read: (now) => anthropicMonthToDateUsd(now) },
+  brave: { label: "Brave Search overage", read: (now) => braveMonthToDateUsd(now) },
 };
 
 /**

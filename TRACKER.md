@@ -329,13 +329,23 @@ it climbs. De-duped per tier per cycle in `data/cost-alerts.json`. Both meters
 no-op until their creds are set, so this is safe to ship dark.
 
 Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
-`deploy/azure-budget.sh`, `test/cost.test.js`.
+`src/search.js` (Brave query metering), `deploy/azure-budget.sh`, `test/cost.test.js`.
 
 - [x] `src/cost.js`: Anthropic Admin `cost_report` + Azure Cost Management `query`
       readers, tier/cycle logic, local de-dupe state. Wired into the heartbeat on
       its own hourly cadence (`COST_CHECK_INTERVAL_MS`). Tests green.
 - [x] `deploy/azure-budget.sh`: independent Azure-side budget backstop (action
       group + SMS at 80% / 100% / forecasted) that fires even when the Mac is off.
+- [x] **Brave Search overage meter (2026-06-21).** Brave has no billing API, so
+      `search.js` calls `recordBraveQuery()` on each successful search to count
+      queries per cycle in `data/brave-usage.json`; `braveMonthToDateUsd()` bills
+      anything above `BRAVE_INCLUDED_QUERIES` at `BRAVE_OVERAGE_USD_PER_1K` per 1k.
+      Third meter in `SOURCES`, same $100 tiered alert. Off until the rate is set.
+      Caveat: counts only queries through THIS daemon — a key shared with other
+      apps undercounts. `braveOverageUsd` math unit-tested. Suite green.
+- [ ] **LATER — set the Brave plan numbers** in `.env` (`BRAVE_INCLUDED_QUERIES`,
+      `BRAVE_OVERAGE_USD_PER_1K`) to turn the meter on; match your Brave plan's
+      quota + overage CPM.
 - [x] **Creds provisioned + verified LIVE 2026-06-21.** `ANTHROPIC_ADMIN_KEY` set;
       the Graph SP was granted **Cost Management Reader** on the subscription
       (`az role assignment create --assignee <sp> --role "Cost Management Reader"

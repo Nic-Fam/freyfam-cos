@@ -123,16 +123,16 @@ export async function startSlack() {
   app.action(/^cos_(approve|deny)$/, async ({ ack, action, body, client }) => {
     await ack();
     const approved = action.action_id === "cos_approve";
-    const found = resolveByCode(action.value, approved);
+    const res = await resolveByCode(action.value, approved);
     const who = body?.user?.username || body?.user?.id || "someone";
+    // On approval the staged action ran; surface its result (or error) in-thread.
+    let text;
+    if (!res.found) text = `Code ${action.value} already resolved or expired`;
+    else if (!approved) text = `🚫 denied by ${who} (code ${action.value})`;
+    else if (res.error) text = `⚠️ approved by ${who}, but it failed: ${res.error}`;
+    else text = `✅ approved by ${who}: ${res.result}`;
     try {
-      await client.chat.postMessage({
-        channel: body.channel.id,
-        thread_ts: body.message?.ts,
-        text: found
-          ? `${approved ? "✅ approved" : "🚫 denied"} by ${who} (code ${action.value})`
-          : `Code ${action.value} already resolved or expired`,
-      });
+      await client.chat.postMessage({ channel: body.channel.id, thread_ts: body.message?.ts, text });
     } catch {
       /* ignore */
     }

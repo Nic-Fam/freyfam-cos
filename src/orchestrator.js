@@ -333,26 +333,32 @@ function toolHandlers({ images, onDelegate } = {}) {
       const row = await setFoxDay(date, { activities, themeOrUnit, clothingHint });
       return `Saved Fox's day ${date}. Wardrobe: ${row.clothingHint || "(none derived)"}`;
     },
+    // Gated actions STAGE the side effect and return the approval ask. They do
+    // NOT block the turn (that dead-locked the serial queue consumer: the turn
+    // held the consumer, so the YES reply could never be read). The action runs
+    // only when the family replies "YES <code>" (confirm.js executes it then).
     create_calendar_event: async (input) => {
       const who = (input.attendees || []).join(", ") || "(no invitees)";
       const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
-      const ok = await requestConfirmation(
-        `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`
+      const { instruction } = requestConfirmation(
+        `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`,
+        async () => {
+          const r = await createEvent(input);
+          return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
+        }
       );
-      if (!ok) return "Owner declined; no event created.";
-      try {
-        const r = await createEvent(input);
-        return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
-      } catch (e) {
-        return `Could not create event: ${e.message}`;
-      }
+      return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
     },
     send_email: async ({ to, subject, body }) => {
       const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
-      const ok = await requestConfirmation(`Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`);
-      if (!ok) return "Owner declined; email not sent.";
-      await sendMail({ to, subject, body }); // confirmation above is the gate (work domains flagged)
-      return "Email sent.";
+      const { instruction } = requestConfirmation(
+        `Email to ${to}${flag}\nSubject: ${subject}\n${body.slice(0, 200)}`,
+        async () => {
+          await sendMail({ to, subject, body }); // the confirmation IS the gate (work domains flagged)
+          return "Email sent.";
+        }
+      );
+      return `Ready to email ${to}${flag} (subject: ${subject}). ${instruction}`;
     },
     fetch_document: async ({ url }) => {
       const { blocks, summaries, skipped } = await fetchDocument(url);
@@ -383,14 +389,14 @@ function toolHandlers({ images, onDelegate } = {}) {
       }
     },
     place_order: async ({ url, summary, steps }) => {
-      const ok = await requestConfirmation(`Place order via browser:\n${summary}\n${url}`);
-      if (!ok) return "Owner declined; no order placed.";
-      try {
-        const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
-        return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
-      } catch (e) {
-        return `Order flow failed: ${e.message}`;
-      }
+      const { instruction } = requestConfirmation(
+        `Place order via browser:\n${summary}\n${url}`,
+        async () => {
+          const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
+          return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
+        }
+      );
+      return `Ready to place this order: ${summary}. ${instruction}`;
     },
   };
 }
@@ -482,8 +488,13 @@ async function collectAttachments(msg) {
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
 export async function handleInbound(msg, transport = transportFor(msg)) {
-  // 0. Is this a YES/NO answer to a pending approval? If so, it's already handled.
-  if (tryResolveConfirmation(msg.body)) return;
+  // 0. Is this a YES/NO answer to a pending approval? If so, resolve it (running
+  //    the staged action on YES) and reply with the outcome on this same channel.
+  const confirm = await tryResolveConfirmation(msg.body);
+  if (confirm.handled) {
+    if (confirm.message) await transport.reply(confirm.message);
+    return;
+  }
 
   // 0b. Never auto-reply to machine senders (bounces, no-reply, marketing) or to
   //     our own mailbox. The email front door enqueues everything in the mailbox,

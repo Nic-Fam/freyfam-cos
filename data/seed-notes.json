@@ -6,7 +6,7 @@
     { "text": "User-facing copy should be warm, direct, brief, and never use em dashes (family preference).", "meta": {} },
     { "text": "flyerdefense.com and disney.com are read-only work domains: read their mail but never send to them.", "meta": {} },
     { "text": "Shelli prefers oat milk.", "meta": { "agent": "chef" } },
-    { "text": "Fox has no nut allergy on record, but confirm before assuming - keep nuts flagged until verified.", "meta": { "agent": "chef" } },
+    { "text": "Fox has no food allergy; the no-nuts rule is the daycare's policy, not an allergy.", "meta": { "agent": "chef" } },
     { "text": "Resale hunting is across Poshmark, eBay, Vestiaire, The RealReal, and 1stDibs.", "meta": { "agent": "resale" } },
     { "text": "No money movement: finance surfaces actions for a human to execute, it never pays or transfers.", "meta": { "agent": "finance" } }
   ]

@@ -130,6 +130,17 @@ export const COST = {
     clientSecret: process.env.AZURE_CLIENT_SECRET,
     subscriptionId: process.env.AZURE_SUBSCRIPTION_ID,
   },
+  // Brave Search has no billing API, so we meter the queries THIS daemon makes
+  // (src/search.js) per cycle and convert to overage cost from the plan: anything
+  // above includedQueries bills at overageUsdPer1k per 1,000 queries. Meter is off
+  // until overageUsdPer1k > 0. Assumes this daemon is the Brave consumer for the
+  // key; a key shared with other apps will undercount.
+  brave: {
+    includedQueries: Number(process.env.BRAVE_INCLUDED_QUERIES || 0),
+    overageUsdPer1k: Number(process.env.BRAVE_OVERAGE_USD_PER_1K || 0),
+    usagePath: process.env.BRAVE_USAGE_PATH || "./data/brave-usage.json",
+    get enabled() { return this.overageUsdPer1k > 0; },
+  },
 };
 
 // ---------------------------------------------------------------------------

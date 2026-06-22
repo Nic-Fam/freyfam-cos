@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { tierFor, tierFloorUsd, cycleStart, cycleKey } from "../src/cost.js";
+import { tierFor, tierFloorUsd, cycleStart, cycleKey, braveOverageUsd } from "../src/cost.js";
 
 // Defaults from config: threshold $100, step $50.
 
@@ -40,4 +40,11 @@ test("a custom cycleDay rolls the cycle back when before that day", () => {
   // Cycle starts on the 15th. The 10th still belongs to the prior cycle.
   assert.equal(cycleKey(new Date("2026-06-10T00:00:00Z"), 15), "2026-05");
   assert.equal(cycleKey(new Date("2026-06-20T00:00:00Z"), 15), "2026-06");
+});
+
+test("braveOverageUsd bills only queries above the included quota, per 1k", () => {
+  assert.equal(braveOverageUsd(0, 2000, 5), 0);
+  assert.equal(braveOverageUsd(2000, 2000, 5), 0); // exactly at quota -> no overage
+  assert.equal(braveOverageUsd(3000, 2000, 5), 5); // 1000 over * $5/1k
+  assert.equal(braveOverageUsd(2500, 2000, 5), 2.5);
 });

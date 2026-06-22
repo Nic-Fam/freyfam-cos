@@ -1,4 +1,5 @@
 import { SEARCH } from "./config.js";
+import { recordBraveQuery } from "./cost.js";
 
 // ===========================================================================
 // Read-only web search (workstream N). Distinct from browse_page, which reads
@@ -38,5 +39,7 @@ export async function webSearch(query, { count = SEARCH.count, fetchImpl = fetch
     headers: { Accept: "application/json", "X-Subscription-Token": SEARCH.key },
   });
   if (!res.ok) throw new Error(`Brave search error: ${res.status}`);
-  return mapBraveResults(await res.json(), count);
+  const results = mapBraveResults(await res.json(), count);
+  await recordBraveQuery(); // meter this billable query for the cost watchdog (no-op unless enabled)
+  return results;
 }
