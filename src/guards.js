@@ -1,4 +1,4 @@
-import { WORK_DOMAINS, GRAPH } from "./config.js";
+import { WORK_DOMAINS, GRAPH, FAMILY_ADDRESSES } from "./config.js";
 
 // ===========================================================================
 // Outbound policy (updated 2026-06-20). Work domains (flyerdefense.com,
@@ -53,6 +53,12 @@ const AUTOMATED_DOMAIN_TOKENS = ["marketing.", "email.", "eml.", "mailer.", "bou
 /** True if `from` is our own mailbox (defends against a self-reply loop). */
 export function isSelfAddress(from) {
   return SELF_ADDRESSES.includes(String(from || "").toLowerCase().trim());
+}
+
+/** True if `from` is one of the family's own addresses (household/personal/work).
+ *  Used so the security watch never treats the family's OWN mail as a threat. */
+export function isFamilyAddress(from) {
+  return FAMILY_ADDRESSES.includes(String(from || "").toLowerCase().trim());
 }
 
 /**

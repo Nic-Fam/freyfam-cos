@@ -63,9 +63,18 @@ Schema:
 }
 
 Route expiring/expired kitchen items to "chef" (urgency "fyi" unless it is a lot of food).
-Route security-relevant signals (suspicious logins, breach/phishing notices, home-system alerts) to "security".
+Route security-relevant signals to "security" ONLY for genuinely EXTERNAL anomalies: a
+sign-in/breach/password-reset notice from a real service, a phishing attempt from an
+outside sender, an unknown sender impersonating someone, a home-system/device alert.
 
-Be conservative: routine newsletters, receipts already filed, and noise are NOT actionable.`;
+The family's OWN mail is NEVER a security threat. A signal with "fromFamily": true (or
+from one of the family's addresses) is normal activity: do NOT flag their email volume,
+their replies, forwards, bounce/undeliverable notices, or links THEY share (e.g. a
+daycare/Bright Horizons curriculum URL, even if it looks long or obfuscated) as
+compromise or phishing. Many emails from a family member is normal, not a breach.
+
+Be conservative: routine newsletters, receipts already filed, the family's own mail, and
+noise are NOT actionable.`;
 
 /**
  * @param {Array} signals  Cheap, pre-fetched deltas (no model needed to gather).

@@ -78,6 +78,18 @@ export const GRAPH = {
     .replace(/\\n/g, "\n"),
 };
 
+// The family's own email addresses (household + personal + work), so the
+// security watch never treats their OWN mail activity as a threat. Override
+// with FAMILY_ADDRESSES (comma-separated). Keep in sync with the chief persona's
+// family directory.
+export const FAMILY_ADDRESSES = (
+  process.env.FAMILY_ADDRESSES ||
+  "nic@freyfam.com,shelli@freyfam.com,nfrey2@gmail.com,nicholasbfrey@gmail.com,nicholas.frey@flyerdefense.com,shelliafrey@gmail.com,shelli.frey@disney.com,mas324@cornell.edu,foxsfrey@gmail.com"
+)
+  .split(",")
+  .map((s) => s.toLowerCase().trim())
+  .filter(Boolean);
+
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain } from "../src/guards.js";
+import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress } from "../src/guards.js";
+
+test("isFamilyAddress recognizes the family's own addresses (case-insensitive), not outsiders", () => {
+  assert.equal(isFamilyAddress("Nic@Freyfam.com"), true);
+  assert.equal(isFamilyAddress("shelli.frey@disney.com"), true);
+  assert.equal(isFamilyAddress("nfrey2@gmail.com"), true);
+  assert.equal(isFamilyAddress("julie@some-realty.com"), false);
+  assert.equal(isFamilyAddress(""), false);
+});
 
 test("isAutomatedSender flags bounce/no-reply/notification/marketing senders", () => {
   for (const a of [
