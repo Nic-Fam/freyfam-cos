@@ -35,8 +35,12 @@ Compose a brief MORNING DIGEST for the family.
 Gather what you need first:
 - Today's schedule: call list_calendar with days 1 (it merges Nic's and Shelli's
   calendars; each event names whose calendar it is on). Anything dated ${date} is
-  today. List EVERY event returned for today with its time and whose it is; do not
-  omit or merge them away (an all-day event does not cover timed ones).
+  today. List EVERY non-work event for today with its time and whose it is; do not
+  omit or merge them away (an all-day event does not cover timed ones). For WORK
+  events, though, include ONLY the single earliest one of the day (per person) so
+  we know when the day starts; do not list the rest of that person's work events.
+  Treat an event as a work event if it is on a work calendar or has an attendee at
+  a work domain (flyerdefense.com for Nic, disney.com for Shelli).
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
