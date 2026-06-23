@@ -8,7 +8,8 @@ import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
-import { sendSms } from "./channels/twilio.js";
+import { sendSms, notifyOwner } from "./channels/twilio.js";
+import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage } from "./channels/graph.js";
 import { persona } from "./persona.js";
@@ -20,6 +21,7 @@ import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KN
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
+import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn } from "./conversation.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
@@ -244,6 +246,22 @@ const tools = [
     description:
       "Search the web (read-only) and get back ranked results as {title, url, snippet}. Use it to find an address, hours, a fact, or a listing; then read the best hit with browse_page. Acting on a result (email/buy) still routes through the confirmation gate.",
     input_schema: { type: "object", properties: { query: { type: "string" }, count: { type: "number" } }, required: ["query"] },
+  },
+  {
+    name: "leave_by",
+    description:
+      "Work out when to LEAVE to arrive on time, using live traffic (Azure Maps) plus a buffer. Pass origin, destination, and arriveBy (ISO datetime in the family tz). Set setReminder true to also arm a reminder at the leave-by time. Use for 'when do I need to leave for X?' or to set a leave-by nudge for an appointment.",
+    input_schema: {
+      type: "object",
+      properties: {
+        origin: { type: "string", description: "start address (usually home)" },
+        destination: { type: "string" },
+        arriveBy: { type: "string", description: "ISO datetime to arrive by, e.g. 2026-06-25T14:00:00" },
+        bufferMin: { type: "number", description: "minutes of cushion (default 10)" },
+        setReminder: { type: "boolean", description: "also arm a reminder at the leave-by time" },
+      },
+      required: ["origin", "destination", "arriveBy"],
+    },
   },
   {
     name: "commute_time",
@@ -517,6 +535,20 @@ function toolHandlers({ images, onDelegate } = {}) {
         return `Could not get commute time: ${e.message}`;
       }
     },
+    leave_by: async ({ origin, destination, arriveBy, bufferMin, setReminder }) => {
+      try {
+        const r = await computeLeaveBy({ origin, destination, arriveBy, ...(bufferMin != null ? { bufferMin } : {}) });
+        const when = new Date(r.leaveBy).toLocaleString("en-US", { timeZone: FAMILY_TZ, dateStyle: "medium", timeStyle: "short" });
+        let out = `Leave by ${when} for ${destination} (${r.driveMin} min drive, ${r.trafficLabel}, +${r.bufferMin} min buffer).`;
+        if (setReminder) {
+          const { reminder } = await createReminder({ message: `Leave now for ${destination}`, fireAt: r.leaveBy });
+          out += ` Reminder set {${reminder.id}}.`;
+        }
+        return out;
+      } catch (e) {
+        return `Could not compute leave-by time: ${e.message}`;
+      }
+    },
     place_order: async ({ url, summary, steps }) => {
       const { instruction } = await requestConfirmation(
         `Place order via browser:\n${summary}\n${url}`,
@@ -627,6 +659,20 @@ export async function handleInbound(msg, transport = transportFor(msg)) {
   if (confirm.handled) {
     if (confirm.message) await transport.reply(confirm.message);
     return;
+  }
+
+  // 0a. Verification / one-time codes: relay the code to the owner immediately.
+  //     Runs BEFORE the auto-reply suppression below, because OTP emails usually
+  //     come from no-reply senders that the suppressor (rightly) drops — we still
+  //     want the code. Conservative matcher (keyword + 4-8 digit), so low noise.
+  if (msg.channel === "email") {
+    const code = extractVerificationCode(msg.subject, msg.body);
+    if (code) {
+      const from = msg.from ? ` (from ${msg.from})` : "";
+      await notifyOwner(`Verification code: ${code}${from}`);
+      log.info("verification code relayed", { from: msg.from });
+      return;
+    }
   }
 
   // 0b. Never auto-reply to machine senders (bounces, no-reply, marketing) or to
