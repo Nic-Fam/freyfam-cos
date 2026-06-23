@@ -23,6 +23,30 @@ const SUPPORTED = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]
 const MAX_IMAGES = Number(process.env.MEDIA_MAX_IMAGES || 5);
 const MAX_BYTES = Number(process.env.MEDIA_MAX_BYTES || 4_500_000); // stay under Claude's ~5MB/image
 
+// Sniff the REAL image type from the leading bytes (magic numbers). Senders lie:
+// Slack hands us files named "image.png" with mimetype "image/jpeg", and passing
+// a media_type that disagrees with the actual bytes makes Claude reject the whole
+// request with "Could not process image". The bytes are ground truth, so we
+// derive media_type from them and fall back to the declared type only when the
+// signature is unrecognized. Returns null if the buffer is too short to tell.
+export function sniffImageType(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif";
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
+// Build an image block, preferring the sniffed type over the (often wrong)
+// declared one. If the bytes sniff to a supported type, use it; otherwise keep
+// the declared type so a still-supported-but-unsniffable image isn't dropped.
+function imageBlock(buf, declaredCt) {
+  const sniffed = sniffImageType(buf);
+  const media_type = sniffed && SUPPORTED.has(sniffed) ? sniffed : declaredCt;
+  return { type: "image", source: { type: "base64", media_type, data: buf.toString("base64") } };
+}
+
 function basicAuth(twilio) {
   if (!twilio.accountSid || !twilio.authToken) return null;
   return "Basic " + Buffer.from(`${twilio.accountSid}:${twilio.authToken}`).toString("base64");
@@ -46,7 +70,7 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
     if (item?.bytes != null) {
       const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
       if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
-      imageBlocks.push({ type: "image", source: { type: "base64", media_type: ct, data: buf.toString("base64") } });
+      imageBlocks.push(imageBlock(buf, ct));
       continue;
     }
     if (!item?.url) { skipped.push({ reason: "no url or bytes" }); continue; }
@@ -57,7 +81,7 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       if (!res.ok) { skipped.push({ url: item.url, reason: `HTTP ${res.status}` }); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_BYTES) { skipped.push({ url: item.url, reason: `too large (${buf.length}B)` }); continue; }
-      imageBlocks.push({ type: "image", source: { type: "base64", media_type: ct, data: buf.toString("base64") } });
+      imageBlocks.push(imageBlock(buf, ct));
     } catch (err) {
       skipped.push({ url: item.url, reason: err.message });
     }

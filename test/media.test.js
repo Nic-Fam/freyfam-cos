@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { fetchInboundMedia } from "../src/media.js";
+import { fetchInboundMedia, sniffImageType } from "../src/media.js";
+
+// Real magic-number prefixes for the four types Claude accepts.
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
+const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBP")]);
 
 // A stub fetch that serves canned string content per URL as an exactly-sized
 // ArrayBuffer (mirroring real fetch().arrayBuffer()).
@@ -60,6 +65,22 @@ test("content-type with charset suffix is normalized", async () => {
   const fetchImpl = stubFetch({ "u": "x" });
   const { imageBlocks } = await fetchInboundMedia([{ url: "u", contentType: "image/JPEG; charset=binary" }], { fetchImpl, twilio });
   assert.equal(imageBlocks[0]?.source.media_type, "image/jpeg");
+});
+
+test("sniffImageType reads the type from the bytes, not the name", () => {
+  assert.equal(sniffImageType(PNG), "image/png");
+  assert.equal(sniffImageType(JPEG), "image/jpeg");
+  assert.equal(sniffImageType(WEBP), "image/webp");
+  assert.equal(sniffImageType(Buffer.from("not an image")), null);
+});
+
+test("declared type that disagrees with the bytes is corrected (Slack jpeg-named-png)", async () => {
+  // Slack hands us bytes that are really PNG but a mimetype of image/jpeg. A
+  // mismatched media_type makes Claude 400 with "Could not process image", so
+  // the block must carry the SNIFFED type.
+  const { imageBlocks, skipped } = await fetchInboundMedia([{ bytes: PNG, contentType: "image/jpeg" }], { twilio });
+  assert.equal(skipped.length, 0);
+  assert.equal(imageBlocks[0]?.source.media_type, "image/png");
 });
 
 test("empty / missing media is a no-op", async () => {
