@@ -1,6 +1,8 @@
 import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { GRAPH } from "../config.js";
+import { registerApprovalNotifier } from "../confirm.js";
+import { createLogger } from "../log.js";
 
 const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
 
@@ -269,7 +271,7 @@ export async function replyToMessage(messageId, text) {
  * tool) confirm with the owner first, which covers work-domain sends under the
  * 2026-06-20 policy (no hard block; confirmation is the gate).
  */
-export async function sendMail({ to, subject, body }) {
+export async function sendMail({ to, subject, body, html = false }) {
   // Accept an array OR a comma/semicolon-separated string. Lloyd often passes
   // "a@x.com, b@y.com" as one string; without splitting, Graph treats the whole
   // string as a single recipient and rejects it ("recipient not resolved").
@@ -282,9 +284,50 @@ export async function sendMail({ to, subject, body }) {
     .post({
       message: {
         subject,
-        body: { contentType: "Text", content: body },
+        body: { contentType: html ? "HTML" : "Text", content: body },
         toRecipients: recipients.map((address) => ({ emailAddress: { address } })),
       },
       saveToSentItems: true,
     });
+}
+
+// --- Clickable email approvals (Approve/Deny buttons) -----------------------
+// The daemon is not publicly reachable, so a one-click HTTP link would need a
+// public endpoint (and would risk email link-scanners auto-approving). Instead
+// the buttons are mailto: links that pre-compose the "YES <code>" / "NO <code>"
+// reply to the assistant mailbox. Tapping opens the composer; sending routes
+// through the SAME authenticated inbound-mail path a typed reply uses, so no new
+// public surface and no scanner can trigger it (a scanner won't hit "send").
+
+const _glog = createLogger("graph");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/** Build the HTML approval email (Approve/Deny mailto buttons). Pure/exported. */
+export function approvalEmailHtml(code, action, mailbox = GRAPH.mailbox) {
+  const mailto = (decision, word) =>
+    `mailto:${encodeURIComponent(mailbox)}?subject=${encodeURIComponent(`${decision} ${code}`)}&body=${encodeURIComponent(`${word} ${code}`)}`;
+  const btn = (href, label, color) =>
+    `<a href="${href}" style="display:inline-block;padding:10px 22px;margin:4px 8px 4px 0;border-radius:6px;background:${color};color:#fff;text-decoration:none;font-weight:600;font-family:-apple-system,Segoe UI,Arial,sans-serif">${label}</a>`;
+  return [
+    `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#222">`,
+    `<p>Approval needed:</p>`,
+    `<pre style="background:#f5f5f7;padding:12px;border-radius:6px;white-space:pre-wrap;font-family:inherit">${esc(action)}</pre>`,
+    `<p>${btn(mailto("Approve", "YES"), "Approve", "#2e7d32")}${btn(mailto("Deny", "NO"), "Deny", "#c62828")}</p>`,
+    `<p style="color:#666;font-size:13px">Tapping a button opens a pre-filled reply; just hit send. Or reply to this email with "YES ${esc(code)}" or "NO ${esc(code)}".</p>`,
+    `</div>`,
+  ].join("");
+}
+
+/** Register email as an approval channel: each staged action emails Approve/Deny
+ *  buttons to GRAPH.approvalEmailTo. No-op if no recipient is configured. */
+export function registerEmailApprovals() {
+  if (!GRAPH.approvalEmailTo.length) return;
+  registerApprovalNotifier(({ code, action }) => {
+    sendMail({
+      to: GRAPH.approvalEmailTo,
+      subject: `Approval needed (${code})`,
+      body: approvalEmailHtml(code, action),
+      html: true,
+    }).catch((e) => _glog.error("approval email failed", { reason: e.message, code }));
+  });
 }

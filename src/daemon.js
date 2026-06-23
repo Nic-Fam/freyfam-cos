@@ -1,6 +1,7 @@
 import { startQueueConsumer, stopQueueConsumer } from "./queue.js";
 import { startHeartbeat, tick } from "./heartbeat.js";
 import { startSlack } from "./channels/slack.js";
+import { registerEmailApprovals } from "./channels/graph.js";
 import { closeBrowser } from "./channels/browser.js";
 import { createLogger } from "./log.js";
 
@@ -16,6 +17,8 @@ async function main() {
 
   log.info("Frey Family Chief of Staff starting");
   const hb = startHeartbeat();
+  // Email approval channel: each staged action emails Approve/Deny buttons.
+  registerEmailApprovals();
   // Slack desk channel: no-op unless tokens are set. Non-fatal if it can't start.
   await startSlack().catch((e) => log.error("slack start failed", { reason: e.message }));
 

@@ -76,6 +76,10 @@ export const GRAPH = {
   // separated; no em dashes (family style). Override with COS_EMAIL_SIGNATURE.
   signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nChief of Staff to the Frey Family\n(an automated assistant writing on the family's behalf)")
     .replace(/\\n/g, "\n"),
+  // Where the clickable email approval (Approve/Deny mailto buttons) is sent.
+  // Comma-separated; empty disables the email approval channel.
+  approvalEmailTo: (process.env.APPROVAL_EMAIL_TO ?? "nic@freyfam.com")
+    .split(",").map((s) => s.trim()).filter(Boolean),
 };
 
 // The family's own email addresses (household + personal + work), so the
