@@ -1,20 +1,30 @@
 {
-  "_note": "Captured live from ralphs.com (signed in) 2026-06-23 via Control Chrome. Kroger uses data-testid; coupon ids change weekly so match coupons by aria-label text, not id. Used by placeRalphsOrder (src/grocery.js). CART/SLOT/CHECKOUT selectors still need a populated-cart dry-run to capture.",
+  "_note": "Captured live from ralphs.com (signed in as NICHOLAS, delivery to 5725 Canyonside Rd) 2026-06-23 via Control Chrome. Kroger uses data-testid; coupon ids rotate weekly so match coupons by aria-label TEXT, not id. Used by placeRalphsOrder (src/grocery.js). Slot + checkout selectors are at-checkout only (need a qualifying $35 cart) and still pending.",
   "captured": {
     "search_input": "input[data-testid=\"SearchBar-input\"]",
     "add_to_cart_button": "button[data-testid=\"citrus-QuantityStepper-ctaButton\"]",
     "add_to_cart_aria_prefix": "Add to Cart:",
+    "quantity_inc": "button[data-testid=\"citrus-QuantityStepper-incButton\"]",
+    "quantity_dec": "button[data-testid=\"citrus-QuantityStepper-decButton\"]",
+    "quantity_input": "input[data-testid=\"citrus-QuantityStepper-input\"]",
+    "per_item_coupon_checkbox": "input[type=\"checkbox\"][data-testid=\"coupon-checkbox\"]",
+    "per_item_coupon_note": "If a product tile has this checkbox (aria-label = the savings, e.g. 'Save $1.50 on Kingsford'), CHECK it before/after adding the item so the item coupon applies.",
     "coupon_clip_button": "button[data-testid^=\"CouponActionButton-\"]",
     "coupon_clip_aria_prefix": "Clip for coupon:",
     "friday_4x_coupon_aria_match": "FRI ONLY 4X Points",
+    "friday_4x_status": "CLIPPED 2026-06-23 (was 'Clip', now 'Unclip'). Re-clip weekly: it expires and a new one appears.",
     "out_of_stock_text": "Item Out of Stock",
-    "signed_in_marker": "NICHOLAS",
-    "delivery_address_marker": "5725 Canyonside Rd"
+    "out_of_stock_note": "An OOS tile shows this text and has NO add-to-cart button -> DROP it (the order still completes).",
+    "modality_button": "button[data-testid=\"CurrentModality-button\"]"
   },
-  "pending_capture": [
-    "view cart / go to checkout control",
-    "delivery slot picker (select a Friday-evening window)",
-    "review-order page marker (where a dry run stops, before Place Order)",
-    "place-order button (only used on a confirmed, gated run)"
+  "requirements": {
+    "delivery_slot": "Friday 6-8 PM window (per Nic).",
+    "delivery_minimum": "$35 order minimum for delivery."
+  },
+  "pending_capture_at_checkout": [
+    "go-to-cart / proceed-to-checkout control",
+    "delivery time-slot picker -> select the 6-8 PM Friday window",
+    "review-order marker (where a dry run stops, before Place Order)",
+    "place-order button (only on a confirmed, gated run)"
   ]
 }
