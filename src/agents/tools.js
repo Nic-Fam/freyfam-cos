@@ -15,7 +15,7 @@ import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions } from "../finance.js";
-import { addSavedSearch, listSavedSearches, removeSavedSearch } from "../saved-searches.js";
+import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
@@ -135,6 +135,11 @@ const REGISTRY = {
       },
       { name: "list_saved_searches", description: "List the family's active saved searches.", input_schema: obj({}) },
       { name: "remove_saved_search", description: "Remove a saved search by its id.", input_schema: obj({ id: { type: "string" } }, ["id"]) },
+      {
+        name: "run_saved_searches",
+        description: "Run ALL saved searches now and report only the NEW matches since last time (past hits are tracked and not repeated). Use to check for fresh finds across the hunt list.",
+        input_schema: obj({}),
+      },
     ],
     handlers: {
       ...memoryHandlers("resale"),
@@ -143,6 +148,7 @@ const REGISTRY = {
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
       list_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
+      run_saved_searches: async () => formatSavedSearchRun(await runSavedSearches()),
     },
   }),
 
