@@ -5,6 +5,7 @@ import { processShipmentEmail, listActivePackages, formatPackages } from "./pack
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
+import { watchItem, listWatched, unwatchItem } from "./watch.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -218,6 +219,25 @@ const tools = [
     name: "complete_task",
     description: "Mark a task done by its id (from list_tasks) or its exact title.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "watch_item",
+    description: "Watch a specific item's listing for a price drop. Pass the listing URL and optionally a targetPrice (flag when it drops to/below that) and a label. Lloyd re-checks it on the resale schedule and flags drops. Use for 'watch this item / tell me if it drops'.",
+    input_schema: {
+      type: "object",
+      properties: { url: { type: "string" }, label: { type: "string" }, targetPrice: { type: "number" } },
+      required: ["url"],
+    },
+  },
+  {
+    name: "list_watched",
+    description: "List the items being price-watched (with last seen price and any target).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "unwatch_item",
+    description: "Stop watching an item by its id (from list_watched) or its URL.",
+    input_schema: { type: "object", properties: { item: { type: "string" } }, required: ["item"] },
   },
   {
     name: "add_shopping_item",
@@ -520,6 +540,23 @@ function toolHandlers({ images, onDelegate } = {}) {
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
       return t ? `Marked done: "${t.title}"` : "No matching open task found.";
+    },
+    watch_item: async ({ url, label, targetPrice }) => {
+      try {
+        const it = await watchItem({ url, label, targetPrice });
+        return `Watching "${it.label}"${it.targetPrice != null ? ` (target $${it.targetPrice})` : ""} {${it.id}}. I'll flag a price drop.`;
+      } catch (e) {
+        return `Could not watch that item: ${e.message}`;
+      }
+    },
+    list_watched: async () => {
+      const items = await listWatched();
+      if (!items.length) return "Not watching any items.";
+      return items.map((i) => `- ${i.label}: ${i.lastPrice != null ? `$${i.lastPrice}` : "price unknown"}${i.targetPrice != null ? ` (target $${i.targetPrice})` : ""} {${i.id}}\n  ${i.url}`).join("\n");
+    },
+    unwatch_item: async ({ item }) => {
+      const it = await unwatchItem(item);
+      return it ? `Stopped watching "${it.label}".` : "No matching watched item found.";
     },
     add_shopping_item: async ({ item, quantity, note }) => {
       try {

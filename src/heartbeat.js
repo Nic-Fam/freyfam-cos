@@ -9,6 +9,7 @@ import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
+import { checkWatched, formatWatchFlags } from "./watch.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -112,7 +113,11 @@ async function maybeRunResale() {
           task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
         });
         if (res && !/^\s*NONE\s*\.?\s*$/i.test(res)) await notifyOwner(`New resale finds:\n${res}`);
-        log.info("resale run complete", { slot: slot.label });
+        // Price-watch: re-check watched listings via the LOCAL browser (Lloyd) and
+        // flag any drops / target hits. Done here on Lloyd, not the remote resale.
+        const flagged = await checkWatched();
+        if (flagged.length) await notifyOwner(`Price drop:\n${formatWatchFlags(flagged)}`);
+        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
