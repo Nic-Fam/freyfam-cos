@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { agentForChannel, mirrorText, approvalBlocks, foldThread } from "../src/channels/slack.js";
+import { agentForChannel, mirrorText, approvalBlocks } from "../src/channels/slack.js";
+import { foldThread } from "../src/conversation.js";
 
 test("foldThread leaves the task unchanged when there is no thread history", () => {
   assert.equal(foldThread([], "find me a deal"), "find me a deal");
