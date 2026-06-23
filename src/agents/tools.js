@@ -13,6 +13,7 @@
 import { recall, remember } from "../memory.js";
 import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
+import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions } from "../finance.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
@@ -204,10 +205,21 @@ const REGISTRY = {
         description: "Mark some/all of an inventory item used. Omit quantity to use it all.",
         input_schema: obj({ id: { type: "string" }, quantity: { type: "number" } }, ["id"]),
       },
+      {
+        name: "add_shopping_item",
+        description: "Add an item to the family shopping list (e.g. something low or expiring that needs restocking). Optional quantity/note. Does NOT order anything — it's for the family to review.",
+        input_schema: obj({ item: { type: "string" }, quantity: { type: "string" }, note: { type: "string" } }, ["item"]),
+      },
+      { name: "list_shopping", description: "Show the current family shopping list.", input_schema: obj({}) },
     ],
     handlers: {
       ...memoryHandlers("chef"),
       ...decisionHandlers("chef"),
+      add_shopping_item: async ({ item, quantity, note }) => {
+        const { item: it, merged } = await addShoppingItem({ item, quantity, note, addedBy: "carmine" });
+        return `${merged ? "Updated" : "Added"} on the shopping list: ${it.item}`;
+      },
+      list_shopping: async () => formatShopping(await listShopping()),
       view_meal_plan: async ({ startDate, endDate }) => {
         const meals = await getMealsInRange(startDate, endDate);
         return formatMealsContext(meals) || "No meals planned in that range.";

@@ -4,6 +4,7 @@ import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
+import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -217,6 +218,25 @@ const tools = [
     name: "complete_task",
     description: "Mark a task done by its id (from list_tasks) or its exact title.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "add_shopping_item",
+    description: "Add an item to the family shopping list (optional quantity and note). The list is for review/handoff; it does NOT order anything. Carmine can also add low/expiring items here.",
+    input_schema: {
+      type: "object",
+      properties: { item: { type: "string" }, quantity: { type: "string" }, note: { type: "string" } },
+      required: ["item"],
+    },
+  },
+  {
+    name: "list_shopping",
+    description: "Show the family shopping list. Use for 'what's on the shopping list?' / 'what do we need?'.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "remove_shopping_item",
+    description: "Remove an item from the shopping list by its id (from list_shopping) or name. Pass clearAll true to empty the whole list (e.g. after a shopping run).",
+    input_schema: { type: "object", properties: { item: { type: "string" }, clearAll: { type: "boolean" } } },
   },
   {
     name: "add_reminder",
@@ -500,6 +520,20 @@ function toolHandlers({ images, onDelegate } = {}) {
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
       return t ? `Marked done: "${t.title}"` : "No matching open task found.";
+    },
+    add_shopping_item: async ({ item, quantity, note }) => {
+      try {
+        const { item: it, merged } = await addShoppingItem({ item, quantity, note });
+        return `${merged ? "Updated" : "Added"} on the shopping list: ${it.item}${it.quantity ? ` (${it.quantity})` : ""} {${it.id}}`;
+      } catch (e) {
+        return `Could not add to the shopping list: ${e.message}`;
+      }
+    },
+    list_shopping: async () => formatShopping(await listShopping()),
+    remove_shopping_item: async ({ item, clearAll }) => {
+      if (clearAll) return `Cleared the shopping list (${await clearShopping()} items).`;
+      const it = await removeShoppingItem(item);
+      return it ? `Removed from the shopping list: ${it.item}` : "No matching shopping item found.";
     },
     add_reminder: async ({ message, fireAt, recurrence }) => {
       try {
