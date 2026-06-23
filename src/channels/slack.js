@@ -1,6 +1,5 @@
 import { SLACK } from "../config.js";
 import { handleInbound } from "../orchestrator.js";
-import { delegate } from "../delegate.js";
 import { registerApprovalNotifier, resolveByCode } from "../confirm.js";
 import { createLogger } from "../log.js";
 
@@ -137,15 +136,20 @@ export async function startSlack() {
     // extraction), same as MMS photos and email attachments.
     const { media, attachments } = await downloadSlackFiles(message.files);
     const hasFiles = media.length || attachments.length;
+    const msg = {
+      from: message.user,
+      body: text || (hasFiles ? "(shared a file)" : ""),
+      channel: "slack",
+      replyTo: message.channel,
+      media,
+      attachments,
+    };
     try {
-      if (forced && !hasFiles) {
-        await transport.reply(await delegate({ agent: forced, task: text }));
-      } else {
-        await handleInbound(
-          { from: message.user, body: text || (hasFiles ? "(shared a file)" : ""), channel: "slack", replyTo: message.channel, media, attachments },
-          transport
-        );
-      }
+      // Per-agent channels (#resale, #finance, ...) talk straight to that
+      // specialist; everything else goes to the chief. Both run through
+      // handleInbound, so photos, document extraction, and the channel's shared
+      // conversational memory work identically whichever path a message takes.
+      await handleInbound(msg, transport, forced ? { forceAgent: forced } : {});
     } catch (err) {
       log.error("message handling failed", { reason: err.message });
     }

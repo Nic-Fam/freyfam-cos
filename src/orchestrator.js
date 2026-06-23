@@ -26,7 +26,7 @@ import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
-import { conversationKey, getHistory, appendTurn } from "./conversation.js";
+import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -739,7 +739,7 @@ export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
  * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[], subject?:string, graphMessageId?:string}} msg
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
-export async function handleInbound(msg, transport = transportFor(msg)) {
+export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null } = {}) {
   // 0. Is this a YES/NO answer to a pending approval? If so, resolve it (running
   //    the staged action on YES) and reply with the outcome on this same channel.
   const confirm = await tryResolveConfirmation(msg.body);
@@ -812,22 +812,35 @@ export async function handleInbound(msg, transport = transportFor(msg)) {
     triageText = [msg.body || "", `[${triageNotes.join("; ")}]`].filter((s) => s.trim()).join("\n").trim();
   }
 
-  // 2. Cheap classification -> pick the cheapest sufficient model.
-  const t = await triageInbound(triageText);
-  const model = modelForComplexity(t.complexity, t.high_stakes);
-
-  // 3. Run the chief of staff (or answer trivially on Haiku). recall keys off the
-  //    text; `content` carries the images to Lloyd, `images` forwards them to any
-  //    specialist he delegates to this turn; `history` is the short-term thread
-  //    so a follow-up keeps context; `onDelegate` mirrors each handoff.
-  const convoKey = conversationKey(msg);
+  // 2. Memory key. A forced per-agent channel (e.g. Slack #resale) shares ONE
+  //    thread for the whole channel (channel+agent), so text and photos posted
+  //    there build the same context; everything else is keyed per sender.
+  const convoKey = forceAgent
+    ? conversationKey({ channel: `${msg.channel}:${forceAgent}`, from: msg.replyTo || msg.from })
+    : conversationKey(msg);
   const history = await getHistory(convoKey);
-  const text = await runChief(msg.body || "(photo message)", model, {
-    content,
-    images,
-    history,
-    onDelegate: (event) => transport.mirror(event),
-  });
+
+  // 3. Run it. A forced channel talks STRAIGHT to its specialist (no triage, no
+  //    chief) but with the channel's shared memory: the thread + any extracted
+  //    document text fold into the task (the delegate seam is text-only) and
+  //    images ride the `images` param so the specialist sees the actual photo.
+  //    Otherwise: triage to the cheapest sufficient model and run the chief, who
+  //    sees `content` (images inline) and may delegate (forwarding `images`).
+  let text;
+  if (forceAgent) {
+    const textExtras = extraBlocks.filter((b) => b.type === "text").map((b) => b.text);
+    const body = [msg.body?.trim() || "", ...textExtras].filter(Boolean).join("\n\n") || "(photo message)";
+    text = await delegate({ agent: forceAgent, task: foldThread(history, body), images });
+  } else {
+    const t = await triageInbound(triageText);
+    const model = modelForComplexity(t.complexity, t.high_stakes);
+    text = await runChief(msg.body || "(photo message)", model, {
+      content,
+      images,
+      history,
+      onDelegate: (event) => transport.mirror(event),
+    });
+  }
 
   // 4. Deliver via the transport (channel reply for SMS/email; channel post for Slack).
   await transport.reply(text);

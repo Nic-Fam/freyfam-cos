@@ -23,6 +23,19 @@ export function conversationKey({ channel, from } = {}) {
   return `${channel || "sms"}:${String(from || "unknown").toLowerCase().trim()}`;
 }
 
+// Fold a thread's recent turns into a single specialist task string. The delegate
+// seam is text-only ({agent,task} -> text), so when a per-agent channel talks
+// straight to a specialist, prior turns ride along as a labeled preamble rather
+// than as separate messages -- enough to keep context across a back-and-forth.
+// Empty history -> the task is returned unchanged.
+export function foldThread(history, text) {
+  if (!Array.isArray(history) || !history.length) return text;
+  const transcript = history
+    .map((m) => `${m.role === "assistant" ? "You" : "User"}: ${m.content}`)
+    .join("\n");
+  return `Recent conversation in this channel:\n${transcript}\n\nUser's latest message: ${text}`;
+}
+
 async function load() {
   try {
     return JSON.parse(await readFile(STORE_PATH, "utf8"));

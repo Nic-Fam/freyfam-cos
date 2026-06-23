@@ -1,6 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { agentForChannel, mirrorText, approvalBlocks } from "../src/channels/slack.js";
+import { foldThread } from "../src/conversation.js";
+
+test("foldThread leaves the task unchanged when there is no thread history", () => {
+  assert.equal(foldThread([], "find me a deal"), "find me a deal");
+  assert.equal(foldThread(undefined, "find me a deal"), "find me a deal");
+});
+
+test("foldThread prepends recent turns so a forced channel keeps context", () => {
+  const history = [
+    { role: "user", content: "watch for a Chanel flap bag" },
+    { role: "assistant", content: "Tracking it on Vestiaire and Poshmark." },
+  ];
+  const out = foldThread(history, "any hits yet?");
+  assert.match(out, /Recent conversation in this channel:/);
+  assert.match(out, /User: watch for a Chanel flap bag/);
+  assert.match(out, /You: Tracking it on Vestiaire/); // assistant labeled "You"
+  assert.match(out, /User's latest message: any hits yet\?$/);
+});
 
 test("agentForChannel forces a specialist for per-agent channels, null otherwise", () => {
   assert.equal(agentForChannel("finance"), "finance");
