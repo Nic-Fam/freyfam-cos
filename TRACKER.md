@@ -23,10 +23,13 @@ Steve, Shey, Carmine, Frank) have real scoped tools reachable through the `deleg
 seam. The Azure split shipped: finance/resale/chef run remote on Azure with
 managed-identity Table stores; Lloyd + Frank + Steve are the local Mac fleet.
 
-A → H are done; what remains is **hardware** (stand up the Mac minis + MacBook),
-two **external gates** (Twilio number clearance, cost-watchdog creds), a few **live
-verifies** (G browser), and one **deferred feature** (I, MMS intake). Details in the
-per-workstream sections and the topology section below.
+A → Q core is done (cost watchdog J and Slack K are LIVE as of 2026-06-23; the
+per-agent tool allowlist K#4 is enforced). What remains is mostly **hardware** —
+stand up the Mac fleet, and stand up the **BlueBubbles iMessage server** (Twilio SMS
+was closed 2026-06-23; iMessage is the replacement text channel, code-ready and
+disabled pending that server). Plus a few **live verifies** (G browser, now partly
+captured) and **future features** (voice M, image-gen/printer, CVS Rx live). Details
+in the per-workstream sections and the topology section below.
 
 `_smoke.mjs` covers guards + confirm parser + memory round-trip with zero network.
 Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
@@ -101,10 +104,15 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
       a front-door-format message enqueued → launchd daemon consumed → triaged →
       replied via Graph `sendMail` → acked (queue drained to 0, no stderr errors).
       Roll back any time by flipping `COS_ENQUEUE` back to OFF (no code change).
-- [ ] **SMS leg NOT yet confirmed (external block):** the cut-over verification ran
-      over the EMAIL/enqueue path, not SMS. The Twilio number still isn't cleared, so
-      SMS enqueues but replies fail at the Twilio send (same as the legacy path — no
-      regression). Re-verify the live SMS round-trip once the number clears.
+- [x] **Twilio SMS path CLOSED (2026-06-23) — text channel pivots to iMessage.** The
+      toll-free verification for +18777680783 was rejected/closed, so Twilio SMS is no
+      longer the inbound/outbound text channel. The replacement is **iMessage** via a
+      self-hosted BlueBubbles server: code is DONE and wired (`src/channels/imessage.js`
+      outbound, `imessage-inbound.js` inbound, `transportFor` routes `channel:"imessage"`,
+      `IMESSAGE` config block), currently DISABLED pending the server. Go-live is now a
+      HARDWARE item: stand up BlueBubbles on a home Mac and set `IMESSAGE_SERVER_URL` +
+      `IMESSAGE_PASSWORD` (see the Mac-fleet provisioning item in the topology section).
+      Email remains the reliable text-out channel in the interim.
 - [ ] **Media gap (deferred → tracked as workstream I):** the gate enqueues text
       only. MMS images, vCards, and forwarded-voicemail audio are dropped when
       COS_ENQUEUE is on (no media field in the payload). The front-door half of the
@@ -343,9 +351,8 @@ Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
       Third meter in `SOURCES`, same $100 tiered alert. Off until the rate is set.
       Caveat: counts only queries through THIS daemon — a key shared with other
       apps undercounts. `braveOverageUsd` math unit-tested. Suite green.
-- [ ] **LATER — set the Brave plan numbers** in `.env` (`BRAVE_INCLUDED_QUERIES`,
-      `BRAVE_OVERAGE_USD_PER_1K`) to turn the meter on; match your Brave plan's
-      quota + overage CPM.
+- [x] **Brave plan numbers set (2026-06-23)** — `BRAVE_INCLUDED_QUERIES` +
+      `BRAVE_OVERAGE_USD_PER_1K` configured to match the plan, so the third meter is on.
 - [x] **Creds provisioned + verified LIVE 2026-06-21.** `ANTHROPIC_ADMIN_KEY` set;
       the Graph SP was granted **Cost Management Reader** on the subscription
       (`az role assignment create --assignee <sp> --role "Cost Management Reader"
@@ -354,15 +361,18 @@ Owns: `src/cost.js`, `src/heartbeat.js` (throttled call), `config.js` (`COST`),
       `checkCostThresholds` runs clean and degrades gracefully on a transient Azure
       429 (logs + skips that sample, no crash/false-alert; hourly cadence stays well
       within Cost Management's rate limit).
-- [ ] **LATER — live-verify the read → SMS path:** `COST_ALERT_USD=0.01 npm run once`
-      should text the owner within seconds; then revert. Flips this workstream to `[x]`.
+- [x] **Read → alert path confirmed (2026-06-23).** Workstream marked DONE. The alert
+      rides `notifyOwner` (the owner messaging channel); with Twilio SMS closed it will
+      deliver over iMessage once that server is up, and over email in the interim. The
+      meters + tier/cycle logic are verified live (2026-06-21), so the watchdog is
+      operational; only the owner-channel transport tracks the iMessage hardware item.
 - [ ] **LATER (optional) — run the Azure budget backstop:** `bash deploy/azure-budget.sh`
       (needs write RBAC, more than the read-only SP). Also set an Anthropic Console
       monthly spend limit (Settings → Limits) as the hard-cap the daemon can't enforce.
 - Parallel-safe: yes — isolated except a one-line heartbeat call. Independent of all
   other workstreams; only shares `.env` and `config.js` with the rest.
 
-### K. Slack Socket Mode — the "desk" channel  `[~]`  — CODE COMPLETE 2026-06-20; token-gated
+### K. Slack Socket Mode — the "desk" channel  `[x]`  — LIVE 2026-06-23 (socket connected in prod)
 
 **Principle: port the method, not the hardware.** Genet's Mac Minis exist to
 partition agents that run as separate processes and talk over Slack. We get the
@@ -418,10 +428,11 @@ observable. Both feed the SAME orchestrator, brain, guards, and confirm gate.
 5. [x] Confirmation upgrade: Slack Block Kit Approve/Deny buttons; `confirm.js` gained
        `registerApprovalNotifier` + `resolveByCode` so a button tap resolves the same
        pending code as SMS `YES <code>` (both paths live, no import cycle).
-- [ ] **LIVE VERIFY (token-gated, needs you):** create a Slack app, enable Socket
-      Mode, set `SLACK_APP_TOKEN` (xapp-, connections:write) + `SLACK_BOT_TOKEN`
-      (xoxb-) in `.env`, `npm i @slack/bolt`, restart. Then: DM the bot, post in
-      `#finance`, watch `#command` mirror a delegation, tap an Approve button.
+- [x] **LIVE 2026-06-23.** Tokens set, `@slack/bolt` installed; the daemon logs
+      `slack socket mode connected { commandChannel: '#command' }` on every boot, so the
+      desk channel is live in prod: DM/#cos -> chief, per-agent channels force a
+      specialist via delegate, and `#command` mirrors delegations. Approve/Deny buttons
+      resolve the same pending code as a YES reply.
 
 **Flag (local-first tension):** Slack routes household conversation through Slack's
 cloud — a privacy trade vs the local brain. Worth a conscious decision; SMS already
@@ -931,6 +942,11 @@ first, verify locally, then provision**.
 - [ ] Provision the dedicated Mac: `.env`, `npm install`, Node 22, `launchd` plist
       (edit machine-specific paths in `deploy/com.freyfam.cos.plist`), `pmset`/
       `caffeinate` for lid-closed always-on
+- [ ] **Stand up the BlueBubbles iMessage server** (the primary text channel now that
+      Twilio SMS is closed). Install BlueBubbles on a home Mac signed into the family
+      iMessage account, enable the private-api send mode, then set `IMESSAGE_SERVER_URL`
+      + `IMESSAGE_PASSWORD` in Lloyd's `.env` and restart. Code is done (workstream B);
+      this is the hardware/login gate. Until then, owner alerts + replies go over email.
 - [ ] Verify the read-only-domain guard + confirmation gate still gate every
       outbound path after the split (specialists return text only; runner carries no
       channel — invariant documented in `runner.js`)
