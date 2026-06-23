@@ -15,7 +15,25 @@
 // test suite, and every non-browser path keep working when it is not installed.
 // Install with: npm i playwright && npx playwright install chromium
 
-let _browser = null; // shared headless chromium, launched on first use
+// Launch config. Defaults reproduce the old behavior (ephemeral headless Chromium).
+// For real ordering on a family device, point BROWSER_USER_DATA_DIR at that
+// device's Chrome profile and set BROWSER_CHANNEL=chrome: Playwright then drives
+// the REAL Chrome with its saved logins/passwords (so checkout is already signed
+// in) from the device's residential IP. Orders must run on Lloyd's local Mac, never
+// an Azure specialist, so the IP is residential (see the topology note above).
+const BROWSER = {
+  channel: process.env.BROWSER_CHANNEL || null,             // e.g. "chrome" (real Chrome w/ the saved creds)
+  userDataDir: process.env.BROWSER_USER_DATA_DIR || null,   // persistent Chrome profile (saved logins/passwords)
+  headless: String(process.env.BROWSER_HEADLESS ?? "true").toLowerCase() === "true",
+  slowMo: Number(process.env.BROWSER_SLOWMO_MS ?? 0),       // Playwright slowMo on every action
+  // Human-like pause between order steps. Default SLOW: orders run in the morning
+  // with hours to spare, and slow + a real signed-in profile beats bot detection.
+  orderStepMinMs: Number(process.env.ORDER_STEP_MIN_MS ?? 4000),
+  orderStepMaxMs: Number(process.env.ORDER_STEP_MAX_MS ?? 9000),
+};
+
+let _browser = null;   // ephemeral Browser (no profile configured)
+let _context = null;   // persistent BrowserContext (real Chrome profile)
 let _chromium = null;
 
 async function chromium() {
@@ -30,21 +48,41 @@ async function chromium() {
   return _chromium;
 }
 
-async function browser() {
-  if (_browser && _browser.isConnected()) return _browser;
+// A page from the right surface: the device's persistent Chrome profile when
+// configured (saved logins available), else an ephemeral headless Chromium.
+async function newPage() {
   const c = await chromium();
-  _browser = await c.launch({ headless: true });
-  return _browser;
+  if (BROWSER.userDataDir) {
+    if (!_context) {
+      _context = await c.launchPersistentContext(BROWSER.userDataDir, {
+        channel: BROWSER.channel || "chrome",
+        headless: BROWSER.headless,
+        slowMo: BROWSER.slowMo,
+      });
+    }
+    return _context.newPage();
+  }
+  if (!_browser || !_browser.isConnected()) {
+    _browser = await c.launch({ headless: BROWSER.headless, slowMo: BROWSER.slowMo, ...(BROWSER.channel ? { channel: BROWSER.channel } : {}) });
+  }
+  return _browser.newPage();
 }
 
-/** Close the shared browser if one is open. Safe to call when nothing launched. */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Randomized human-like pause in [min,max]. Pure-ish; 0 when both are 0.
+function humanPauseMs(min = BROWSER.orderStepMinMs, max = BROWSER.orderStepMaxMs) {
+  if (!min && !max) return 0;
+  const lo = Math.min(min, max), hi = Math.max(min, max);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
+/** Close the shared browser/context if one is open. Safe when nothing launched. */
 export async function closeBrowser() {
-  if (!_browser) return;
-  try {
-    await _browser.close();
-  } catch {
-    /* already gone */
+  for (const closeable of [_context, _browser]) {
+    if (!closeable) continue;
+    try { await closeable.close(); } catch { /* already gone */ }
   }
+  _context = null;
   _browser = null;
 }
 
@@ -65,8 +103,7 @@ function hostOf(url) {
  */
 export async function readPage(url, { maxChars = 4000, timeoutMs = 30000 } = {}) {
   hostOf(url); // validate before launching anything
-  const b = await browser();
-  const page = await b.newPage();
+  const page = await newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     const title = await page.title();
@@ -108,10 +145,9 @@ const STEP_RUNNERS = {
  * Returns a short transcript so the caller can report what actually happened.
  * @param {{url:string, steps?:Array<object>, timeoutMs?:number}} input
  */
-export async function runOrder({ url, steps = [], timeoutMs = 30000 } = {}) {
+export async function runOrder({ url, steps = [], timeoutMs = 60000, pace = true } = {}) {
   if (!url) throw new Error("url is required");
-  const b = await browser();
-  const page = await b.newPage();
+  const page = await newPage();
   const transcript = [];
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
@@ -119,6 +155,10 @@ export async function runOrder({ url, steps = [], timeoutMs = 30000 } = {}) {
     for (const step of steps) {
       const run = STEP_RUNNERS[step.action];
       if (!run) throw new Error(`Unknown browser step: ${step.action}`);
+      // Pace order steps like a human (default slow). Orders run in the morning
+      // with hours to spare, so unhurried + a real signed-in Chrome profile is
+      // the anti-bot strategy. Set pace:false (or ORDER_STEP_*_MS=0) to disable.
+      if (pace) { const ms = humanPauseMs(); if (ms) await sleep(ms); }
       transcript.push(await run(page, step, timeoutMs));
     }
     return { ok: true, finalUrl: page.url(), transcript };
