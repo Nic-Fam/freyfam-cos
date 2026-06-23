@@ -7,6 +7,8 @@ import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate } from "./digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
+import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
+import { delegate } from "./delegate.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -94,10 +96,37 @@ async function maybeFireReminders() {
   }
 }
 
+// Twice-daily resale run (right after TheRealReal's 7am/4pm PT drops). Delegates
+// to Shey to run the saved searches; she reports NEW matches or "NONE", and we
+// only ping the family when there's something new. This is what makes the saved
+// searches behave like a feed: fresh listings surface on their own.
+async function maybeRunResale() {
+  try {
+    const state = await getResaleState();
+    const { due, date } = dueSlots(new Date(), state);
+    for (const slot of due) {
+      await setSlotRan(slot.label, date); // record before running so a slow run can't double-fire
+      try {
+        const res = await delegate({
+          agent: "resale",
+          task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
+        });
+        if (res && !/^\s*NONE\s*\.?\s*$/i.test(res)) await notifyOwner(`New resale finds:\n${res}`);
+        log.info("resale run complete", { slot: slot.label });
+      } catch (err) {
+        log.error("resale run failed", { slot: slot.label, reason: err.message });
+      }
+    }
+  } catch (err) {
+    log.error("resale schedule check failed", { reason: err.message });
+  }
+}
+
 export async function tick() {
   await maybeCheckCosts();
   await maybeRunDigest();
   await maybeFireReminders();
+  await maybeRunResale();
 
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);
