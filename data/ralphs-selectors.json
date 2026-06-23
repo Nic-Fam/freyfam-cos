@@ -27,6 +27,7 @@
   "pending_capture_at_checkout": [
     "proceed-to-checkout control (blocked behind re-auth on 2026-06-23)",
     "delivery time-slot picker -> select the 6-8 PM Friday window",
+    "DELIVERY DETAILS > 'Don't miss out on savings' section: lists MISSED coupons not yet clipped -> SELECT/clip all of them (per Nic)",
     "tip step (confirm default is selected)",
     "review-order marker (where a dry run stops, before Place Order)",
     "place-order button (only on a confirmed, gated run)"
