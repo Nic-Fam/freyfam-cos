@@ -5,6 +5,7 @@ data/*
 !data/seed-notes.json
 !data/import-from-assistant.mjs
 !data/reembed.mjs
+!data/ralphs-selectors.json
 !data/house-rules.example.json
 *.log
 .DS_Store

@@ -1,0 +1,20 @@
+{
+  "_note": "Captured live from ralphs.com (signed in) 2026-06-23 via Control Chrome. Kroger uses data-testid; coupon ids change weekly so match coupons by aria-label text, not id. Used by placeRalphsOrder (src/grocery.js). CART/SLOT/CHECKOUT selectors still need a populated-cart dry-run to capture.",
+  "captured": {
+    "search_input": "input[data-testid=\"SearchBar-input\"]",
+    "add_to_cart_button": "button[data-testid=\"citrus-QuantityStepper-ctaButton\"]",
+    "add_to_cart_aria_prefix": "Add to Cart:",
+    "coupon_clip_button": "button[data-testid^=\"CouponActionButton-\"]",
+    "coupon_clip_aria_prefix": "Clip for coupon:",
+    "friday_4x_coupon_aria_match": "FRI ONLY 4X Points",
+    "out_of_stock_text": "Item Out of Stock",
+    "signed_in_marker": "NICHOLAS",
+    "delivery_address_marker": "5725 Canyonside Rd"
+  },
+  "pending_capture": [
+    "view cart / go to checkout control",
+    "delivery slot picker (select a Friday-evening window)",
+    "review-order page marker (where a dry run stops, before Place Order)",
+    "place-order button (only used on a confirmed, gated run)"
+  ]
+}
