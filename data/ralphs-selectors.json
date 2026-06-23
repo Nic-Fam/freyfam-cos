@@ -19,12 +19,17 @@
   },
   "requirements": {
     "delivery_slot": "Friday 6-8 PM window (per Nic).",
-    "delivery_minimum": "$35 order minimum for delivery."
+    "delivery_minimum": "$35 order minimum for delivery.",
+    "tip": "Leave the DEFAULT tip at checkout (per Nic) — do not zero or change it.",
+    "cart_link": "a[data-testid=\"CartLink\"] (href /cart)"
   },
+  "auth_note": "2026-06-23: navigating to /cart redirected to login.kroger.com (Azure AD B2C CIAM sign-in). The cart/checkout require a fresh sign-in. For the persistent Chrome profile to stay authed for unattended runs, sign in WITH 'Keep me signed in' checked. The assistant never enters credentials — Nic signs in once in the profile.",
   "pending_capture_at_checkout": [
-    "go-to-cart / proceed-to-checkout control",
+    "proceed-to-checkout control (blocked behind re-auth on 2026-06-23)",
     "delivery time-slot picker -> select the 6-8 PM Friday window",
+    "tip step (confirm default is selected)",
     "review-order marker (where a dry run stops, before Place Order)",
     "place-order button (only on a confirmed, gated run)"
-  ]
+  ],
+  "session_state": "6 test staples were added to the cart during capture (ribs, corn, watermelon, charcoal, buns, Traeger pellets) to reach the $35 min — CLEAR these or replace with the real list before any real run."
 }
