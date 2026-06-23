@@ -10,6 +10,18 @@ Lloyd's local Mac (the always-on Mac mini) — residential IP, never Azure. Lloy
 drives the browser on behalf of the Azure specialists (Carmine picks the grocery
 list; Shelli's First Look is Shelli's account). Steve/Frank are local for their own.
 
+### Doing it BEFORE the mini is set up (and moving it over)
+Fine to run this on any home Mac now — it's still a residential IP. What you
+capture is portable:
+- `data/ralphs-steps.json` (the checkout selectors) is SITE-specific, not
+  machine-specific — it commits to the repo and deploys to the mini as-is.
+- The extractPrice tuning + First Look wiring are code — they move with git.
+On the mini you only re-do the machine-local bits: sign Chrome in to the accounts
+(or enable Chrome Sync so passwords carry over), point `BROWSER_USER_DATA_DIR` at
+the mini's profile path, `npx playwright install chrome`, and do ONE gated
+verification run (different machine / possibly newer Chrome) before trusting an
+unattended order.
+
 ## Prep checklist (do BEFORE the session)
 1. **On Lloyd's Mac, in Chrome, be signed in to:**
    - ralphs.com — account with the delivery address + a saved payment method (no 2FA, confirmed). Clip nothing; we'll automate the 4x fuel-points coupon.
