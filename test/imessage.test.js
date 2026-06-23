@@ -49,6 +49,7 @@ test("normalizeBlueBubbles maps a new-message event to the inbound payload", () 
     replyTo: "iMessage;-;+15551234567",
     body: "whose haircut?",
     media: [],
+    attachments: [],
   });
 });
 
@@ -76,4 +77,28 @@ test("normalizeBlueBubbles maps attachments into media blocks with a download ur
   assert.equal(norm.payload.media.length, 1);
   assert.equal(norm.payload.media[0].contentType, "image/jpeg");
   assert.match(norm.payload.media[0].url, /\/api\/v1\/attachment\/att-1\/download\?password=/);
+  assert.deepEqual(norm.payload.attachments, []); // image stays out of the document path
+});
+
+test("normalizeBlueBubbles routes non-image attachments (vCard/PDF) to the document path", () => {
+  const norm = normalizeBlueBubbles({
+    type: "new-message",
+    data: {
+      guid: "G3",
+      handle: { address: "+1" },
+      chats: [{ guid: "iMessage;-;+1" }],
+      text: "here's the contact",
+      attachments: [
+        { guid: "att-img", mimeType: "image/png" },
+        { guid: "att-vcf", mimeType: "text/vcard", transferName: "jane.vcf" },
+      ],
+    },
+  });
+  // image -> media (vision), contact card -> attachments (document extraction)
+  assert.equal(norm.payload.media.length, 1);
+  assert.equal(norm.payload.media[0].contentType, "image/png");
+  assert.equal(norm.payload.attachments.length, 1);
+  assert.equal(norm.payload.attachments[0].contentType, "text/vcard");
+  assert.equal(norm.payload.attachments[0].name, "jane.vcf");
+  assert.match(norm.payload.attachments[0].url, /\/api\/v1\/attachment\/att-vcf\/download\?password=/);
 });

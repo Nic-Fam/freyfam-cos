@@ -38,13 +38,26 @@ export function sniffImageType(buf) {
   return null;
 }
 
-// Build an image block, preferring the sniffed type over the (often wrong)
-// declared one. If the bytes sniff to a supported type, use it; otherwise keep
-// the declared type so a still-supported-but-unsniffable image isn't dropped.
-function imageBlock(buf, declaredCt) {
+// iPhone photos are HEIC/HEIF (ISO base-media: an "ftyp" box with a heic-family
+// brand). Claude vision does NOT accept HEIC, and Slack/Messages often pass it
+// through mislabeled as image/jpeg. Detect it so we can skip with a precise,
+// actionable reason instead of sending a block Claude rejects.
+export function isHeic(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return false;
+  if (buf.toString("ascii", 4, 8) !== "ftyp") return false;
+  return ["heic", "heix", "hevc", "heif", "mif1", "msf1"].includes(buf.toString("ascii", 8, 12));
+}
+
+// Resolve the media_type to SEND, trusting the bytes over the declared type. The
+// four signatures we sniff ARE exactly Claude's supported set, so if the bytes
+// don't sniff to one of them, Claude can't read it either — return null so the
+// caller SKIPS it (logged, non-fatal) rather than sending a block that 400s and
+// kills the whole turn (the bug that made resale "do nothing" on a Slack photo).
+function resolveImageType(buf, declaredCt) {
   const sniffed = sniffImageType(buf);
-  const media_type = sniffed && SUPPORTED.has(sniffed) ? sniffed : declaredCt;
-  return { type: "image", source: { type: "base64", media_type, data: buf.toString("base64") } };
+  if (sniffed && SUPPORTED.has(sniffed)) return { mediaType: sniffed };
+  if (isHeic(buf)) return { reason: "HEIC/HEIF image (declared " + declaredCt + "); Claude can't read it, resend as JPEG or PNG" };
+  return { reason: "unrecognized image bytes (declared " + declaredCt + "; not jpeg/png/gif/webp)" };
 }
 
 function basicAuth(twilio) {
@@ -70,7 +83,9 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
     if (item?.bytes != null) {
       const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
       if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
-      imageBlocks.push(imageBlock(buf, ct));
+      const r = resolveImageType(buf, ct);
+      if (!r.mediaType) { skipped.push({ reason: r.reason }); continue; }
+      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: buf.toString("base64") } });
       continue;
     }
     if (!item?.url) { skipped.push({ reason: "no url or bytes" }); continue; }
@@ -81,7 +96,9 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       if (!res.ok) { skipped.push({ url: item.url, reason: `HTTP ${res.status}` }); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_BYTES) { skipped.push({ url: item.url, reason: `too large (${buf.length}B)` }); continue; }
-      imageBlocks.push(imageBlock(buf, ct));
+      const r = resolveImageType(buf, ct);
+      if (!r.mediaType) { skipped.push({ url: item.url, reason: r.reason }); continue; }
+      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: buf.toString("base64") } });
     } catch (err) {
       skipped.push({ url: item.url, reason: err.message });
     }

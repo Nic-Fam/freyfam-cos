@@ -42,6 +42,16 @@ export function normalizeBlueBubbles(evt) {
   if (m.isFromMe) return null;                       // don't react to our own sends
   const handle = m.handle?.address;                  // phone E.164 or Apple ID email
   if (!handle) return null;
+  // Split attachments like the Slack path does: images -> media (vision blocks),
+  // everything else (PDF/.ics/.vcf) -> attachments (document extraction). Both
+  // carry the BlueBubbles download URL; collectAttachments fetches the doc bytes.
+  // This gives iMessage the same image-reading AND document-reading parity as the
+  // Slack/email front doors (a vCard contact card or calendar invite is read, not
+  // silently dropped as an unsupported image).
+  const files = (m.attachments || []).filter((a) => a?.guid && a?.mimeType);
+  const downloadUrl = (a) =>
+    `${IMESSAGE.serverUrl}/api/v1/attachment/${a.guid}/download?password=${encodeURIComponent(IMESSAGE.password)}`;
+  const isImage = (a) => /^image\//i.test(a.mimeType);
   return {
     guid: m.guid,
     payload: {
@@ -49,12 +59,10 @@ export function normalizeBlueBubbles(evt) {
       from: handle,
       replyTo: m.chats?.[0]?.guid,                   // chatGuid -> exact-thread reply
       body: m.text || "",
-      media: (m.attachments || [])
-        .filter((a) => a?.guid && a?.mimeType)
-        .map((a) => ({
-          url: `${IMESSAGE.serverUrl}/api/v1/attachment/${a.guid}/download?password=${encodeURIComponent(IMESSAGE.password)}`,
-          contentType: a.mimeType,
-        })),
+      media: files.filter(isImage).map((a) => ({ url: downloadUrl(a), contentType: a.mimeType })),
+      attachments: files
+        .filter((a) => !isImage(a))
+        .map((a) => ({ name: a.transferName || "attachment", contentType: a.mimeType, url: downloadUrl(a) })),
     },
   };
 }

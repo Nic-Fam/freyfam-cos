@@ -701,15 +701,26 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
 
 // Materialize email attachments: inline {bytes|contentBytes} from the front door,
 // or fetched from the mailbox via Graph when a graphMessageId is present. Non-fatal.
-async function collectAttachments(msg) {
+export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
   if (Array.isArray(msg.attachments) && msg.attachments.length) {
-    return msg.attachments
-      .map((a) => ({
-        name: a.name,
-        contentType: a.contentType,
-        bytes: a.bytes ?? (a.contentBytes ? Buffer.from(a.contentBytes, "base64") : undefined),
-      }))
-      .filter((a) => a.bytes);
+    const out = [];
+    for (const a of msg.attachments) {
+      let bytes = a.bytes ?? (a.contentBytes ? Buffer.from(a.contentBytes, "base64") : undefined);
+      // URL-based attachments (iMessage/BlueBubbles): download the bytes so the
+      // document parser gets them, the same pre-download the Slack path does. The
+      // BlueBubbles URL carries its own auth (password query param), so no header.
+      if (bytes == null && a.url) {
+        try {
+          const res = await fetchImpl(a.url);
+          if (res.ok) bytes = Buffer.from(await res.arrayBuffer());
+          else log.warn("attachment download failed", { name: a.name, status: res.status });
+        } catch (err) {
+          log.warn("attachment download error", { name: a.name, reason: err.message });
+        }
+      }
+      if (bytes != null) out.push({ name: a.name, contentType: a.contentType, bytes });
+    }
+    return out;
   }
   if (msg.graphMessageId) {
     try {
@@ -769,11 +780,21 @@ export async function handleInbound(msg, transport = transportFor(msg)) {
   let images;
 
   if (Array.isArray(msg.media) && msg.media.length) {
-    const { imageBlocks } = await fetchInboundMedia(msg.media);
+    const { imageBlocks, skipped } = await fetchInboundMedia(msg.media);
     if (imageBlocks.length) {
       images = imageBlocks; // forwarded to specialists on delegate
       extraBlocks.push(...imageBlocks);
       triageNotes.push(`${imageBlocks.length} photo(s)`);
+    }
+    // An image Claude can't read (e.g. iPhone HEIC) must NOT silently vanish — tell
+    // Lloyd so he asks for a resend, instead of answering an empty "(shared a file)".
+    const unreadable = skipped.filter((s) => s.reason && !/capped|too large/.test(s.reason));
+    if (unreadable.length) {
+      extraBlocks.push({
+        type: "text",
+        text: `[Note: ${unreadable.length} attached image(s) could not be read: ${unreadable[0].reason}. Tell the sender what happened and ask them to resend as JPEG or PNG.]`,
+      });
+      triageNotes.push(`${unreadable.length} unreadable image(s)`);
     }
   }
 
