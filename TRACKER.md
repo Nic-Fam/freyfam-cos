@@ -401,9 +401,20 @@ observable. Both feed the SAME orchestrator, brain, guards, and confirm gate.
        commit `802e9f3`. I and L hang off this too.
 3. [x] `onDelegate` → `mirror()` into `#command` on each delegate call + result
        (via `wrapDelegateWithMirror`). Works for in-process OR remote specialists.
-4. [~] **Per-agent tool allowlist (Finn's lockdown).** Still PARTLY DONE: the
-       `REGISTRY` in `src/agents/tools.js` scopes tools per agent. Remaining: make it
-       an explicit enforced boundary so a channel can't widen an agent. (Not blocking.)
+4. [x] **Per-agent tool allowlist (Finn's lockdown) — DONE 2026-06-23.** The
+       `REGISTRY` in `src/agents/tools.js` builds each specialist's tool defs/handlers;
+       now an explicit `AGENT_ALLOWLIST` (per-agent permitted tool names) is the
+       enforced boundary. `specialistTools()` FILTERS the registry's output down to the
+       allowlist (fails CLOSED + logs on drift) and THROWS if an allowlist ever names a
+       `CHIEF_ONLY_TOOLS` entry (outbound/high-stakes: send_email, place_order,
+       create_calendar_event, delegate, ...), making hard-constraint #2 executable. A
+       channel can't widen an agent: per-agent channels route via `delegate ->
+       runSpecialist` (the scoped path), and the runner only ever assembles tools through
+       `specialistTools()`. finance has no search/outbound by allowlist, not just by
+       omission. Tests in `test/tools.test.js` (subset-of-allowlist, 1:1 tools<->handlers,
+       no chief-only leak, finance lockdown, throw-on-misconfig). 234/234 green.
+       (Note: Steve's Claude-Code backend path is a deliberately separate trust model
+       with real file/bash tools — workstream Q — not governed by this in-process allowlist.)
 5. [x] Confirmation upgrade: Slack Block Kit Approve/Deny buttons; `confirm.js` gained
        `registerApprovalNotifier` + `resolveByCode` so a button tap resolves the same
        pending code as SMS `YES <code>` (both paths live, no import cycle).

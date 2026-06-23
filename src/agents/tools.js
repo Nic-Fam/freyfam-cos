@@ -22,8 +22,41 @@ import {
   listActive, summary, getExpiringSoon, addItem, consume,
 } from "../meals.js";
 import { addFinding, listFindings, SECURITY_SEVERITIES } from "../security.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("agent-tools");
 
 const obj = (properties, required = []) => ({ type: "object", properties, required });
+
+// === Per-agent tool allowlist: the enforced SECURITY BOUNDARY (workstream K#4) ==
+// Each specialist may use EXACTLY the tools listed here, nothing more. This is the
+// source of truth; the REGISTRY below builds the tool DEFS/handlers, and
+// specialistTools() FILTERS what the registry produces down to this allowlist
+// (failing CLOSED), logging loudly if the registry ever drifts outside it. So a
+// future edit that wires a powerful tool into a specialist cannot silently widen its
+// scope. A channel/persona cannot widen it either: the runner only ever assembles
+// tools via specialistTools(), and a per-agent channel routes through delegate ->
+// runSpecialist (the scoped path), never the chief's full toolset.
+const COMMON_TOOLS = ["recall_memory", "remember", "log_decision", "list_decisions"];
+export const AGENT_ALLOWLIST = {
+  finance: [...COMMON_TOOLS, "analyze_transactions"], // NO search/browse/outbound — finance stays locked down
+  resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
+  chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
+  security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings"],
+  dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
+};
+
+// Tools that act on the family's behalf or move the world. These live ONLY on the
+// chief (Lloyd), behind the confirmation gate. A specialist may NEVER hold one,
+// regardless of any allowlist edit — specialistTools() throws if an allowlist
+// contains one, making hard constraint #2 (human-in-the-loop for all outbound)
+// executable rather than just convention. Names mirror the chief's tool list in
+// orchestrator.js; a couple of not-yet-built outbound names are included defensively.
+export const CHIEF_ONLY_TOOLS = new Set([
+  "delegate", // only the chief delegates; a specialist delegating would break isolation
+  "send_email", "send_sms", "send_imessage", "reply_email", "reply_to_message",
+  "place_order", "run_grocery_order", "create_calendar_event",
+]);
 
 // Memory tools, scoped to the calling agent so finance memories don't pollute
 // resale recall and vice versa.
@@ -296,8 +329,42 @@ const REGISTRY = {
   }),
 };
 
-/** Return { tools, handlers } for a specialist, or empty sets for an unknown agent. */
+/**
+ * Return { tools, handlers } for a specialist, ENFORCED against the agent's
+ * allowlist. The allowlist is the boundary: anything the registry produces that
+ * is not on it is dropped (fail closed) and logged, so a specialist can never
+ * exceed its declared scope even if the registry drifts. An allowlist that names a
+ * chief-only (outbound/high-stakes) tool is a hard misconfiguration and throws.
+ * Unknown agent -> empty sets (no tools).
+ */
 export function specialistTools(agent) {
   const make = REGISTRY[agent];
-  return make ? make() : { tools: [], handlers: {} };
+  if (!make) return { tools: [], handlers: {} };
+
+  const allow = new Set(AGENT_ALLOWLIST[agent] || []);
+  // Hard invariant: no specialist allowlist may include a chief-only tool. This is
+  // the human-in-the-loop / no-outbound constraint made executable. Allowlists are
+  // static constants, so a clean config never trips this; a bad edit fails loudly.
+  for (const name of allow) {
+    if (CHIEF_ONLY_TOOLS.has(name)) {
+      throw new Error(`Tool allowlist for "${agent}" contains chief-only tool "${name}": specialists never send or spend.`);
+    }
+  }
+
+  const { tools, handlers } = make();
+  // Fail CLOSED: keep only allowlisted tools/handlers. If the registry produced
+  // anything outside the allowlist, drop it and log so the drift is visible.
+  const keptTools = tools.filter((t) => allow.has(t.name));
+  const droppedTools = tools.map((t) => t.name).filter((n) => !allow.has(n));
+  if (droppedTools.length) log.error("blocked out-of-allowlist tools", { agent, dropped: droppedTools });
+
+  const keptHandlers = {};
+  const droppedHandlers = [];
+  for (const [name, fn] of Object.entries(handlers)) {
+    if (allow.has(name)) keptHandlers[name] = fn;
+    else droppedHandlers.push(name);
+  }
+  if (droppedHandlers.length) log.error("blocked out-of-allowlist handlers", { agent, dropped: droppedHandlers });
+
+  return { tools: keptTools, handlers: keptHandlers };
 }
