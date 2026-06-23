@@ -48,6 +48,34 @@ export const TWILIO = {
   owner: process.env.OWNER_PHONE,                      // Nic's number for confirmations
 };
 
+// ---------------------------------------------------------------------------
+// iMessage via a self-hosted BlueBubbles server on the always-on Mac (Lloyd's
+// Mac mini). Outbound = POST to the BlueBubbles REST send API; inbound = a
+// localhost-only HTTP listener that BlueBubbles webhooks fire on each new
+// message. Both halves live on the SAME machine, so iMessage traffic never
+// leaves the LAN and never touches Azure/Twilio (those stay the fallback for
+// non-Apple recipients: school, vendors). Disabled until serverUrl is set, so
+// the daemon runs fine before the mini is provisioned.
+//
+// allow: optional allowlist of iMessage handles (phones in E.164 and/or Apple
+// ID emails) permitted to talk to the chief. Unlike the private Twilio number,
+// an Apple ID handle is easy to guess/spam and every inbound costs triage
+// tokens, so this gate keeps strangers out. Empty = allow all (parity with SMS).
+// ---------------------------------------------------------------------------
+export const IMESSAGE = {
+  serverUrl: process.env.IMESSAGE_SERVER_URL,            // e.g. http://127.0.0.1:1234
+  password: process.env.IMESSAGE_PASSWORD,               // BlueBubbles server password
+  listenHost: process.env.IMESSAGE_LISTEN_HOST || "127.0.0.1", // localhost-only by default
+  listenPort: Number(process.env.IMESSAGE_LISTEN_PORT || 1235), // BlueBubbles webhook target
+  allow: (process.env.IMESSAGE_ALLOW || "")
+    .split(",")
+    .map((s) => s.toLowerCase().trim())
+    .filter(Boolean),
+  get enabled() {
+    return Boolean(this.serverUrl && this.password);
+  },
+};
+
 export const AZURE = {
   queueConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   inboundQueue: process.env.INBOUND_QUEUE_NAME || "inbound-messages",

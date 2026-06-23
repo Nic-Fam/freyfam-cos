@@ -6,6 +6,7 @@ import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate } from "./digest.js";
+import { getDueReminders, afterFired } from "./reminders.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -79,9 +80,24 @@ async function maybeRunDigest() {
   }
 }
 
+// Fire any reminders that have come due: notify the owner, then re-arm recurring
+// ones / mark one-shots done. Persisted, so a restart never drops one.
+async function maybeFireReminders() {
+  try {
+    for (const r of await getDueReminders()) {
+      await notifyOwner(`Reminder: ${r.message}`);
+      await afterFired(r.id);
+      log.info("reminder fired", { id: r.id });
+    }
+  } catch (err) {
+    log.error("reminder check failed", { reason: err.message });
+  }
+}
+
 export async function tick() {
   await maybeCheckCosts();
   await maybeRunDigest();
+  await maybeFireReminders();
 
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);

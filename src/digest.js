@@ -46,6 +46,8 @@ Gather what you need first:
   the precise ETA and any traffic delay, and use web_search for today's weather
   at each destination. Give a one-line per-person heads-up. Skip anyone who is
   not heading out today (e.g. on a weekend, skip work commutes).
+- Open tasks: call list_tasks. Surface anything OVERDUE or due today (skip the
+  section if nothing is due or overdue).
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick).
 - Any security flags: delegate to security (Frank).
@@ -53,8 +55,8 @@ Gather what you need first:
 
 Then write it warm, short, and scannable: a one-line greeting that names ${human},
 today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
-note, meals plus any prep reminder, and any flags. Skip sections that have nothing.
-Plain punctuation, no em dashes.
+note, any overdue/due-today tasks, meals plus any prep reminder, and any flags.
+Skip sections that have nothing. Plain punctuation, no em dashes.
 
 Output ONLY the finished digest, wrapped exactly in <digest> and </digest> tags,
 with NOTHING before or after the tags (no preamble, no notes to yourself).`;

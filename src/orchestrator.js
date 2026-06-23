@@ -2,11 +2,14 @@ import { agentLoop, systemBlocks } from "./claude.js";
 import { modelForComplexity, GRAPH } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages } from "./packages.js";
+import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
+import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
 import { sendSms } from "./channels/twilio.js";
+import { sendImessage } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
@@ -195,6 +198,48 @@ const tools = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "add_task",
+    description: "Add a to-do to the family task list. Optional `dueDate` (YYYY-MM-DD) and `owner` (e.g. Nic or Shelli). Use this for any 'add to my list / remind me to <do a thing>' that is a task, not a timed alert.",
+    input_schema: {
+      type: "object",
+      properties: { title: { type: "string" }, dueDate: { type: "string", description: "YYYY-MM-DD" }, owner: { type: "string" } },
+      required: ["title"],
+    },
+  },
+  {
+    name: "list_tasks",
+    description: "List open family tasks (overdue and due-today flagged). Set includeDone true to include completed ones. Each line ends with the task id in braces, e.g. {a1b2c3d4}.",
+    input_schema: { type: "object", properties: { includeDone: { type: "boolean" } } },
+  },
+  {
+    name: "complete_task",
+    description: "Mark a task done by its id (from list_tasks) or its exact title.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "add_reminder",
+    description: "Set a timed reminder that fires at a specific time (you get the current time in context, so compute the exact moment). `fireAt` is an ISO datetime in the family timezone, e.g. 2026-06-25T17:00:00. Optional `recurrence`: daily, weekdays, or weekly. Use this for time-based alerts ('remind me at 5pm', 'every weekday at 8'); use add_task for an untimed to-do.",
+    input_schema: {
+      type: "object",
+      properties: {
+        message: { type: "string" },
+        fireAt: { type: "string", description: "ISO datetime in the family tz, e.g. 2026-06-25T17:00:00" },
+        recurrence: { type: "string", enum: ["daily", "weekdays", "weekly"] },
+      },
+      required: ["message", "fireAt"],
+    },
+  },
+  {
+    name: "list_reminders",
+    description: "List pending reminders (soonest first), each with its id.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "cancel_reminder",
+    description: "Cancel a pending reminder by its id (from list_reminders).",
+    input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+  {
     name: "search",
     description:
       "Search the web (read-only) and get back ranked results as {title, url, snippet}. Use it to find an address, hours, a fact, or a listing; then read the best hit with browse_page. Acting on a result (email/buy) still routes through the confirmation gate.",
@@ -277,7 +322,12 @@ export function replySubject(subject) {
 }
 
 // deps injectable for tests; default to the real channel functions.
-export function transportFor(msg, { onSms = sendSms, onMail = sendMail, onReply = replyToMessage } = {}) {
+export function transportFor(msg, { onSms = sendSms, onMail = sendMail, onReply = replyToMessage, onImessage = sendImessage } = {}) {
+  if (msg.channel === "imessage") {
+    // replyTo carries the BlueBubbles chatGuid so the reply lands in the exact
+    // existing thread (incl. group chats); fall back to the raw handle for a 1:1.
+    return { reply: (text) => onImessage(msg.replyTo || msg.from, text), mirror: noop };
+  }
   if (msg.channel === "sms") {
     return { reply: (text) => onSms(msg.replyTo || msg.from, text), mirror: noop };
   }
@@ -420,6 +470,37 @@ function toolHandlers({ images, onDelegate } = {}) {
       return `Now tracking: ${fmt(r.tracked)}.`;
     },
     list_packages: async () => formatPackages(await listActivePackages()),
+    add_task: async ({ title, dueDate, owner }) => {
+      try {
+        const t = await addTask({ title, dueDate, owner });
+        return `Added task: "${t.title}"${t.dueDate ? ` (due ${t.dueDate})` : ""}${t.owner ? ` for ${t.owner}` : ""} {${t.id}}`;
+      } catch (e) {
+        return `Could not add task: ${e.message}`;
+      }
+    },
+    list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
+    complete_task: async ({ task }) => {
+      const t = await completeTask(task);
+      return t ? `Marked done: "${t.title}"` : "No matching open task found.";
+    },
+    add_reminder: async ({ message, fireAt, recurrence }) => {
+      try {
+        const { reminder, deduped } = await createReminder({ message, fireAt, recurrence });
+        const when = new Date(reminder.fireAt).toLocaleString("en-US", { timeZone: FAMILY_TZ, dateStyle: "medium", timeStyle: "short" });
+        return `${deduped ? "Already set" : "Reminder set"}: "${reminder.message}" at ${when}${reminder.recurrence ? ` (${reminder.recurrence})` : ""} {${reminder.id}}`;
+      } catch (e) {
+        return `Could not set reminder: ${e.message}`;
+      }
+    },
+    list_reminders: async () => {
+      const rs = await listReminders();
+      if (!rs.length) return "No pending reminders.";
+      return rs.map((r) => `${new Date(r.fireAt).toLocaleString("en-US", { timeZone: FAMILY_TZ, dateStyle: "medium", timeStyle: "short" })}: ${r.message}${r.recurrence ? ` (${r.recurrence})` : ""} {${r.id}}`).join("\n");
+    },
+    cancel_reminder: async ({ id }) => {
+      const r = await cancelReminder(id);
+      return r ? `Cancelled reminder: "${r.message}"` : "No matching reminder found.";
+    },
     search: async ({ query, count }) => {
       try {
         const results = await webSearch(query, count ? { count } : {});
