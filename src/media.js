@@ -20,6 +20,15 @@ const log = createLogger("media");
 
 // Image types Claude accepts (https://docs.claude.com/en/docs/build-with-claude/vision).
 const SUPPORTED = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+// Worth downloading to sniff the bytes? Anything image-ish, the ambiguous
+// application/octet-stream, or an unlabeled item. CLEARLY non-image declared
+// types (audio/video/vCard/PDF/...) are skipped without a download. The real
+// type is always decided from the bytes after fetch (sniffImageType), never
+// from this -- this only avoids wasting a fetch on an obvious non-image.
+function maybeImage(ct) {
+  return ct === "" || ct === "application/octet-stream" || ct.startsWith("image/");
+}
 const MAX_IMAGES = Number(process.env.MEDIA_MAX_IMAGES || 5);
 const MAX_BYTES = Number(process.env.MEDIA_MAX_BYTES || 4_500_000); // stay under Claude's ~5MB/image
 
@@ -106,9 +115,12 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
 
   for (const item of media.slice(0, MAX_IMAGES)) {
     const ct = String(item?.contentType || "").toLowerCase().split(";")[0].trim();
-    if (!SUPPORTED.has(ct)) { skipped.push({ url: item?.url, contentType: ct, reason: "unsupported type" }); continue; }
-    // Callers may pass already-downloaded bytes (e.g. Slack, where the file needs
-    // a bot-token download) instead of a fetchable URL.
+    // Callers may pass already-downloaded bytes (e.g. Slack/iMessage, where the
+    // file needs an authed download) instead of a fetchable URL. On those paths
+    // the declared type is unreliable -- a real PNG arrives labeled image/heic,
+    // application/octet-stream, or unlabeled -- so we do NOT gate on it. The
+    // bytes are ground truth: prepareImage sniffs them and decides. This is what
+    // makes a genuine PNG get recognized regardless of how the sender labeled it.
     if (item?.bytes != null) {
       const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
       if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
@@ -117,7 +129,12 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: r.bytes.toString("base64") } });
       continue;
     }
+    // URL path: we can't sniff until we fetch, so use the declared type only to
+    // skip clearly non-image attachments without downloading them. The fetched
+    // bytes still decide the real type (sniffImageType), so a mislabeled-but-
+    // image-ish or unlabeled URL is fetched and recognized, not pre-rejected.
     if (!item?.url) { skipped.push({ reason: "no url or bytes" }); continue; }
+    if (!maybeImage(ct)) { skipped.push({ url: item.url, contentType: ct, reason: "unsupported type" }); continue; }
     try {
       // Per-item headers (e.g. Slack Bearer) win; else the Twilio basic auth.
       const headers = item.headers || (auth ? { Authorization: auth } : undefined);

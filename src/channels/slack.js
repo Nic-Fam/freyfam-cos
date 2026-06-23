@@ -2,6 +2,7 @@ import { SLACK } from "../config.js";
 import { handleInbound } from "../orchestrator.js";
 import { delegate } from "../delegate.js";
 import { registerApprovalNotifier, resolveByCode } from "../confirm.js";
+import { conversationKey, getHistory, appendTurn } from "../conversation.js";
 import { createLogger } from "../log.js";
 
 // ===========================================================================
@@ -32,6 +33,18 @@ export const CHANNEL_AGENT = {
 export function agentForChannel(name) {
   if (!name) return null;
   return CHANNEL_AGENT[String(name).replace(/^#/, "").toLowerCase()] || null;
+}
+
+// Fold the recent thread into a specialist task. The delegate seam is text-only
+// ({agent,task} -> text), so prior turns ride along as a labeled preamble rather
+// than as separate messages -- enough for the specialist to keep context across
+// a back-and-forth in its channel. Empty history -> the task is unchanged.
+export function foldThread(history, text) {
+  if (!Array.isArray(history) || !history.length) return text;
+  const transcript = history
+    .map((m) => `${m.role === "assistant" ? "You" : "User"}: ${m.content}`)
+    .join("\n");
+  return `Recent conversation in this channel:\n${transcript}\n\nUser's latest message: ${text}`;
 }
 
 const truncate = (s, n) => {
@@ -139,7 +152,16 @@ export async function startSlack() {
     const hasFiles = media.length || attachments.length;
     try {
       if (forced && !hasFiles) {
-        await transport.reply(await delegate({ agent: forced, task: text }));
+        // Per-agent channels talk straight to the specialist (bypassing the
+        // chief), but the channel still needs conversational memory so a
+        // follow-up in e.g. the #resale thread keeps context. Key the thread by
+        // channel+agent, fold the recent turns into the task, and record the
+        // exchange -- the same getHistory/appendTurn loop handleInbound uses.
+        const convoKey = conversationKey({ channel: `slack:${forced}`, from: message.channel });
+        const history = await getHistory(convoKey);
+        const reply = await delegate({ agent: forced, task: foldThread(history, text) });
+        await transport.reply(reply);
+        await appendTurn(convoKey, text, reply);
       } else {
         await handleInbound(
           { from: message.user, body: text || (hasFiles ? "(shared a file)" : ""), channel: "slack", replyTo: message.channel, media, attachments },

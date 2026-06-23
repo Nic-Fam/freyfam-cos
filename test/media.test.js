@@ -100,6 +100,44 @@ test("declared type that disagrees with the bytes is corrected (Slack jpeg-named
   assert.equal(imageBlocks[0]?.source.media_type, "image/png");
 });
 
+test("PNG bytes are recognized even when the declared type is octet-stream", async () => {
+  // The bug: Slack/iMessage hand a real PNG labeled application/octet-stream (or
+  // unlabeled), and the old declared-type gate dropped it before sniffing.
+  const { imageBlocks, skipped } = await fetchInboundMedia(
+    [{ bytes: PNG, contentType: "application/octet-stream" }],
+    { twilio }
+  );
+  assert.equal(skipped.length, 0);
+  assert.equal(imageBlocks.length, 1);
+  assert.equal(imageBlocks[0].source.media_type, "image/png");
+});
+
+test("PNG bytes are recognized when the declared type is missing entirely", async () => {
+  const { imageBlocks } = await fetchInboundMedia([{ bytes: PNG }], { twilio });
+  assert.equal(imageBlocks[0]?.source.media_type, "image/png");
+});
+
+test("URL with an image-ish/unknown type is fetched and sniffed, not pre-rejected", async () => {
+  const fetchImpl = stubFetch({ "u": PNG });
+  const { imageBlocks } = await fetchInboundMedia(
+    [{ url: "u", contentType: "application/octet-stream" }],
+    { fetchImpl, twilio }
+  );
+  assert.equal(imageBlocks[0]?.source.media_type, "image/png");
+  assert.equal(fetchImpl.calls.length, 1); // it was fetched, not dropped at the gate
+});
+
+test("URL with a clearly non-image type is skipped WITHOUT a download", async () => {
+  const fetchImpl = stubFetch({ "u": PNG });
+  const { imageBlocks, skipped } = await fetchInboundMedia(
+    [{ url: "u", contentType: "audio/mpeg" }],
+    { fetchImpl, twilio }
+  );
+  assert.equal(imageBlocks.length, 0);
+  assert.ok(skipped.some((s) => s.reason === "unsupported type"));
+  assert.equal(fetchImpl.calls.length, 0); // never fetched
+});
+
 test("empty / missing media is a no-op", async () => {
   assert.deepEqual(await fetchInboundMedia([], { twilio }), { imageBlocks: [], skipped: [] });
   assert.deepEqual(await fetchInboundMedia(undefined, { twilio }), { imageBlocks: [], skipped: [] });
