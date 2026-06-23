@@ -17,12 +17,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
-    "@huggingface/transformers": "^3.0.0",
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.5.0",
     "@azure/storage-queue": "^12.25.0",
+    "@huggingface/transformers": "^3.0.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "dotenv": "^16.4.7",
+    "heic-convert": "^2.1.0",
     "pdf-parse": "^1.1.1",
     "twilio": "^5.4.0"
   },

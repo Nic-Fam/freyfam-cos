@@ -48,16 +48,45 @@ export function isHeic(buf) {
   return ["heic", "heix", "hevc", "heif", "mif1", "msf1"].includes(buf.toString("ascii", 8, 12));
 }
 
-// Resolve the media_type to SEND, trusting the bytes over the declared type. The
-// four signatures we sniff ARE exactly Claude's supported set, so if the bytes
-// don't sniff to one of them, Claude can't read it either — return null so the
-// caller SKIPS it (logged, non-fatal) rather than sending a block that 400s and
+// HEIC -> JPEG transcode via heic-convert (pure-JS libheif, no native build).
+// Lazy + optional, exactly like @slack/bolt: if the dep is absent we return null
+// and the caller degrades to the "resend as JPEG" path, so the daemon never hard
+// -depends on it. Memoized so we import once.
+let _heicConvert; // undefined = not tried, null = unavailable, fn = loaded
+async function heicToJpeg(buf) {
+  if (_heicConvert === undefined) {
+    try {
+      _heicConvert = (await import("heic-convert")).default;
+    } catch {
+      _heicConvert = null;
+      log.warn("heic-convert not installed; HEIC photos will ask for a resend");
+    }
+  }
+  if (!_heicConvert) return null;
+  try {
+    return Buffer.from(await _heicConvert({ buffer: buf, format: "JPEG", quality: 0.9 }));
+  } catch (err) {
+    log.warn("heic transcode failed", { reason: err.message });
+    return null;
+  }
+}
+
+// Produce a Claude-ready { bytes, mediaType }, trusting the bytes over the declared
+// type. The four signatures we sniff ARE exactly Claude's supported set, so if the
+// bytes don't sniff to one of them we don't gamble — sending a block Claude 400s on
 // kills the whole turn (the bug that made resale "do nothing" on a Slack photo).
-function resolveImageType(buf, declaredCt) {
+// iPhone HEIC is transcoded to JPEG so it just works; an unconvertible/unknown
+// image returns { reason } and the caller SKIPS it (logged, non-fatal).
+async function prepareImage(buf, declaredCt) {
   const sniffed = sniffImageType(buf);
-  if (sniffed && SUPPORTED.has(sniffed)) return { mediaType: sniffed };
-  if (isHeic(buf)) return { reason: "HEIC/HEIF image (declared " + declaredCt + "); Claude can't read it, resend as JPEG or PNG" };
-  return { reason: "unrecognized image bytes (declared " + declaredCt + "; not jpeg/png/gif/webp)" };
+  if (sniffed && SUPPORTED.has(sniffed)) return { bytes: buf, mediaType: sniffed };
+  if (isHeic(buf)) {
+    const jpeg = await heicToJpeg(buf);
+    if (jpeg && jpeg.length <= MAX_BYTES) return { bytes: jpeg, mediaType: "image/jpeg" };
+    if (jpeg) return { reason: `HEIC transcoded but too large (${jpeg.length}B)` };
+    return { reason: `HEIC/HEIF image (declared ${declaredCt}); could not transcode, resend as JPEG or PNG` };
+  }
+  return { reason: `unrecognized image bytes (declared ${declaredCt}; not jpeg/png/gif/webp)` };
 }
 
 function basicAuth(twilio) {
@@ -83,9 +112,9 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
     if (item?.bytes != null) {
       const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
       if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
-      const r = resolveImageType(buf, ct);
+      const r = await prepareImage(buf, ct);
       if (!r.mediaType) { skipped.push({ reason: r.reason }); continue; }
-      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: buf.toString("base64") } });
+      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: r.bytes.toString("base64") } });
       continue;
     }
     if (!item?.url) { skipped.push({ reason: "no url or bytes" }); continue; }
@@ -96,9 +125,9 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       if (!res.ok) { skipped.push({ url: item.url, reason: `HTTP ${res.status}` }); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_BYTES) { skipped.push({ url: item.url, reason: `too large (${buf.length}B)` }); continue; }
-      const r = resolveImageType(buf, ct);
+      const r = await prepareImage(buf, ct);
       if (!r.mediaType) { skipped.push({ url: item.url, reason: r.reason }); continue; }
-      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: buf.toString("base64") } });
+      imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: r.bytes.toString("base64") } });
     } catch (err) {
       skipped.push({ url: item.url, reason: err.message });
     }
