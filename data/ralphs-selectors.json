@@ -24,13 +24,35 @@
     "cart_link": "a[data-testid=\"CartLink\"] (href /cart)"
   },
   "auth_note": "2026-06-23: navigating to /cart redirected to login.kroger.com (Azure AD B2C CIAM sign-in). The cart/checkout require a fresh sign-in. For the persistent Chrome profile to stay authed for unattended runs, sign in WITH 'Keep me signed in' checked. The assistant never enters credentials — Nic signs in once in the profile.",
-  "pending_capture_at_checkout": [
-    "proceed-to-checkout control (blocked behind re-auth on 2026-06-23)",
-    "delivery time-slot picker -> select the 6-8 PM Friday window",
-    "DELIVERY DETAILS > 'Don't miss out on savings' section: lists MISSED coupons not yet clipped -> SELECT/clip all of them (per Nic)",
-    "tip step (confirm default is selected)",
-    "review-order marker (where a dry run stops, before Place Order)",
-    "place-order button (only on a confirmed, gated run)"
-  ],
-  "session_state": "6 test staples were added to the cart during capture (ribs, corn, watermelon, charcoal, buns, Traeger pellets) to reach the $35 min — CLEAR these or replace with the real list before any real run."
+  "checkout_flow": {
+    "_note": "Captured live 2026-06-23, signed in, cart $75.43/5 items. Cart -> got-everything upsell -> /scheduling (day+time) -> Pay. Everything THROUGH slot selection is captured. The Pay screen (savings/tip/place-order) is past the confirmation boundary and was NOT entered — see pay_screen below.",
+    "step1_cart_checkout": {
+      "path": "/cart",
+      "subtotal_text_match": "Subtotal (N items) $X — must be >= $35",
+      "checkout_button": "match BUTTON by text 'Check Out Delivery' (no data-testid)"
+    },
+    "step2_got_everything_upsell": {
+      "path": "/got-everything",
+      "_note": "Sale-items upsell interstitial that appears after cart checkout.",
+      "continue_button": "match BUTTON by text 'Continue to Checkout' (no data-testid)"
+    },
+    "step3_scheduling": {
+      "path": "/scheduling",
+      "day_tab": "LABEL whose innerText starts with the weekday (e.g. /^Fri /); SKIP if it contains 'Unavailable'. Clicking the label checks the underlying radio name=\"days\" value=YYYY-MM-DD.",
+      "friday_target": "label /^Fri / -> selects radio[name=days] value=2026-06-26 (the date rolls weekly; always pick the nearest upcoming Friday tab)",
+      "time_slot_radio": "input[type=radio][name=\"Time Option\"]; identify the 6-8PM one by an ancestor (<=5 hops) whose text starts /^6:00 ?- ?8:00 ?PM/; click its closest LABEL (clicking the radio's wrapper div alone did NOT register — use the label, then verify input.checked).",
+      "slot_target": "'6:00 - 8:00 PM Instacart Delivery Free' (Free with the family's delivery membership). VERIFY with input[name=\"Time Option\"]:checked after clicking.",
+      "verified_2026_06_23": "Selected Fri 6/26 + 6:00-8:00 PM slot successfully.",
+      "advance_button": "BUTTON text 'Continue to Payment' — GATED: this advances the live checkout to the Pay screen. Run it ONLY inside a confirmed/gated order, never during capture."
+    },
+    "pay_screen_NOT_CAPTURED": {
+      "_why": "Clicking 'Continue to Payment' on 2026-06-23 was correctly blocked by the action gate (advancing a live checkout = a purchase step bounded to 'stop before placing'). The Pay screen holds the remaining 3 selectors below — capture them only during the ONE gated end-to-end real run (approve via email/Slack button), not in a dry run.",
+      "still_needed": [
+        "DELIVERY DETAILS > 'Don't miss out on savings' section: lists MISSED coupons not yet clipped -> SELECT/clip all of them (per Nic)",
+        "tip step (confirm the DEFAULT tip is selected; do not change it)",
+        "place-order button (only fires on a confirmed, gated run)"
+      ]
+    }
+  },
+  "session_state": "Cart held 5 test staples ($75.43) during the 2026-06-23 capture — CLEAR these or replace with the real list before any real run. A Friday 6-8 PM slot was SELECTED (not paid); it does not hold a reservation without completing checkout."
 }
