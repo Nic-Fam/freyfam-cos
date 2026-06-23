@@ -10,6 +10,9 @@ import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
+import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun } from "./grocery.js";
+import { listShopping } from "./shopping.js";
+import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { createLogger } from "./log.js";
 
@@ -127,11 +130,31 @@ async function maybeRunResale() {
   }
 }
 
+// Weekly Friday grocery order: assemble the shopping list into a Ralphs order and
+// STAGE it for approval (the family gets Approve/Deny via email/Slack). On
+// approval the "grocery" executor places it from Lloyd's local Mac. Once-per-day
+// guard persisted so a restart can't re-propose.
+async function maybeRunGroceryOrder() {
+  try {
+    const { run, date } = shouldRunGroceryOrder(new Date(), await getLastGroceryRun());
+    if (!run) return;
+    await setLastGroceryRun(date); // record before staging so a slow run can't double-propose
+    const items = await listShopping();
+    if (!items.length) { log.info("grocery: skipped, empty shopping list", { date }); return; }
+    const order = assembleOrder(items);
+    await requestConfirmation(`Friday Ralphs order (${order.count} items, ${order.deliveryWindow}, applying ${order.coupons.join(", ")}):\n${formatOrder(order)}`, "grocery", order);
+    log.info("grocery order proposed", { date, items: order.count });
+  } catch (err) {
+    log.error("grocery order failed", { reason: err.message });
+  }
+}
+
 export async function tick() {
   await maybeCheckCosts();
   await maybeRunDigest();
   await maybeFireReminders();
   await maybeRunResale();
+  await maybeRunGroceryOrder();
 
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);

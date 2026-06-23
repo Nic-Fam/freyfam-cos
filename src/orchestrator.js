@@ -6,6 +6,7 @@ import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tas
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { watchItem, listWatched, unwatchItem } from "./watch.js";
+import { placeRalphsOrder } from "./grocery.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -362,6 +363,10 @@ registerActionHandler("order", async ({ url, steps }) => {
   const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
   return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
 });
+// The weekly Ralphs grocery order (assembled Friday from the shopping list). Runs
+// on Lloyd's local Mac (real IP) only after the family approves; placeRalphsOrder
+// handles the slow, signed-in-Chrome checkout (live steps pending).
+registerActionHandler("grocery", async (order) => placeRalphsOrder(order));
 
 // --- Transports: how one turn delivers its result + mirrors its work --------
 // A transport is { reply(text), mirror(event) }. SMS and email are built in;

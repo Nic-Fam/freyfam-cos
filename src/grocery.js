@@ -71,6 +71,50 @@ export function applyAvailability(items, unavailable = []) {
   return { kept, dropped };
 }
 
+// --- weekly run guard (persisted, like the digest) -------------------------
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { runOrder } from "./channels/browser.js";
+
+const STATE_PATH = () => process.env.GROCERY_STATE_PATH || "./data/grocery-state.json";
+export async function getLastGroceryRun() {
+  try { return JSON.parse(await readFile(STATE_PATH(), "utf8")).lastRunDate || null; } catch { return null; }
+}
+export async function setLastGroceryRun(date) {
+  await mkdir(dirname(STATE_PATH()), { recursive: true });
+  await writeFile(STATE_PATH(), JSON.stringify({ lastRunDate: date }, null, 2));
+}
+
+// Ralphs checkout step plan. The live selectors (sign-in via the saved Chrome
+// profile, clip the 4x coupon, add each item, pick the Friday-evening slot, drop
+// OOS items, pay) are captured during the live setup session into this JSON, then
+// templated with the order. Empty until then, so we never fake a checkout.
+const RALPHS_URL = process.env.RALPHS_URL || "https://www.ralphs.com";
+async function ralphsSteps(order) {
+  try {
+    const tmpl = JSON.parse(await readFile(process.env.RALPHS_STEPS_PATH || "./data/ralphs-steps.json", "utf8"));
+    return Array.isArray(tmpl.steps) ? tmpl.steps : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Place the assembled Ralphs order via the LOCAL browser (Lloyd's Mac, real IP,
+ * signed-in Chrome profile, extremely slow). Runs only after the family approves
+ * (it's the "grocery" confirmation kind). Until the live checkout steps are
+ * captured, it reports the approved order is ready for manual placement rather
+ * than faking a checkout.
+ */
+export async function placeRalphsOrder(order, { run = runOrder } = {}) {
+  const steps = await ralphsSteps(order);
+  if (!steps.length) {
+    return `Approved. Ralphs checkout automation isn't set up yet (live session pending), so place this order manually for now:\n${formatOrder(order)}`;
+  }
+  const r = await run({ url: RALPHS_URL, steps, pace: true });
+  return `Ralphs order placed (${order.deliveryWindow}). Steps: ${r.transcript.join(", ")}`;
+}
+
 /** Human summary of a planned order. */
 export function formatOrder(order) {
   if (!order || !order.items.length) return "The shopping list is empty, so there is nothing to order.";
