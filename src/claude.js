@@ -27,7 +27,37 @@ export function systemBlocks(stable, volatile, { ttl } = {}) {
 }
 
 /**
+ * Add an ephemeral cache breakpoint to the last block of the last message, so a
+ * multi-turn tool loop (and replayed conversation history) READS the earlier
+ * turns from cache (~10% of input) instead of reprocessing them at full price
+ * every turn. Skipped for a single fresh user message (nothing prior to cache,
+ * so the breakpoint would only pay a write premium with no later read).
+ * Returns a shallow copy; never mutates the caller's array/blocks.
+ */
+export function withConvoCacheBreakpoint(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1];
+  let content = last.content;
+  if (typeof content === "string") {
+    content = [{ type: "text", text: content, cache_control: { type: "ephemeral" } }];
+  } else if (Array.isArray(content) && content.length) {
+    content = content.slice();
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: "ephemeral" },
+    };
+  } else {
+    return messages; // empty/odd content -> leave as-is
+  }
+  out[out.length - 1] = { ...last, content };
+  return out;
+}
+
+/**
  * Single completion. Caches tools (last tool gets the breakpoint) and system.
+ * `cacheConversation` adds a third breakpoint on the growing message history
+ * (the agent loop sets it) so multi-turn runs don't re-pay for prior turns.
  */
 export async function complete({
   model,
@@ -35,8 +65,13 @@ export async function complete({
   messages,
   tools,
   maxTokens = 1024,
+  cacheConversation = false,
 }) {
-  const req = { model, max_tokens: maxTokens, messages };
+  const req = {
+    model,
+    max_tokens: maxTokens,
+    messages: cacheConversation ? withConvoCacheBreakpoint(messages) : messages,
+  };
   if (system) req.system = system;
   if (tools && tools.length) {
     // Mark the final tool so the whole tool block is treated as a cached prefix.
@@ -76,7 +111,9 @@ export async function agentLoop({
 }) {
   const convo = [...messages];
   for (let turn = 0; turn < maxTurns; turn++) {
-    const resp = await complete({ model, system, messages: convo, tools, maxTokens });
+    // cacheConversation: read prior turns/history from cache instead of
+    // reprocessing them at full price on every turn of the loop.
+    const resp = await complete({ model, system, messages: convo, tools, maxTokens, cacheConversation: true });
     const uses = toolUses(resp);
     if (uses.length === 0) return { text: textOf(resp), resp, convo };
 
