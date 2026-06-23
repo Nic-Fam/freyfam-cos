@@ -37,6 +37,23 @@ export function extractPrice(text) {
   return null;
 }
 
+/**
+ * Pick the best price from a readPage result, across sites. Prefer STRUCTURED data
+ * (schema.org JSON-LD, then product/OG meta, then microdata) because it's the actual
+ * listing price the site declares — the visible-text heuristic is the LAST resort
+ * (it can catch a shipping fee or a "you save $X" promo). This is what makes the
+ * watch work on TheRealReal, eBay, Poshmark, Vestiaire, 1stDibs, etc. without
+ * per-site selectors. Pure; `page` is a readPage() result. Returns a number or null.
+ */
+export function pickPrice(page) {
+  const s = (page && page.priceSignals) || {};
+  for (const v of [s.jsonLd, s.meta, s.microdata]) {
+    const n = Number(v);
+    if (v != null && Number.isFinite(n) && n > 0) return n;
+  }
+  return extractPrice(page && page.text);
+}
+
 /** Compare a fresh price to what we last saw / the target. Pure. */
 export function priceStatus(current, { lastPrice = null, targetPrice = null } = {}) {
   return {
@@ -96,7 +113,7 @@ export async function checkWatched({ read = readPage, now = () => new Date().toI
     let current = null;
     try {
       const page = await read(it.url);
-      current = extractPrice(page?.text);
+      current = pickPrice(page);
     } catch {
       continue; // a page that won't load this round is retried next slot
     }

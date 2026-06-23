@@ -17,6 +17,24 @@ test("extractPrice pulls the first plausible dollar amount", () => {
   assert.equal(w.extractPrice("no price here"), null);
 });
 
+test("pickPrice prefers structured signals over visible text, in priority order", () => {
+  // JSON-LD wins over everything (the real listing price, e.g. TheRealReal/eBay).
+  assert.equal(
+    w.pickPrice({ priceSignals: { jsonLd: 245, meta: 999, microdata: 888 }, text: "$12 shipping" }),
+    245
+  );
+  // Falls to meta, then microdata, as each higher signal is absent.
+  assert.equal(w.pickPrice({ priceSignals: { jsonLd: null, meta: 459.99, microdata: 888 } }), 459.99);
+  assert.equal(w.pickPrice({ priceSignals: { jsonLd: null, meta: null, microdata: 320 } }), 320);
+  // No structured signal -> text heuristic last resort.
+  assert.equal(w.pickPrice({ priceSignals: { jsonLd: null, meta: null, microdata: null }, text: "Now $480" }), 480);
+  // No signals object at all -> text.
+  assert.equal(w.pickPrice({ text: "Margiela Tabi $1,295.00" }), 1295);
+  // Zero/invalid structured values are ignored, not treated as a price.
+  assert.equal(w.pickPrice({ priceSignals: { jsonLd: 0, meta: null, microdata: null }, text: "$75" }), 75);
+  assert.equal(w.pickPrice({}), null);
+});
+
 test("priceStatus flags a drop and a target hit", () => {
   assert.deepEqual(w.priceStatus(450, { lastPrice: 500, targetPrice: 400 }), { dropped: true, hitTarget: false, delta: -50 });
   assert.deepEqual(w.priceStatus(390, { lastPrice: 500, targetPrice: 400 }), { dropped: true, hitTarget: true, delta: -110 });

@@ -48,13 +48,25 @@ unattended order.
    - Result: `placeRalphsOrder` runs the captured plan; the Friday trigger already
      assembles + asks for approval.
 
-**B. TheRealReal First Look** — capture how to read her First Look new-arrivals
-   feed while signed in; wire a `browse_page` of it into the 7:05a/4:05p resale
-   runs so early-access items surface (generic web search can't see them).
+**B. TheRealReal First Look** — DONE (built 2026-06-23). Captured the new-arrivals
+   grid selectors live (`product-card/brand`, `product-card/description`,
+   `product-price/final`; cards isolated by climbing from the `/products/` anchor)
+   and built `src/resale-feed.js` (`runFirstLookFeed`) + the generic
+   `readListingFeed` in `browser.js`. Wired into the 7:05a/4:05p resale runs in
+   `heartbeat.js`: it reads the feed locally and surfaces only NEW items (seeds
+   silently on first run so it doesn't dump the whole grid). GO-LIVE: sign Shelli's
+   Chrome profile into therealreal.com (First Look men's membership) so the feed
+   shows early-access items; until then it no-ops gracefully (a sign-in redirect
+   yields an empty feed). Optionally pin `TRR_FEED_URL` to her men's taxon.
 
-**C. Price-watch tuning** — open a couple of real listing pages and tune
-   `extractPrice` (src/watch.js) per site so the watched-item price is read
-   correctly.
+**C. Price-watch — DONE (built 2026-06-23), now MULTI-SITE.** Replaced the fragile
+   "first dollar sign in the text" heuristic. `readPage` now harvests structured
+   price signals in-page (schema.org JSON-LD `offers.price`, then product/OG meta,
+   then microdata `itemprop=price`), and `watch.js` `pickPrice` prefers those over
+   visible text. Verified live that the same path reads TheRealReal ($245) and eBay
+   ($459.99) with no per-site selectors, so any watched listing across the resale
+   sites reads correctly. No per-site tuning needed for sites that emit standard
+   product structured data (TheRealReal, eBay, Poshmark, Vestiaire, 1stDibs, Shopify).
 
 ## Risk to expect
 Kroger and CVS run bot-protection. A signed-in real-Chrome profile + slow,

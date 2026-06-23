@@ -94,10 +94,50 @@ function hostOf(url) {
   }
 }
 
+// Harvest a price from a page's STRUCTURED data, in the page context. These
+// signals are site-agnostic — schema.org Product/Offer JSON-LD, OpenGraph/product
+// meta tags, and microdata `itemprop=price` are emitted by nearly every resale and
+// retail site (verified live on TheRealReal and eBay), so a watcher reads the same
+// way everywhere instead of guessing at the "first dollar sign" in visible text.
+// Returns {jsonLd, meta, microdata} (numbers or null); watch.js picks among them.
+/* istanbul ignore next -- runs in the browser, not under node test coverage */
+function priceSignalsInPage() {
+  const num = (v) => {
+    if (v == null) return null;
+    const n = Number(String(v).replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  let jsonLd = null;
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const j = JSON.parse(s.textContent);
+      const nodes = Array.isArray(j) ? j : (j["@graph"] || [j]);
+      for (const node of nodes) {
+        if (!node) continue;
+        const ty = node["@type"];
+        if (!/product/i.test(Array.isArray(ty) ? ty.join() : (ty || ""))) continue;
+        const off = Array.isArray(node.offers) ? node.offers[0] : (node.offers || {});
+        const p = num(off && (off.price != null ? off.price : off.lowPrice));
+        if (p != null) { jsonLd = p; break; }
+      }
+    } catch { /* skip unparseable LD block */ }
+    if (jsonLd != null) break;
+  }
+  const meta = num(
+    document.querySelector('meta[property="product:price:amount"]')?.content ||
+    document.querySelector('meta[property="og:price:amount"]')?.content
+  );
+  const ip = document.querySelector('[itemprop="price"]');
+  const microdata = num(ip && (ip.getAttribute("content") || ip.textContent));
+  return { jsonLd, meta, microdata };
+}
+
 /**
- * READ-ONLY: open a page and return its title plus visible text. No clicks, no
- * form fills, no navigation past the one URL. Safe to call without confirmation.
- * Used for price / listing / availability checks (e.g. resale saved-search hits).
+ * READ-ONLY: open a page and return its title, visible text, AND structured price
+ * signals. No clicks, no form fills, no navigation past the one URL. Safe to call
+ * without confirmation. Used for price / listing / availability checks (e.g. resale
+ * saved-search hits). `priceSignals` lets a watcher read the price from structured
+ * data (works across sites) and fall back to the visible text only as a last resort.
  * @param {string} url
  * @param {{maxChars?:number, timeoutMs?:number}} [opts]
  */
@@ -108,7 +148,53 @@ export async function readPage(url, { maxChars = 4000, timeoutMs = 30000 } = {})
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     const title = await page.title();
     const text = (await page.evaluate(() => document.body?.innerText || "")).trim();
-    return { url, title, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+    let priceSignals = { jsonLd: null, meta: null, microdata: null };
+    try { priceSignals = await page.evaluate(priceSignalsInPage); } catch { /* signals are best-effort */ }
+    return { url, title, text: text.slice(0, maxChars), truncated: text.length > maxChars, priceSignals };
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * READ-ONLY: read a product LISTING feed (a grid/new-arrivals page) into structured
+ * rows. Cards are identified by their product anchor (`anchorPrefix`); for each
+ * unique anchor we climb to the smallest ancestor that still contains only that one
+ * anchor (its card) and pull the configured `fields` (a {key: cssSelector} map) from
+ * within it. This isolates one card without relying on a stable container class.
+ * Verified live on TheRealReal's new-arrivals grid. When signed in (the family's
+ * Chrome profile), this is how First Look early-access items surface.
+ * @param {string} url
+ * @param {{anchorPrefix?:string, fields?:Record<string,string>, max?:number, timeoutMs?:number}} [opts]
+ */
+export async function readListingFeed(url, { anchorPrefix = "/products/", fields = {}, max = 60, timeoutMs = 30000 } = {}) {
+  hostOf(url);
+  const page = await newPage();
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    // The grid is an SPA that paints async; wait briefly for the first card, but
+    // don't fail the run if it never appears (e.g. redirected to a sign-in wall).
+    try { await page.waitForSelector(`a[href^="${anchorPrefix}"]`, { timeout: 8000 }); } catch { /* empty feed */ }
+    const items = await page.evaluate(({ anchorPrefix, fields, max }) => {
+      const byHref = new Map();
+      for (const a of document.querySelectorAll(`a[href^="${anchorPrefix}"]`)) {
+        const href = a.getAttribute("href");
+        if (!href || byHref.has(href)) continue;
+        let card = a;
+        while (card.parentElement && card.parentElement.querySelectorAll(`a[href^="${anchorPrefix}"]`).length === 1) {
+          card = card.parentElement;
+        }
+        const row = { href };
+        for (const k of Object.keys(fields)) {
+          const el = card.querySelector(fields[k]);
+          row[k] = el ? (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim() : null;
+        }
+        byHref.set(href, row);
+        if (byHref.size >= max) break;
+      }
+      return [...byHref.values()];
+    }, { anchorPrefix, fields, max });
+    return { url, finalUrl: page.url(), items };
   } finally {
     await page.close();
   }

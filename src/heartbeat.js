@@ -10,6 +10,7 @@ import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
+import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun } from "./grocery.js";
 import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
@@ -116,11 +117,23 @@ async function maybeRunResale() {
           task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
         });
         if (res && !/^\s*NONE\s*\.?\s*$/i.test(res)) await notifyOwner(`New resale finds:\n${res}`);
+        // TheRealReal First Look feed: read the early-access new-arrivals grid via
+        // the LOCAL signed-in browser (Shelli's profile) and surface NEW items.
+        // Generic web search can't see member-only early access, so this is its
+        // own feed. No-ops gracefully (empty) if the profile isn't signed in.
+        let feedNew = 0;
+        try {
+          const feed = await runFirstLookFeed();
+          feedNew = feed.newItems.length;
+          if (feedNew) await notifyOwner(`First Look new arrivals:\n${formatFeedItems(feed.newItems)}`);
+        } catch (e) {
+          log.error("first-look feed failed", { reason: e.message });
+        }
         // Price-watch: re-check watched listings via the LOCAL browser (Lloyd) and
         // flag any drops / target hits. Done here on Lloyd, not the remote resale.
         const flagged = await checkWatched();
         if (flagged.length) await notifyOwner(`Price drop:\n${formatWatchFlags(flagged)}`);
-        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length });
+        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
