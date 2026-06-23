@@ -40,10 +40,20 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
 
   for (const item of media.slice(0, MAX_IMAGES)) {
     const ct = String(item?.contentType || "").toLowerCase().split(";")[0].trim();
-    if (!item?.url) { skipped.push({ reason: "no url" }); continue; }
-    if (!SUPPORTED.has(ct)) { skipped.push({ url: item.url, contentType: ct, reason: "unsupported type" }); continue; }
+    if (!SUPPORTED.has(ct)) { skipped.push({ url: item?.url, contentType: ct, reason: "unsupported type" }); continue; }
+    // Callers may pass already-downloaded bytes (e.g. Slack, where the file needs
+    // a bot-token download) instead of a fetchable URL.
+    if (item?.bytes != null) {
+      const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
+      if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
+      imageBlocks.push({ type: "image", source: { type: "base64", media_type: ct, data: buf.toString("base64") } });
+      continue;
+    }
+    if (!item?.url) { skipped.push({ reason: "no url or bytes" }); continue; }
     try {
-      const res = await fetchImpl(item.url, auth ? { headers: { Authorization: auth } } : {});
+      // Per-item headers (e.g. Slack Bearer) win; else the Twilio basic auth.
+      const headers = item.headers || (auth ? { Authorization: auth } : undefined);
+      const res = await fetchImpl(item.url, headers ? { headers } : {});
       if (!res.ok) { skipped.push({ url: item.url, reason: `HTTP ${res.status}` }); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_BYTES) { skipped.push({ url: item.url, reason: `too large (${buf.length}B)` }); continue; }

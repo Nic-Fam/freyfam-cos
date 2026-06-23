@@ -39,6 +39,29 @@ const truncate = (s, n) => {
   return s.length > n ? s.slice(0, n) + "…" : s;
 };
 
+// Download files shared in Slack. url_private needs a bot-token Bearer header.
+// Images -> media (vision blocks); everything else -> attachments (extractDocuments
+// keeps PDF/.ics/.vcf, skips the rest). Injectable for tests.
+export async function downloadSlackFiles(files = [], { token = SLACK.botToken, fetchImpl = fetch } = {}) {
+  const media = [];
+  const attachments = [];
+  for (const f of (Array.isArray(files) ? files : []).slice(0, 10)) {
+    const url = f?.url_private_download || f?.url_private;
+    const ct = String(f?.mimetype || "").toLowerCase();
+    if (!url || !token) continue;
+    try {
+      const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { log.warn("slack file download failed", { name: f.name, status: res.status }); continue; }
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (ct.startsWith("image/")) media.push({ contentType: ct, bytes });
+      else attachments.push({ name: f.name || "file", contentType: ct, bytes });
+    } catch (err) {
+      log.warn("slack file download error", { name: f?.name, reason: err.message });
+    }
+  }
+  return { media, attachments };
+}
+
 /** A #command line for one delegation event (the "watch Lloyd run the team" feed). */
 export function mirrorText(event) {
   if (!event) return "";
@@ -105,15 +128,23 @@ export async function startSlack() {
   const app = new App({ token: SLACK.botToken, appToken: SLACK.appToken, socketMode: true });
 
   app.message(async ({ message, client }) => {
-    if (message.subtype || message.bot_id) return; // ignore edits / bot / system
+    if (message.bot_id) return; // ignore our own / other bots
+    if (message.subtype && message.subtype !== "file_share") return; // ignore edits/joins, but KEEP file shares
     const text = message.text || "";
     const forced = agentForChannel(await channelName(client, message.channel));
     const transport = slackTransport(client, message.channel);
+    // Download any shared images/PDFs so Lloyd can read them (vision + document
+    // extraction), same as MMS photos and email attachments.
+    const { media, attachments } = await downloadSlackFiles(message.files);
+    const hasFiles = media.length || attachments.length;
     try {
-      if (forced) {
+      if (forced && !hasFiles) {
         await transport.reply(await delegate({ agent: forced, task: text }));
       } else {
-        await handleInbound({ from: message.user, body: text, channel: "slack", replyTo: message.channel }, transport);
+        await handleInbound(
+          { from: message.user, body: text || (hasFiles ? "(shared a file)" : ""), channel: "slack", replyTo: message.channel, media, attachments },
+          transport
+        );
       }
     } catch (err) {
       log.error("message handling failed", { reason: err.message });
