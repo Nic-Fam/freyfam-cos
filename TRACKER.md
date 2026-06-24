@@ -742,21 +742,21 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
   local outage. Only Lloyd + the local Macs (Frank/Steve) go dark.
 
 **Gaps to close (roughly priority order):**
-- [~] **Independent off-Mac liveness monitor (dead-man's-switch) — BUILT 2026-06-24,
-      daemon side LIVE; monitor needs deploy.** Daemon side DONE + deployed: `src/liveness.js`
-      upserts a {lastSeen,host,pid} row to the `cosliveness` Table every heartbeat tick
-      + on boot (verified the row lands). Monitor side BUILT (front-door
-      `src/functions/liveness-monitor.js`, committed not pushed): a 15-min Azure timer
-      reads that row and, if Lloyd hasn't checked in within ~45 min, emails the family
-      via `notifyFamily` (email — the working channel; Twilio is dead); de-dupes (one
-      alert + 6h re-alerts) and sends a "back online" note on recovery. **TO GO LIVE:
-      deploy the front door** (push → `deploy.yml` CI, a production deploy) so the timer
-      runs in Azure off the Mac. Tunables: `LIVENESS_STALE_MINUTES`, `LIVENESS_REALERT_MINUTES`.
-- [~] **Extend the inbound queue message TTL — BUILT 2026-06-24, needs deploy.** Front
-      door `cos-queue.js` now sets `messageTimeToLive` on enqueue via
-      `INBOUND_MESSAGE_TTL_SECONDS` (default 28 days; -1 = never expire), up from Azure's
-      7-day default, so a multi-day local outage loses no inbound. Committed (not pushed).
-      **TO GO LIVE: deploy the front door** (same push → CI as the monitor above).
+- [x] **Independent off-Mac liveness monitor (dead-man's-switch) — LIVE 2026-06-24.**
+      Daemon side: `src/liveness.js` upserts a {lastSeen,host,pid} row to the
+      `cosliveness` Table every heartbeat tick + on boot (verified the row lands).
+      Monitor side: front-door `src/functions/liveness-monitor.js` — a 15-min Azure
+      timer (DEPLOYED + registered; CI run 28122166274 success) reads that row and, if
+      Lloyd hasn't checked in within ~45 min, emails the family via `notifyFamily`
+      (email — the working channel; Twilio is dead); de-dupes (one alert + 6h re-alerts)
+      and sends a "back online" note on recovery. Tunables: `LIVENESS_STALE_MINUTES`,
+      `LIVENESS_REALERT_MINUTES`, `INBOUND_QUEUE...`. Zero Claude tokens, sub-cent Azure.
+      REMAINING (one-time confidence check): simulate an outage (stop the daemon ~45 min
+      or set `LIVENESS_STALE_MINUTES` low) and confirm the alert email actually arrives.
+- [x] **Extend the inbound queue message TTL — LIVE 2026-06-24.** Front door
+      `cos-queue.js` sets `messageTimeToLive` on enqueue via `INBOUND_MESSAGE_TTL_SECONDS`
+      (default 28 days; -1 = never expire), up from Azure's 7-day default, so a multi-day
+      local outage loses no inbound. DEPLOYED (same CI run). Applies to new enqueues.
 - [ ] **State durability / off-site backup (disk-failure protection).** Lloyd's brain
       + household state are local JSON under `data/` with NO backup — a disk/hardware
       failure loses memory, decisions, conversations, tasks, reminders, watch list,
