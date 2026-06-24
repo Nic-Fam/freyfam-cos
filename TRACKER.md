@@ -720,6 +720,76 @@ only Steve's execution backend changes.
 - Note: this is a capability upgrade too — Claude Code gives Steve real file/bash/build
   tools (vs the current text-only runner), which is what "build a household app" needs.
 
+### R. Resilience & disaster recovery (local hardware failure / power outage)  `[ ]`  — BIG ITEM, added 2026-06-24
+
+The system is local-first, so the Mac mini running Lloyd is a single point of failure:
+a power outage or hardware/disk failure takes down the host that owns the queue
+consumer, the confirmation gate, ALL outbound channels, the heartbeat (digest /
+reminders / resale runs / cost watchdog), and Lloyd's brain. This workstream makes
+the household survive that. The architecture already has the key strength — **inbound
+is buffered in the durable Azure queue while the Mac is dark** — but there are real
+gaps in state durability, auto-recovery, and (most urgent) independent monitoring.
+
+**What already protects us (don't rebuild):**
+- Inbound SMS/email queue in Azure Storage (durable) and the Mac PULLS — messages
+  wait safely while the Mac is off; the daemon drains them on restart. (workstream A/B)
+- launchd `RunAtLoad` + `KeepAlive` → the daemon auto-starts on boot and auto-restarts
+  on crash. (workstream H)
+- Dead-letter (poison) queue stops one bad message from starving the consumer. (H)
+- On-disk persisted state reloads across restarts: pending-approvals, digest-state,
+  tasks, reminders, etc. — a *power* blip loses nothing (a *disk* failure does — below).
+- Azure specialists (finance/resale/chef) are cloud scale-to-zero → unaffected by a
+  local outage. Only Lloyd + the local Macs (Frank/Steve) go dark.
+
+**Gaps to close (roughly priority order):**
+- [ ] **Independent off-Mac liveness monitor (dead-man's-switch) — MOST URGENT.** If
+      Lloyd dies, nothing tells the family: every current alarm path runs through Lloyd
+      himself or the (now-dead) Twilio SMS (the cost watchdog + subscription-renewer
+      both alert only via Twilio). Need an Azure-side check (timer Function) that
+      watches "is the inbound queue being drained / did the Mac check in within N
+      minutes" and alerts over a WORKING channel (email via Graph, or Slack) when Lloyd
+      goes silent. Pairs with a lightweight heartbeat-to-cloud the daemon writes (e.g.
+      touch a Blob / Table row each tick) so the monitor has a signal to watch.
+- [ ] **Extend the inbound queue message TTL.** Azure Storage Queue default TTL is 7
+      days; a longer outage silently drops queued messages. Set `messageTimeToLive` to
+      a long/infinite value on enqueue (front door `cos-queue.js`) so a multi-day
+      outage loses no inbound. Verify current TTL first.
+- [ ] **State durability / off-site backup (disk-failure protection).** Lloyd's brain
+      + household state are local JSON under `data/` with NO backup — a disk/hardware
+      failure loses memory, decisions, conversations, tasks, reminders, watch list,
+      pending approvals, etc. Two options (can do both): (a) periodic snapshot of
+      `data/*.json` to Azure Blob on a timer (cheap, off-site, simple restore); (b)
+      migrate Lloyd's stores onto the pluggable `src/stores/collection.js` Table backend
+      (the seam already exists — `COS_TABLE_*` — and the specialists already use it), so
+      recall/decisions/conversations survive disk loss like the specialists' do. (b) is
+      the durable end state; (a) is the quick win.
+- [ ] **Auto-power-on after an outage.** launchd restarts the daemon on boot, but the
+      Mac must boot itself first: set `sudo pmset -a autorestart 1` (power back →
+      Mac powers on) and confirm the firmware "start up after power failure" setting.
+      One-time host config; document in `deploy/setup/lloyd-mac-mini.md`.
+- [ ] **UPS + graceful shutdown.** A small uninterruptible power supply rides out short
+      outages and, on a long one, signals the Mac to shut down cleanly (avoids
+      mid-write corruption of the JSON state). macOS reads many UPS units natively
+      (Energy Saver → shut down on low battery). Cheap, high-value hardware mitigation.
+- [ ] **Outage-aware restart behavior.** On boot after a gap the daemon should: drain
+      the backed-up queue (already does), fire any reminders that came DUE during the
+      outage (verify `maybeFireReminders` catches past-due, doesn't skip them), keep the
+      digest/grocery window guards (already prevent stale/late sends), and optionally
+      send the owner a "I was offline HH:MM–HH:MM, check anything time-sensitive" notice
+      so a silent gap is visible. Needs a persisted "last seen" timestamp to detect the gap.
+- [ ] **(Heavier, optional) Cold-standby failover.** Once state lives in durable storage
+      (gap 3b), a second Mac with the same `.env`/creds can assume Lloyd's role. Guard
+      with a single-active lease (a Blob/Table lock) so two daemons don't both run the
+      heartbeat and double-fire proactive work; queue consumption itself is safe with
+      competing consumers (each message goes to one). Only worth it if uptime matters
+      more than the cost of a second always-on box.
+
+**Constraints:** the hard constraints don't change — outbound + confirmation stay on
+Lloyd wherever he runs; a standby is still one Lloyd at a time. Monitoring/heartbeat
+writes to the cloud must not carry family content (just liveness signals).
+- Parallel-safe: the monitor (Azure-side) + queue TTL (front-door repo) + backup timer
+  are largely independent; the store migration (3b) overlaps E/`collection.js`.
+
 ---
 
 ## Suggested parallel session plan
