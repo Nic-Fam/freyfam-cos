@@ -62,7 +62,22 @@ export async function runSpecialist(agent, task, { images } = {}) {
     }
   }
 
-  const { tools: specTools, handlers: specHandlers } = specialistTools(agent);
+  const { tools: specTools, handlers: rawHandlers } = specialistTools(agent);
+  // Trace each tool call so a runaway loop (the one that ends in "max tool turns
+  // reached") is visible: we log the tool name before invoking it, and any failure.
+  // Names only, never inputs/results, so nothing sensitive is logged.
+  const specHandlers = {};
+  for (const [name, fn] of Object.entries(rawHandlers)) {
+    specHandlers[name] = async (input) => {
+      log.info("tool call", { agent, tool: name });
+      try {
+        return await fn(input);
+      } catch (e) {
+        log.warn("tool call failed", { agent, tool: name, error: String(e?.message || e) });
+        throw e;
+      }
+    };
+  }
   // When the inbound turn carried photos (MMS), the chief forwards the same image
   // blocks so the specialist sees the actual picture (Shey an item, Carmine a
   // receipt), not just Lloyd's description. Plain text task otherwise.
