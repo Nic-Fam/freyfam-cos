@@ -11,7 +11,8 @@ import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
-import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems } from "./grocery.js";
+import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
+import { formatResolution } from "./grocery-match.js";
 import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
@@ -168,12 +169,21 @@ async function maybeRunGroceryOrder() {
     if (!run) return;
     await setLastGroceryRun(date); // record before staging so a slow run can't double-propose
     // Source items from BOTH the local shopping list AND the M365 To Do "Ralphs"
-    // list the Alexa "Frey" skill / fridge bridge fills (workstream: Alexa->grocery loop).
+    // list the Alexa "Frey" skill / fridge bridge fills (Alexa->grocery loop Phase 1).
     const items = await gatherGroceryItems({ store: "Ralphs", local: await listShopping() });
     if (!items.length) { log.info("grocery: skipped, empty shopping list", { date }); return; }
-    const order = assembleOrder(items);
-    await requestConfirmation(`Friday Ralphs order (${order.count} items, ${order.deliveryWindow}, applying ${order.coupons.join(", ")}):\n${formatOrder(order)}`, "grocery", order);
-    log.info("grocery order proposed", { date, items: order.count });
+    // Phase 2: resolve each item to the exact product from purchase history. With no
+    // history available yet (selectors pending), this is a no-op fall-back to free-text.
+    const { orderItems, resolutions, history } = await resolveGroceryOrder({ items, store: "Ralphs" });
+    const order = assembleOrder(orderItems);
+    const note = history.length ? formatResolution(resolutions) : "";
+    await requestConfirmation(
+      `Friday Ralphs order (${order.count} items, ${order.deliveryWindow}, applying ${order.coupons.join(", ")}):\n${formatOrder(order)}` +
+        (note ? `\n\nMatched to your usual products from purchase history:\n${note}` : ""),
+      "grocery",
+      order
+    );
+    log.info("grocery order proposed", { date, items: order.count, matched: resolutions.filter((r) => r.matched).length });
   } catch (err) {
     log.error("grocery order failed", { reason: err.message });
   }

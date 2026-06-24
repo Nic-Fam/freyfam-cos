@@ -74,8 +74,48 @@ export function applyAvailability(items, unavailable = []) {
 // --- weekly run guard (persisted, like the digest) -------------------------
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { runOrder } from "./channels/browser.js";
+import { runOrder, readListingFeed } from "./channels/browser.js";
 import { listTodoTasks } from "./channels/graph.js";
+import { resolveAgainstHistory } from "./grocery-match.js";
+
+// Ralphs "Buy It Again" / purchase history, read via the local signed-in browser, so
+// a vague item ("milk") resolves to the EXACT product the family buys (Phase 2).
+// SELECTORS PENDING a live capture session (like the checkout flow): the URL + tile
+// selectors below are best-guess defaults. Until confirmed this returns [] and the
+// order gracefully falls back to free-text (Phase-1 behavior) — never a wrong product.
+const BUY_AGAIN_URL = process.env.RALPHS_BUY_AGAIN_URL || "https://www.ralphs.com/mypurchases";
+export async function readPurchaseHistory({ store = "Ralphs", read = readListingFeed } = {}) {
+  if (store !== "Ralphs") return []; // only Ralphs history is wired today
+  try {
+    const res = await read(BUY_AGAIN_URL, {
+      anchorPrefix: process.env.RALPHS_PRODUCT_ANCHOR || "/p/",
+      fields: { name: process.env.RALPHS_PRODUCT_NAME_SEL || '[data-testid="cart-page-item-description"]' },
+      max: 200,
+    });
+    return (res.items || []).filter((i) => i.name).map((i) => ({ name: i.name, productUrl: i.href }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve gathered items against purchase history into order-ready items. Each order
+ * item carries the matched product name (what to actually order) or the free-text
+ * request (searched at checkout when there's no confident history match). `history`
+ * injectable for tests. Returns { resolutions, orderItems, history }.
+ */
+export async function resolveGroceryOrder({ items = [], store = "Ralphs", history } = {}) {
+  const hist = history ?? (await readPurchaseHistory({ store }));
+  const resolutions = resolveAgainstHistory(items, hist);
+  const orderItems = resolutions.map((r) => ({
+    item: r.matched ? r.matched.name : r.item, // order the exact product, else free-text
+    requested: r.item,
+    matched: !!r.matched,
+    quantity: r.quantity,
+    note: r.note,
+  }));
+  return { resolutions, orderItems, history: hist };
+}
 
 /**
  * Merge the family's two grocery sources into one item list, deduped by name:
