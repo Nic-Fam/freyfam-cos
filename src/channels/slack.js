@@ -51,7 +51,21 @@ export async function downloadSlackFiles(files = [], { token = SLACK.botToken, f
     try {
       const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) { log.warn("slack file download failed", { name: f.name, status: res.status }); continue; }
+      const respCt = String(res.headers?.get?.("content-type") || "").toLowerCase();
       const bytes = Buffer.from(await res.arrayBuffer());
+      // Slack serves `url_private` as a 200 + HTML sign-in page (NOT the file) when
+      // the bot lacks the `files:read` scope or isn't a member of the channel.
+      // Socket Mode connecting fine does NOT imply file-download access. Trusting the
+      // declared mimetype here would push that HTML off as an "image", which then
+      // fails to sniff downstream ("unrecognized image bytes"). Detect it and skip
+      // with an actionable reason instead.
+      const looksHtml = respCt.includes("text/html") || /^\s*<(?:!doctype|html)/i.test(bytes.toString("latin1", 0, 64));
+      if (looksHtml) {
+        log.warn("slack file download returned HTML, not the file — bot likely missing files:read scope or not in the channel", {
+          name: f.name, status: res.status, respContentType: respCt, bytes: bytes.length,
+        });
+        continue;
+      }
       if (ct.startsWith("image/")) media.push({ contentType: ct, bytes });
       else attachments.push({ name: f.name || "file", contentType: ct, bytes });
     } catch (err) {

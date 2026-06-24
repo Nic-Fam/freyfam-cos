@@ -1,7 +1,46 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { agentForChannel, mirrorText, approvalBlocks } from "../src/channels/slack.js";
+import { agentForChannel, mirrorText, approvalBlocks, downloadSlackFiles } from "../src/channels/slack.js";
 import { foldThread } from "../src/conversation.js";
+
+// fetch stub: serve `body` (Buffer) with a content-type header + status.
+function fetchStub(body, { status = 200, contentType = "" } = {}) {
+  return async () => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (h) => (h.toLowerCase() === "content-type" ? contentType : null) },
+    arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+  });
+}
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+
+test("downloadSlackFiles keeps a real image (sniffed downstream)", async () => {
+  const { media, attachments } = await downloadSlackFiles(
+    [{ url_private: "https://files.slack/x", mimetype: "image/jpeg", name: "a.jpg" }],
+    { token: "xoxb-test", fetchImpl: fetchStub(JPEG, { contentType: "image/jpeg" }) }
+  );
+  assert.equal(media.length, 1);
+  assert.equal(attachments.length, 0);
+  assert.ok(Buffer.isBuffer(media[0].bytes));
+});
+
+test("downloadSlackFiles skips a 200+HTML sign-in page instead of passing it off as an image", async () => {
+  // The files:read-scope / not-in-channel failure mode: Slack returns 200 + HTML.
+  const html = Buffer.from("<!DOCTYPE html>\n<html><head><title>Sign in</title></head></html>");
+  const byHeader = await downloadSlackFiles(
+    [{ url_private: "https://files.slack/x", mimetype: "image/jpeg", name: "a.jpg" }],
+    { token: "xoxb-test", fetchImpl: fetchStub(html, { contentType: "text/html; charset=utf-8" }) }
+  );
+  assert.equal(byHeader.media.length, 0, "HTML must not be pushed as an image");
+  assert.equal(byHeader.attachments.length, 0);
+
+  // Even if the content-type header lies (says image), the body is sniffed as HTML.
+  const bySniff = await downloadSlackFiles(
+    [{ url_private: "https://files.slack/x", mimetype: "image/jpeg", name: "a.jpg" }],
+    { token: "xoxb-test", fetchImpl: fetchStub(html, { contentType: "image/jpeg" }) }
+  );
+  assert.equal(bySniff.media.length, 0);
+});
 
 test("foldThread leaves the task unchanged when there is no thread history", () => {
   assert.equal(foldThread([], "find me a deal"), "find me a deal");

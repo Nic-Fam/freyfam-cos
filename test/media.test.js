@@ -84,6 +84,17 @@ test("bytes that aren't a supported image are skipped, not sent on the declared 
   assert.match(skipped[0].reason, /unrecognized/);
 });
 
+test("unrecognized bytes carry a debug byte-preview for diagnosis (not shown to the family)", async () => {
+  // An HTML sign-in page sniffs as none of the image types; the skip entry should
+  // carry a hex+ascii preview so a download/scope failure is identifiable in logs.
+  const html = Buffer.from("<!DOCTYPE html><html>nope</html>");
+  const { imageBlocks, skipped } = await fetchInboundMedia([{ bytes: html, contentType: "image/jpeg" }], { twilio });
+  assert.equal(imageBlocks.length, 0);
+  assert.ok(skipped[0].debug, "skip entry has a debug field");
+  assert.equal(skipped[0].debug.len, html.length);
+  assert.match(skipped[0].debug.ascii, /<!DOCTYPE html/);
+});
+
 test("sniffImageType reads the type from the bytes, not the name", () => {
   assert.equal(sniffImageType(PNG), "image/png");
   assert.equal(sniffImageType(JPEG), "image/jpeg");

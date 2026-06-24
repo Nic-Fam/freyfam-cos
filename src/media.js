@@ -95,7 +95,15 @@ async function prepareImage(buf, declaredCt) {
     if (jpeg) return { reason: `HEIC transcoded but too large (${jpeg.length}B)` };
     return { reason: `HEIC/HEIF image (declared ${declaredCt}); could not transcode, resend as JPEG or PNG` };
   }
-  return { reason: `unrecognized image bytes (declared ${declaredCt}; not jpeg/png/gif/webp)` };
+  // Not a supported image, not HEIC. Carry a short byte preview (hex + ascii) for
+  // the LOG only (not the family-facing reason) so the next failure is self-
+  // diagnosing: HTML "<!doctype..." => a failed/forbidden download; an ftyp brand
+  // we don't list => a HEIC/AVIF variant; high-entropy bytes => truncation/corruption.
+  const head = buf.subarray(0, 16);
+  return {
+    reason: `unrecognized image bytes (declared ${declaredCt}; not jpeg/png/gif/webp)`,
+    debug: { len: buf.length, hex: head.toString("hex"), ascii: head.toString("latin1").replace(/[^\x20-\x7e]/g, ".") },
+  };
 }
 
 function basicAuth(twilio) {
@@ -125,7 +133,7 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       const buf = Buffer.isBuffer(item.bytes) ? item.bytes : Buffer.from(item.bytes, "base64");
       if (buf.length > MAX_BYTES) { skipped.push({ reason: `too large (${buf.length}B)` }); continue; }
       const r = await prepareImage(buf, ct);
-      if (!r.mediaType) { skipped.push({ reason: r.reason }); continue; }
+      if (!r.mediaType) { skipped.push({ reason: r.reason, ...(r.debug ? { debug: r.debug } : {}) }); continue; }
       imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: r.bytes.toString("base64") } });
       continue;
     }
@@ -143,7 +151,7 @@ export async function fetchInboundMedia(media = [], { fetchImpl = fetch, twilio 
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_BYTES) { skipped.push({ url: item.url, reason: `too large (${buf.length}B)` }); continue; }
       const r = await prepareImage(buf, ct);
-      if (!r.mediaType) { skipped.push({ url: item.url, reason: r.reason }); continue; }
+      if (!r.mediaType) { skipped.push({ url: item.url, reason: r.reason, ...(r.debug ? { debug: r.debug } : {}) }); continue; }
       imageBlocks.push({ type: "image", source: { type: "base64", media_type: r.mediaType, data: r.bytes.toString("base64") } });
     } catch (err) {
       skipped.push({ url: item.url, reason: err.message });
