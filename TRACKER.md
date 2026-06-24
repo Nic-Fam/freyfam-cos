@@ -759,15 +759,19 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
       `cos-queue.js` sets `messageTimeToLive` on enqueue via `INBOUND_MESSAGE_TTL_SECONDS`
       (default 28 days; -1 = never expire), up from Azure's 7-day default, so a multi-day
       local outage loses no inbound. DEPLOYED (same CI run). Applies to new enqueues.
-- [ ] **State durability / off-site backup (disk-failure protection).** Lloyd's brain
-      + household state are local JSON under `data/` with NO backup — a disk/hardware
-      failure loses memory, decisions, conversations, tasks, reminders, watch list,
-      pending approvals, etc. Two options (can do both): (a) periodic snapshot of
-      `data/*.json` to Azure Blob on a timer (cheap, off-site, simple restore); (b)
-      migrate Lloyd's stores onto the pluggable `src/stores/collection.js` Table backend
-      (the seam already exists — `COS_TABLE_*` — and the specialists already use it), so
-      recall/decisions/conversations survive disk loss like the specialists' do. (b) is
-      the durable end state; (a) is the quick win.
+- [x] **State durability / off-site backup (disk-failure protection) — DONE 2026-06-24
+      (option a).** `src/backup.js` snapshots all `data/*.json` (incl. the 1.6MB
+      brain.json + per-agent decision logs) to Azure Blob (`cos-state-backup/latest/`)
+      on a slow cadence (default 6h, wired into the heartbeat via `maybeBackup`),
+      excluding the regenerable 87MB model cache. Blob not Table because brain.json
+      exceeds Table's 64KB/property + 1MB/entity limits. Best-effort (never throws).
+      Restore after a disk loss: `npm run restore` (data/restore-backup.mjs) pulls the
+      latest snapshot back into data/. VERIFIED: live backup wrote 23 files (2.0MB),
+      model cache excluded, dry-run restore lists them. `selectBackupFiles` unit-tested.
+      (Deferred option b — migrating Lloyd's stores onto the MI Table backend — remains
+      the eventual durable end state; the Blob snapshot is the quick, complete win.)
+      DEPLOY NOTE: takes effect on the next daemon restart (the running process predates
+      backup.js); held off here because a parallel session had the working tree.
 - [ ] **Auto-power-on after an outage.** launchd restarts the daemon on boot, but the
       Mac must boot itself first: set `sudo pmset -a autorestart 1` (power back →
       Mac powers on) and confirm the firmware "start up after power failure" setting.
