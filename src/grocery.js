@@ -75,6 +75,41 @@ export function applyAvailability(items, unavailable = []) {
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { runOrder } from "./channels/browser.js";
+import { listTodoTasks } from "./channels/graph.js";
+
+/**
+ * Merge the family's two grocery sources into one item list, deduped by name:
+ *   - the LOCAL shopping list (items Lloyd/Carmine added via tools), and
+ *   - the M365 To Do store list (items the family added by voice at the fridge via
+ *     the Alexa "Frey" skill / native-list bridge).
+ * Pure (exported for tests). `localItems` is [{item,quantity,note}]; `todoTitles`
+ * is the raw To Do task titles. Local entries win on dupes (they carry qty/notes).
+ */
+export function mergeGroceryItems(localItems = [], todoTitles = []) {
+  const out = [];
+  const seen = new Set();
+  const add = (item, extra = {}) => {
+    const name = String(item || "").trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) return;
+    seen.add(key);
+    out.push({ item: name, ...extra });
+  };
+  for (const it of localItems || []) add(it.item, { quantity: it.quantity, note: it.note, source: "list" });
+  for (const t of todoTitles || []) add(t, { source: "alexa" });
+  return out;
+}
+
+/**
+ * Gather the grocery items for a store: local shopping list + the M365 To Do list
+ * of that store name ("Ralphs"/"Costco"). The To Do read is best-effort — a Graph
+ * hiccup must not drop the local list. `read`/`local` injectable for tests.
+ */
+export async function gatherGroceryItems({ store = "Ralphs", local = [], read = listTodoTasks } = {}) {
+  let todo = [];
+  try { todo = (await read(store)).map((t) => t.title); } catch { todo = []; }
+  return mergeGroceryItems(local, todo);
+}
 
 const STATE_PATH = () => process.env.GROCERY_STATE_PATH || "./data/grocery-state.json";
 export async function getLastGroceryRun() {

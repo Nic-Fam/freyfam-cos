@@ -14,7 +14,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { sendSms, notifyOwner } from "./channels/twilio.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
@@ -260,6 +260,12 @@ const tools = [
     name: "list_shopping",
     description: "Show the family shopping list. Use for 'what's on the shopping list?' / 'what do we need?'.",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "read_store_list",
+    description:
+      "Read a store's Microsoft To Do shopping list (the list the family fills by voice at the fridge via Alexa). store is 'Ralphs' or 'Costco'. Use for 'what's on the Ralphs/Costco list?'. Read-only.",
+    input_schema: { type: "object", properties: { store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] } }, required: ["store"] },
   },
   {
     name: "remove_shopping_item",
@@ -586,6 +592,14 @@ function toolHandlers({ images, onDelegate } = {}) {
       }
     },
     list_shopping: async () => formatShopping(await listShopping()),
+    read_store_list: async ({ store }) => {
+      try {
+        const items = await listTodoTasks(store);
+        return items.length ? `${store} list (${items.length}):\n${items.map((i) => `- ${i.title}`).join("\n")}` : `The ${store} list is empty.`;
+      } catch (e) {
+        return `Could not read the ${store} list: ${e.message}`;
+      }
+    },
     remove_shopping_item: async ({ item, clearAll }) => {
       if (clearAll) return `Cleared the shopping list (${await clearShopping()} items).`;
       const it = await removeShoppingItem(item);

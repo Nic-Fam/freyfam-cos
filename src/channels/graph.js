@@ -85,6 +85,34 @@ export async function fetchAttachments(messageId) {
     }));
 }
 
+// M365 To Do shopping lists. The Alexa "Frey" skill (and/or a native-list → IFTTT
+// bridge) writes items the family adds at the fridge into named To Do lists
+// ("Ralphs" / "Costco" / "Amazon Shopping List") under TODO_USER. Lloyd/Chef read
+// them here so Alexa-added items flow into the grocery order. App-only Graph, same
+// app the front door already uses for To Do (Tasks application permission).
+const TODO_USER = () => process.env.GRAPH_TODO_USER || "nic@freyfam.com";
+
+async function todoListId(listName, user) {
+  const lists = await graph().api(`/users/${user}/todo/lists`).get();
+  const l = (lists.value || []).find((x) => String(x.displayName).toLowerCase() === String(listName).toLowerCase());
+  return l ? l.id : null;
+}
+
+/** Open (non-completed) items in a named To Do list. Returns [{id, title, listId}]. */
+export async function listTodoTasks(listName, { user = TODO_USER() } = {}) {
+  const listId = await todoListId(listName, user);
+  if (!listId) return [];
+  const res = await graph().api(`/users/${user}/todo/lists/${listId}/tasks`).top(100).get();
+  return (res.value || [])
+    .filter((t) => t.status !== "completed")
+    .map((t) => ({ id: t.id, title: t.title, listId }));
+}
+
+/** Mark a To Do task completed (used to clear items once they're ordered). */
+export async function completeTodoTask(listId, taskId, { user = TODO_USER() } = {}) {
+  await graph().api(`/users/${user}/todo/lists/${listId}/tasks/${taskId}`).patch({ status: "completed" });
+}
+
 // --- Calendar (workstream: close the scheduling gap / Genet's "Claire") --------
 // The real family schedule lives on the family members' OWN calendars (nic@ +
 // shelli@), not on cos@. listEvents MERGES those (GRAPH.calendars) via
