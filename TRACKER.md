@@ -271,11 +271,17 @@ resolved to the EXACT products they buy via order history. Costco same idea (lat
       To Do `Ralphs` (fridge-visible, natural phrasing; recommended) vs the "Frey"
       skill ("ask Frey to add X to Ralphs"; cleaner Ralphs/Costco routing, no fridge
       view). Either lands in the SAME To Do list Phase 1 reads, so it doesn't block code.
-- [ ] **Phase 2 — bounce against order history.** For each To Do item ("milk"),
-      resolve to the exact product the family buys by matching the Ralphs "Buy It
-      Again"/purchase-history page (the live signed-in browser) before assembling +
-      placing the Friday order. Net-new; needs live selector capture like the order flow.
-      On a placed order, mark the To Do items completed (`completeTodoTask`) to clear them.
+- [~] **Phase 2 — bounce against order history (matcher DONE 2026-06-24; fetch
+      pending live capture).** `src/grocery-match.js` resolves a free-text item to the
+      exact product via token-coverage scoring against purchase history (phrase bonus;
+      ties broken by frequency/recency; true ties flagged ambiguous; below threshold =>
+      free-text fallback). `grocery.js resolveGroceryOrder` wires it into the Friday
+      assembly + the approval prompt shows "oat milk -> Simple Truth Organic Oat Milk".
+      Fully unit-tested. REMAINING: `readPurchaseHistory` reads the Ralphs "Buy It
+      Again" page via the signed-in browser — URL + tile selectors are best-guess and
+      need ONE live capture session (like the checkout flow); until then it returns []
+      and the order behaves like Phase 1 (free-text), never a wrong product. After a
+      placed order, mark the To Do items completed (`completeTodoTask`) to clear them.
 - [ ] **Phase 3 — Costco.** Read the Costco To Do list + match against Costco purchase
       history + Costco ordering. Biggest lift (no Costco automation yet; warehouse buys
       aren't always in the online history). Deferred.
