@@ -12,6 +12,7 @@
     "once": "node src/daemon.js --heartbeat-once",
     "seed": "node data/seed.mjs",
     "reembed": "node data/reembed.mjs",
+    "restore": "node --env-file=.env data/restore-backup.mjs",
     "specialist": "node deploy/specialists/local-server.mjs",
     "test": "EMBEDDINGS_PROVIDER=none node --test"
   },
@@ -19,6 +20,7 @@
     "@anthropic-ai/sdk": "^0.40.0",
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.5.0",
+    "@azure/storage-blob": "^12.33.0",
     "@azure/storage-queue": "^12.25.0",
     "@huggingface/transformers": "^3.0.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
