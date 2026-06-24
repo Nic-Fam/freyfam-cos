@@ -15,6 +15,7 @@ import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, s
 import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
+import { recordLiveness } from "./liveness.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -163,6 +164,9 @@ async function maybeRunGroceryOrder() {
 }
 
 export async function tick() {
+  // Dead-man's-switch heartbeat FIRST (workstream R): record that Lloyd is alive so
+  // the off-Mac monitor can alert the family if this stops. Best-effort, never throws.
+  await recordLiveness();
   await maybeCheckCosts();
   await maybeRunDigest();
   await maybeFireReminders();
