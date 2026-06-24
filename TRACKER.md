@@ -780,12 +780,14 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
       outages and, on a long one, signals the Mac to shut down cleanly (avoids
       mid-write corruption of the JSON state). macOS reads many UPS units natively
       (Energy Saver → shut down on low battery). Cheap, high-value hardware mitigation.
-- [ ] **Outage-aware restart behavior.** On boot after a gap the daemon should: drain
-      the backed-up queue (already does), fire any reminders that came DUE during the
-      outage (verify `maybeFireReminders` catches past-due, doesn't skip them), keep the
-      digest/grocery window guards (already prevent stale/late sends), and optionally
-      send the owner a "I was offline HH:MM–HH:MM, check anything time-sensitive" notice
-      so a silent gap is visible. Needs a persisted "last seen" timestamp to detect the gap.
+- [x] **Outage-aware restart behavior — DONE 2026-06-24.** `src/outage.js`: the
+      heartbeat stamps a local last-seen each tick; on the first tick after (re)start,
+      if the gap exceeds ~30 min (`OUTAGE_THRESHOLD_MS`) Lloyd notifies the owner he was
+      offline from X to Y and is catching up — a silent multi-hour gap becomes visible.
+      VERIFIED by tests: drain the queue (already does), past-due reminders fire on the
+      catch-up tick (`getDueReminders` returns fireAt<=now — confirmed), digest/grocery
+      window guards already prevent stale/late sends. `assessGap`/`formatDuration` +
+      boot-check unit-tested. Deploys on the next daemon restart.
 - [ ] **(Heavier, optional) Cold-standby failover.** Once state lives in durable storage
       (gap 3b), a second Mac with the same `.env`/creds can assume Lloyd's role. Guard
       with a single-active lease (a Blob/Table lock) so two daemons don't both run the
