@@ -845,6 +845,14 @@ local harness + `npm run specialist` added; `.env.example` documents per-tier UR
 - [ ] **Decommission any dev/security Azure apps** if a prior run provisioned them
       (`freyfam-cos-dev`, `freyfam-cos-security`) — they should not exist in Azure now.
 - [ ] Set LAN URLs + keys for dev/security in Lloyd's `.env` once the Macs are online.
+- [ ] **Seed each local box's brain** when provisioning it. `data/brain.json` and
+      `data/seed-family-domains.json` are gitignored (sensitive household data), so they
+      do NOT arrive with `git clone`. Transfer the seed source out of band (AirDrop/scp/
+      USB), then `npm run seed` + `node data/seed-family-identity.mjs` + `npm run seed
+      data/seed-family-domains.json` (or copy a populated `brain.json` over). Steps are in
+      each machine's setup doc (`deploy/setup/lloyd-mac-mini.md` §5 is canonical;
+      `frank-mac-mini.md` §4b, `steve-macbook.md` §4b). Recall filters by agent, so each
+      box only surfaces its own agent-scoped notes plus shared facts.
 
 ### Cost & isolation model (CONFIRMED 2026-06-19)
 

@@ -136,6 +136,24 @@ FAMILY_TZ=America/Los_Angeles
 > app he maintains). Claude Code's file/bash tools act there — never on the family's
 > behalf; outbound + confirmation still live only on Lloyd.
 
+## 4b. Seed Steve's brain (recommended)
+
+`data/brain.json` and `data/seed-family-domains.json` are **gitignored** (sensitive
+household data) so `git clone` does not bring them. Transfer the seed source **out of
+band** (AirDrop / scp / USB), never via git, then seed — recall filters by agent, so
+this box only surfaces `dev`-scoped notes (the handoff pointer, stack, dev approach,
+your Claude Code backend, dev hard rules) plus shared facts:
+
+```bash
+npm run seed                                # shared starter facts (in git)
+node data/seed-family-identity.mjs          # family identity backfill
+npm run seed data/seed-family-domains.json  # surfaces Steve's dev-scoped + shared notes
+```
+
+Idempotent; safe to re-run. (Or copy a populated `data/brain.json` over directly.) The
+dev handoff itself, `docs/STEVE_HANDOFF.md`, IS in git. See Lloyd's setup §5 for the
+canonical explanation.
+
 ## 5. Run it (foreground first)
 
 ```bash

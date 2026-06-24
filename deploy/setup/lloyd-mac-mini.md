@@ -125,14 +125,29 @@ COS_SPECIALIST_KEY_CHEF=<function key>
 > `COS_SPECIALIST_URL_DEV` blank until Steve's MacBook is up, and Steve just runs
 > inside Lloyd meanwhile.
 
-## 5. Seed Lloyd's brain (optional but recommended)
+## 5. Seed this box's brain (recommended)
+
+The brain (`data/brain.json`) and the durable family seed (`data/seed-family-domains.json`)
+are **gitignored** — they hold sensitive household data (finances, home-security
+topology, sizes) and must never reach GitHub. So a fresh `git clone` does **not** bring
+them. Transfer the seed source to this machine **out of band** (AirDrop / scp / USB),
+never via git, then seed:
 
 ```bash
-npm run seed     # loads data/seed-notes.json into the local brain (idempotent)
+npm run seed                              # data/seed-notes.json (in git): shared starter facts
+node data/seed-family-identity.mjs        # family identity backfill (emails, profiles, logistics)
+npm run seed data/seed-family-domains.json  # per-specialist family data (chef/security/resale/finance/dev + shared)
 ```
 
-Embeddings download a ~90MB model once to `data/models` on first real run (local,
-on-device; no key). To skip semantic recall set `EMBEDDINGS_PROVIDER=none`.
+All seeds are idempotent (dedupe by exact text), so re-running is safe. Recall filters
+by agent, so seeding the full `seed-family-domains.json` on any box only surfaces that
+box's agent-scoped notes plus shared facts. Embeddings download a ~90MB model once to
+`data/models` on first real run (local, on-device; no key); set
+`EMBEDDINGS_PROVIDER=none` to skip semantic recall.
+
+> Alternatively, copy a populated `data/brain.json` over directly (same out-of-band
+> transfer) instead of re-running the seeds — useful to mirror Lloyd's current brain to
+> a new box. Keep `BRAIN_PATH` pointed at this machine's local copy.
 
 ## 6. First live run (foreground)
 
