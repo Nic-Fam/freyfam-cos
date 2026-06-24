@@ -290,24 +290,33 @@ export async function replyToMessage(messageId, text) {
  * tool) confirm with the owner first, which covers work-domain sends under the
  * 2026-06-20 policy (no hard block; confirmation is the gate).
  */
-export async function sendMail({ to, subject, body, html = false }) {
-  // Accept an array OR a comma/semicolon-separated string. Lloyd often passes
-  // "a@x.com, b@y.com" as one string; without splitting, Graph treats the whole
-  // string as a single recipient and rejects it ("recipient not resolved").
-  const recipients = (Array.isArray(to) ? to : String(to ?? "").split(/[,;]/))
-    .map((a) => a.trim())
-    .filter(Boolean);
+// Build the Graph `message` object. Pure + exported so the recipient logic (the
+// comma-split + cc/bcc handling that the "loop Nic in" fix depends on) is unit-
+// testable without a network call. Accepts an array OR a comma/semicolon string
+// per field: Lloyd often passes "a@x.com, b@y.com" as one string, and without
+// splitting Graph treats the whole string as one recipient and rejects it.
+export function buildMailMessage({ to, subject, body, cc, bcc, html = false }) {
+  const addrs = (v) => (Array.isArray(v) ? v : String(v ?? "").split(/[,;]/)).map((a) => a.trim()).filter(Boolean);
+  const box = (list) => list.map((address) => ({ emailAddress: { address } }));
+  const recipients = addrs(to);
   if (!recipients.length) throw new Error("sendMail: no valid recipient");
+  const message = {
+    subject,
+    body: { contentType: html ? "HTML" : "Text", content: body },
+    toRecipients: box(recipients),
+  };
+  const ccList = addrs(cc);
+  const bccList = addrs(bcc);
+  if (ccList.length) message.ccRecipients = box(ccList);
+  if (bccList.length) message.bccRecipients = box(bccList);
+  return message;
+}
+
+export async function sendMail({ to, subject, body, cc, bcc, html = false }) {
+  const message = buildMailMessage({ to, subject, body, cc, bcc, html });
   await graph()
     .api(`/users/${GRAPH.mailbox}/sendMail`)
-    .post({
-      message: {
-        subject,
-        body: { contentType: html ? "HTML" : "Text", content: body },
-        toRecipients: recipients.map((address) => ({ emailAddress: { address } })),
-      },
-      saveToSentItems: true,
-    });
+    .post({ message, saveToSentItems: true });
 }
 
 // --- Clickable email approvals (Approve/Deny buttons) -----------------------

@@ -160,10 +160,17 @@ const tools = [
   },
   {
     name: "send_email",
-    description: "Send an email from the assistant mailbox. High-stakes: requires owner approval.",
+    description:
+      "Send an email from the assistant mailbox. High-stakes: requires owner approval. To copy people, use the `cc`/`bcc` fields (comma-separated) -- do NOT write 'CC:'/'BCC:' lines in the body, those are just text and do not actually copy anyone. To loop Nic/Shelli in, CC their address here so they really receive it.",
     input_schema: {
       type: "object",
-      properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } },
+      properties: {
+        to: { type: "string" },
+        cc: { type: "string", description: "optional CC recipients, comma-separated" },
+        bcc: { type: "string", description: "optional BCC recipients, comma-separated" },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
       required: ["to", "subject", "body"],
     },
   },
@@ -354,8 +361,8 @@ registerActionHandler("calendar", async (input) => {
   const r = await createEvent(input);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
 });
-registerActionHandler("email", async ({ to, subject, body }) => {
-  await sendMail({ to, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
+registerActionHandler("email", async ({ to, cc, bcc, subject, body }) => {
+  await sendMail({ to, cc, bcc, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
   await recordEmailContact(to); // remember we've now written them, so next time isn't "first contact"
   return "Email sent.";
 });
@@ -500,18 +507,25 @@ function toolHandlers({ images, onDelegate } = {}) {
       );
       return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
     },
-    send_email: async ({ to, subject, body }) => {
-      const flag = isWorkDomain(to) ? " [WORK DOMAIN]" : "";
+    send_email: async ({ to, cc, subject, body, bcc }) => {
+      // Flag if ANY recipient (to/cc/bcc) is on a work domain. Split first so a
+      // comma-separated string is classified per-address, not as one blob.
+      const split = (v) => String(v ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      const flag = isWorkDomain([...split(to), ...split(cc), ...split(bcc)]) ? " [WORK DOMAIN]" : "";
       // Append Lloyd's signature so every outbound email is signed consistently
       // (he's told not to add his own sign-off). Stored on the staged action so
       // the approved send matches the preview.
       const signed = `${String(body).trimEnd()}\n\n${GRAPH.signature}`;
+      // Show cc/bcc in the approval preview so the owner sees exactly who is copied.
+      const ccLine = cc ? `\nCc: ${cc}` : "";
+      const bccLine = bcc ? `\nBcc: ${bcc}` : "";
       const { instruction } = await requestConfirmation(
-        `Email to ${to}${flag}\nSubject: ${subject}\n${signed.slice(0, 220)}`,
+        `Email to ${to}${ccLine}${bccLine}${flag}\nSubject: ${subject}\n${signed.slice(0, 220)}`,
         "email",
-        { to, subject, body: signed }
+        { to, cc, bcc, subject, body: signed }
       );
-      return `Ready to email ${to}${flag} (subject: ${subject}). ${instruction}`;
+      const copies = [cc ? `cc ${cc}` : "", bcc ? `bcc ${bcc}` : ""].filter(Boolean).join(", ");
+      return `Ready to email ${to}${copies ? ` (${copies})` : ""}${flag} (subject: ${subject}). ${instruction}`;
     },
     fetch_document: async ({ url }) => {
       const { blocks, summaries, skipped } = await fetchDocument(url);

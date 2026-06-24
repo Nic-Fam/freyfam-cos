@@ -1,6 +1,37 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildEventPayload, familyDateWindow, reSubject, localDayLabel } from "../src/channels/graph.js";
+import { buildEventPayload, familyDateWindow, reSubject, localDayLabel, buildMailMessage } from "../src/channels/graph.js";
+
+test("buildMailMessage puts cc/bcc on real Graph recipient fields (the loop-Nic-in fix)", () => {
+  const m = buildMailMessage({
+    to: "elisha.gonzalez@brighthorizons.com",
+    cc: "nic@freyfam.com",
+    bcc: "shelli@freyfam.com",
+    subject: "Re: Fox Frey support plan follow-up",
+    body: "Hi Elisha,",
+  });
+  assert.deepEqual(m.toRecipients, [{ emailAddress: { address: "elisha.gonzalez@brighthorizons.com" } }]);
+  assert.deepEqual(m.ccRecipients, [{ emailAddress: { address: "nic@freyfam.com" } }]);
+  assert.deepEqual(m.bccRecipients, [{ emailAddress: { address: "shelli@freyfam.com" } }]);
+});
+
+test("buildMailMessage splits comma/semicolon cc strings into separate recipients", () => {
+  const m = buildMailMessage({ to: "a@x.com", cc: "nic@freyfam.com, shelli@freyfam.com", subject: "s", body: "b" });
+  assert.deepEqual(
+    m.ccRecipients.map((r) => r.emailAddress.address),
+    ["nic@freyfam.com", "shelli@freyfam.com"]
+  );
+});
+
+test("buildMailMessage omits cc/bcc keys entirely when not provided", () => {
+  const m = buildMailMessage({ to: "a@x.com", subject: "s", body: "b" });
+  assert.ok(!("ccRecipients" in m));
+  assert.ok(!("bccRecipients" in m));
+});
+
+test("buildMailMessage still requires a real to-recipient", () => {
+  assert.throws(() => buildMailMessage({ to: "", cc: "nic@freyfam.com", subject: "s", body: "b" }), /no valid recipient/);
+});
 
 test("localDayLabel names the weekday from the date so the model never miscomputes it", () => {
   // Jun 27 2026 is a SATURDAY. The bug was the model calling it "Friday" and
