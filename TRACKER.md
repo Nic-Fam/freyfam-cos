@@ -254,6 +254,32 @@ Owns: new `src/channels/browser.js`, `package.json` dep.
   optional dep) and the chief's tool list in `orchestrator.js` overlap; integration
   into specialist tool lists overlaps F's bottleneck.
 
+#### Alexa → grocery close-the-loop (the fridge list → Friday order)
+
+Intent: items the family adds at the fridge (Alexa) flow into the Friday Ralphs order,
+resolved to the EXACT products they buy via order history. Costco same idea (later).
+- **What already existed:** the private "Frey" Alexa skill (front-door
+  `alexa-skill.js`) writes voice-added items into M365 To Do lists `Ralphs`/`Costco`/
+  `Amazon Shopping List`; the front-door legacy grocery-order read those lists.
+- [x] **Phase 1 — Lloyd/Chef read the To Do lists (2026-06-24).** `graph.js`
+      `listTodoTasks`/`completeTodoTask` (app-only, Tasks permission verified on the
+      COS app); `grocery.js` `mergeGroceryItems`/`gatherGroceryItems` union the local
+      shopping list + the To Do `Ralphs` list (deduped); the Friday assembly now
+      sources from both; `read_store_list` chief tool reads a store list on demand.
+      266 tests green.
+- [ ] **Input decision (Nic, pending):** native fridge Shopping List → IFTTT/Make →
+      To Do `Ralphs` (fridge-visible, natural phrasing; recommended) vs the "Frey"
+      skill ("ask Frey to add X to Ralphs"; cleaner Ralphs/Costco routing, no fridge
+      view). Either lands in the SAME To Do list Phase 1 reads, so it doesn't block code.
+- [ ] **Phase 2 — bounce against order history.** For each To Do item ("milk"),
+      resolve to the exact product the family buys by matching the Ralphs "Buy It
+      Again"/purchase-history page (the live signed-in browser) before assembling +
+      placing the Friday order. Net-new; needs live selector capture like the order flow.
+      On a placed order, mark the To Do items completed (`completeTodoTask`) to clear them.
+- [ ] **Phase 3 — Costco.** Read the Costco To Do list + match against Costco purchase
+      history + Costco ordering. Biggest lift (no Costco automation yet; warehouse buys
+      aren't always in the online history). Deferred.
+
 ### H. Harden & operationalize  `[x]`
 
 Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.plist`.
