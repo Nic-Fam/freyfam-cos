@@ -16,6 +16,7 @@ import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { recordLiveness } from "./liveness.js";
+import { backupState } from "./backup.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -68,6 +69,18 @@ async function maybeCheckCosts() {
   } catch (err) {
     log.error("cost check failed", { reason: err.message });
   }
+}
+
+// Off-site state backup (workstream R): snapshot data/ to Azure Blob on a slow
+// cadence (default 6h) so a local disk failure costs at most one interval of state,
+// not everything. Best-effort; backupState never throws.
+let lastBackupAt = 0;
+const BACKUP_INTERVAL_MS = Number(process.env.BACKUP_INTERVAL_MS || 6 * 60 * 60 * 1000);
+async function maybeBackup() {
+  const now = Date.now();
+  if (now - lastBackupAt < BACKUP_INTERVAL_MS) return;
+  lastBackupAt = now;
+  await backupState();
 }
 
 // Morning digest: fire once per local day in the morning window. Lloyd composes
@@ -168,6 +181,7 @@ export async function tick() {
   // the off-Mac monitor can alert the family if this stops. Best-effort, never throws.
   await recordLiveness();
   await maybeCheckCosts();
+  await maybeBackup();
   await maybeRunDigest();
   await maybeFireReminders();
   await maybeRunResale();
