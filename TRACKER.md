@@ -742,18 +742,21 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
   local outage. Only Lloyd + the local Macs (Frank/Steve) go dark.
 
 **Gaps to close (roughly priority order):**
-- [ ] **Independent off-Mac liveness monitor (dead-man's-switch) — MOST URGENT.** If
-      Lloyd dies, nothing tells the family: every current alarm path runs through Lloyd
-      himself or the (now-dead) Twilio SMS (the cost watchdog + subscription-renewer
-      both alert only via Twilio). Need an Azure-side check (timer Function) that
-      watches "is the inbound queue being drained / did the Mac check in within N
-      minutes" and alerts over a WORKING channel (email via Graph, or Slack) when Lloyd
-      goes silent. Pairs with a lightweight heartbeat-to-cloud the daemon writes (e.g.
-      touch a Blob / Table row each tick) so the monitor has a signal to watch.
-- [ ] **Extend the inbound queue message TTL.** Azure Storage Queue default TTL is 7
-      days; a longer outage silently drops queued messages. Set `messageTimeToLive` to
-      a long/infinite value on enqueue (front door `cos-queue.js`) so a multi-day
-      outage loses no inbound. Verify current TTL first.
+- [~] **Independent off-Mac liveness monitor (dead-man's-switch) — BUILT 2026-06-24,
+      daemon side LIVE; monitor needs deploy.** Daemon side DONE + deployed: `src/liveness.js`
+      upserts a {lastSeen,host,pid} row to the `cosliveness` Table every heartbeat tick
+      + on boot (verified the row lands). Monitor side BUILT (front-door
+      `src/functions/liveness-monitor.js`, committed not pushed): a 15-min Azure timer
+      reads that row and, if Lloyd hasn't checked in within ~45 min, emails the family
+      via `notifyFamily` (email — the working channel; Twilio is dead); de-dupes (one
+      alert + 6h re-alerts) and sends a "back online" note on recovery. **TO GO LIVE:
+      deploy the front door** (push → `deploy.yml` CI, a production deploy) so the timer
+      runs in Azure off the Mac. Tunables: `LIVENESS_STALE_MINUTES`, `LIVENESS_REALERT_MINUTES`.
+- [~] **Extend the inbound queue message TTL — BUILT 2026-06-24, needs deploy.** Front
+      door `cos-queue.js` now sets `messageTimeToLive` on enqueue via
+      `INBOUND_MESSAGE_TTL_SECONDS` (default 28 days; -1 = never expire), up from Azure's
+      7-day default, so a multi-day local outage loses no inbound. Committed (not pushed).
+      **TO GO LIVE: deploy the front door** (same push → CI as the monitor above).
 - [ ] **State durability / off-site backup (disk-failure protection).** Lloyd's brain
       + household state are local JSON under `data/` with NO backup — a disk/hardware
       failure loses memory, decisions, conversations, tasks, reminders, watch list,
