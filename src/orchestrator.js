@@ -686,6 +686,21 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
   ]
     .filter(Boolean)
     .join("\n\n");
+  // Trace each tool the chief calls so a runaway loop (the one that ends in "max
+  // tool turns reached") is visible — same wrapper as the specialists. Names only.
+  const rawHandlers = toolHandlers({ images, onDelegate });
+  const tracedHandlers = {};
+  for (const [name, fn] of Object.entries(rawHandlers)) {
+    tracedHandlers[name] = async (input) => {
+      log.info("tool call", { agent: "chief", tool: name });
+      try {
+        return await fn(input);
+      } catch (e) {
+        log.warn("tool call failed", { agent: "chief", tool: name, error: String(e?.message || e) });
+        throw e;
+      }
+    };
+  }
   const { text } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
@@ -694,8 +709,15 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     // wins for the current turn when an MMS carried photos; else plain text.
     messages: [...history, { role: "user", content: content || body }],
     tools: webSearch ? [...tools, WEB_SEARCH_TOOL] : tools,
-    toolHandlers: toolHandlers({ images, onDelegate }), // images + delegation mirror
+    toolHandlers: tracedHandlers, // images + delegation mirror, with call tracing
+    maxTurns: 12, // image -> search -> delegate flows need more than the default 8
   });
+  // Never send the raw loop-cap sentinel to the family. If Lloyd ran out of turns,
+  // log it (the trace above shows which tools he looped on) and reply gracefully.
+  if (/^\(stopped: max tool turns reached\)/.test(text)) {
+    log.warn("chief hit max tool turns", { model });
+    return "Sorry, I got tangled up working on that and didn't finish. Let me take another run at it. If it happens again, a quick nudge with any extra detail helps.";
+  }
   return text;
 }
 
