@@ -17,6 +17,7 @@ import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { recordLiveness } from "./liveness.js";
 import { backupState } from "./backup.js";
+import { checkOutageOnBoot, setLastSeen } from "./outage.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -176,10 +177,19 @@ async function maybeRunGroceryOrder() {
   }
 }
 
+let bootChecked = false;
 export async function tick() {
+  // On the FIRST tick after (re)start, detect whether Lloyd was offline for a real
+  // gap and tell the owner he's back + catching up (workstream R). Reads the previous
+  // run's last-seen before this tick refreshes it. Best-effort.
+  if (!bootChecked) {
+    bootChecked = true;
+    await checkOutageOnBoot({ notify: notifyOwner });
+  }
   // Dead-man's-switch heartbeat FIRST (workstream R): record that Lloyd is alive so
   // the off-Mac monitor can alert the family if this stops. Best-effort, never throws.
   await recordLiveness();
+  await setLastSeen(); // local heartbeat stamp for boot-time outage detection
   await maybeCheckCosts();
   await maybeBackup();
   await maybeRunDigest();
