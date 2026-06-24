@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildEventPayload, familyDateWindow, reSubject } from "../src/channels/graph.js";
+import { buildEventPayload, familyDateWindow, reSubject, localDayLabel } from "../src/channels/graph.js";
+
+test("localDayLabel names the weekday from the date so the model never miscomputes it", () => {
+  // Jun 27 2026 is a SATURDAY. The bug was the model calling it "Friday" and
+  // shifting that day's availability. The label must be authoritative.
+  assert.equal(localDayLabel("2026-06-27T15:00:00.0000000"), "Saturday, Jun 27");
+  assert.equal(localDayLabel("2026-06-26T08:30:00.0000000"), "Friday, Jun 26");
+  assert.equal(localDayLabel("2026-06-28T00:00:00.0000000"), "Sunday, Jun 28");
+  // An early-hour start must still land on its own date (no tz rollback).
+  assert.equal(localDayLabel("2026-01-15T00:00:00"), "Thursday, Jan 15");
+  assert.equal(localDayLabel(undefined), undefined);
+  assert.equal(localDayLabel("not-a-date"), undefined);
+});
 
 test("reSubject adds Re: once and tolerates blanks", () => {
   assert.equal(reSubject("Fwd: house on Oak St"), "Re: Fwd: house on Oak St");

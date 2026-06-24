@@ -6,6 +6,24 @@ import { createLogger } from "../log.js";
 
 const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
 
+// Authoritative local weekday label for an event, computed in code so the model
+// never derives day-of-week from a date itself -- it gets that wrong (e.g. it
+// labeled Sat Jun 27 as "Friday", shifting availability onto the wrong day). The
+// Graph dateTime is already family-local wall time (Prefer outlook.timezone), so
+// its date part IS the local date; anchor that date at UTC noon and read the
+// weekday in UTC to avoid any tz/DST edge (same trick grocery.js uses). Returns
+// e.g. "Saturday, Jun 27", or undefined if the start isn't a parseable date.
+export function localDayLabel(startStr) {
+  const date = String(startStr || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
 // App-only auth (client credentials) against the assistant@freyfam.com mailbox.
 let _client;
 function graph() {
@@ -176,6 +194,7 @@ async function calendarViewFor(mailbox, window) {
       if (e.showAs === "free" && /^(free|available)$/i.test(String(e.subject || "").trim())) continue;
       events.push({
         subject: e.subject,
+        day: localDayLabel(e.start?.dateTime), // authoritative weekday; model must not recompute
         start: e.start?.dateTime,
         end: e.end?.dateTime,
         location: e.location?.displayName,
