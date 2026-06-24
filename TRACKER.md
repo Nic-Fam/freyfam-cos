@@ -750,9 +750,11 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
       Lloyd hasn't checked in within ~45 min, emails the family via `notifyFamily`
       (email — the working channel; Twilio is dead); de-dupes (one alert + 6h re-alerts)
       and sends a "back online" note on recovery. Tunables: `LIVENESS_STALE_MINUTES`,
-      `LIVENESS_REALERT_MINUTES`, `INBOUND_QUEUE...`. Zero Claude tokens, sub-cent Azure.
-      REMAINING (one-time confidence check): simulate an outage (stop the daemon ~45 min
-      or set `LIVENESS_STALE_MINUTES` low) and confirm the alert email actually arrives.
+      `LIVENESS_REALERT_MINUTES`, `LIVENESS_ALERT_TARGET` (default both). Zero Claude
+      tokens, sub-cent Azure. VERIFIED END-TO-END 2026-06-24: forced a stale condition
+      (`LIVENESS_STALE_MINUTES=1`, target scoped to nic), manually triggered the timer,
+      and the alert email "Home assistant may be down" landed in the owner's inbox; then
+      reverted the test settings + reset the alert state. The dead-man's-switch fires.
 - [x] **Extend the inbound queue message TTL — LIVE 2026-06-24.** Front door
       `cos-queue.js` sets `messageTimeToLive` on enqueue via `INBOUND_MESSAGE_TTL_SECONDS`
       (default 28 days; -1 = never expire), up from Azure's 7-day default, so a multi-day
