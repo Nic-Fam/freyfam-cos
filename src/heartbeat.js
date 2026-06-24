@@ -11,7 +11,7 @@ import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
-import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun } from "./grocery.js";
+import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems } from "./grocery.js";
 import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
 import { shouldAutoReply, isFamilyAddress } from "./guards.js";
@@ -167,7 +167,9 @@ async function maybeRunGroceryOrder() {
     const { run, date } = shouldRunGroceryOrder(new Date(), await getLastGroceryRun());
     if (!run) return;
     await setLastGroceryRun(date); // record before staging so a slow run can't double-propose
-    const items = await listShopping();
+    // Source items from BOTH the local shopping list AND the M365 To Do "Ralphs"
+    // list the Alexa "Frey" skill / fridge bridge fills (workstream: Alexa->grocery loop).
+    const items = await gatherGroceryItems({ store: "Ralphs", local: await listShopping() });
     if (!items.length) { log.info("grocery: skipped, empty shopping list", { date }); return; }
     const order = assembleOrder(items);
     await requestConfirmation(`Friday Ralphs order (${order.count} items, ${order.deliveryWindow}, applying ${order.coupons.join(", ")}):\n${formatOrder(order)}`, "grocery", order);
