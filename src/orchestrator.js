@@ -701,6 +701,20 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
 
 // Materialize email attachments: inline {bytes|contentBytes} from the front door,
 // or fetched from the mailbox via Graph when a graphMessageId is present. Non-fatal.
+/**
+ * Route collected attachments by kind: IMAGES go to the vision path
+ * (fetchInboundMedia), everything else to document extraction (PDF/.ics/.vcf).
+ * An emailed/iMessaged photo arrives as a {contentType:"image/...", bytes}
+ * attachment, so without this split it would land in extractDocuments and be
+ * dropped as "unsupported type" — the bug that made Lloyd/Shey blind to emailed
+ * photos. Pure; matched on the declared content type (the bytes are re-sniffed
+ * downstream, so a mislabeled image is still corrected by fetchInboundMedia).
+ */
+export function splitAttachmentsByKind(attachments = []) {
+  const isImg = (a) => String(a?.contentType || "").toLowerCase().startsWith("image/");
+  return { imageAtts: attachments.filter(isImg), docAtts: attachments.filter((a) => !isImg(a)) };
+}
+
 export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
   if (Array.isArray(msg.attachments) && msg.attachments.length) {
     const out = [];
@@ -779,8 +793,23 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   const triageNotes = [];
   let images;
 
-  if (Array.isArray(msg.media) && msg.media.length) {
-    const { imageBlocks, skipped } = await fetchInboundMedia(msg.media);
+  // Collect attachments first and SPLIT by kind. Email (Graph) and iMessage
+  // attachments arrive here as {name, contentType, bytes}; an IMAGE among them must
+  // go to the VISION path, not document extraction. Previously every attachment was
+  // handed to extractDocuments, which only keeps PDF/.ics/.vcf and dropped images as
+  // "unsupported type" — so a photo emailed to Lloyd never reached Shey/Carmine.
+  const attachments = await collectAttachments(msg);
+  const { imageAtts, docAtts } = splitAttachmentsByKind(attachments);
+
+  // MMS/Slack media (msg.media) + emailed/iMessage image attachments share ONE vision
+  // pass. fetchInboundMedia sniffs the real bytes (and transcodes HEIC), so a
+  // mislabeled type is corrected regardless of which channel it came in on.
+  const mediaItems = [
+    ...(Array.isArray(msg.media) ? msg.media : []),
+    ...imageAtts.map((a) => ({ contentType: a.contentType, bytes: a.bytes })),
+  ];
+  if (mediaItems.length) {
+    const { imageBlocks, skipped } = await fetchInboundMedia(mediaItems);
     if (imageBlocks.length) {
       images = imageBlocks; // forwarded to specialists on delegate
       extraBlocks.push(...imageBlocks);
@@ -798,9 +827,8 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     }
   }
 
-  const attachments = await collectAttachments(msg);
-  if (attachments.length) {
-    const { blocks, summaries } = await extractDocuments(attachments);
+  if (docAtts.length) {
+    const { blocks, summaries } = await extractDocuments(docAtts);
     extraBlocks.push(...blocks);
     triageNotes.push(...summaries);
   }
