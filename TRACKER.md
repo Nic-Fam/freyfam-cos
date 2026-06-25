@@ -300,6 +300,24 @@ resolved to the EXACT products they buy via order history. Costco same idea (lat
       history + Costco ordering. Biggest lift (no Costco automation yet; warehouse buys
       aren't always in the online history). Deferred.
 
+#### Household features (built 2026-06-24, on main; live on next daemon restart)
+
+Net-new capabilities from the "what else" pass. Pure cores unit-tested (285 green).
+- [x] **Meal-plan -> grocery list.** Meals carry `ingredients` (meals.js); `meal-grocery.js`
+      `mealsToGroceryItems` collects+dedups; chief tool `meals_to_grocery_list` pushes them
+      onto a store To Do list (reuses `addTodoTask`). Carmine should include ingredients
+      when planning a meal for this to fill.
+- [x] **Daily dashboard.** `src/dashboard.js` `formatDashboard` + chief tool `show_today`
+      — a fast, deterministic "today" card (schedule/Fox/meals/tasks/packages), no model tokens.
+- [x] **Finance recurring radar.** `finance.js` `detectRecurring`/`formatRecurring` flags
+      weekly/monthly/yearly subscriptions, next-due + price changes; folded into the finance
+      specialist's `analyze_transactions`. Surfacing only (no money movement).
+- [x] **Action audit log.** `src/audit.js` logAction/listActions/formatAudit; the outbound
+      action handlers (email/calendar/order/grocery) log; chief tool `recent_actions`
+      ("what did you do this week?"). The paper trail for an agent that acts for the family.
+- [x] **Use-it-up.** `meals.js` `useItUpSuggestion` gives Carmine a ready nudge to plan a
+      meal around soonest-expiring items; folded into the chef `expiring_soon` tool.
+
 ### H. Harden & operationalize  `[x]`
 
 Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.plist`.
