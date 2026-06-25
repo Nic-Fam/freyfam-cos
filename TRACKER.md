@@ -1074,9 +1074,11 @@ first, verify locally, then provision**.
         CROSS-REPO TODO: the Azure-repo meal feature still points at the old account
         (`freyfamassistant8a4f`, now empty) — repoint it to `freyfamcosspec31547` or
         retire it. Done in THIS repo; that change lives in `~/freyfam-assistant`.
-      - [ ] `memory.js` — owned by the parallel recall workstream; still local JSON, so
-        remote specialists' `recall`/`remember` don't persist yet (decisions + saved
-        searches do). finance/resale work fine without it for now.
+      - [x] `memory.js` — DONE 2026-06-24. Migrated onto the pluggable collection store
+        (local brain.json by default, identical format; MI Azure Table when COS_TABLE_*
+        is set). Durable memory for workstream R (survives disk loss natively) AND the
+        remote-recall path for the Azure split. recall/remember unchanged; verified
+        against the existing 1.6MB brain.
 - LOCAL specialists (Frank=security, Steve=dev) use `deploy/specialists/local-server.mjs`
   (`npm run specialist`) — verified this session: same `{agent,task}->text` contract,
   x-functions-key auth (401), agent pin (403), round-trip via `delegate`. **Steve →
@@ -1198,9 +1200,13 @@ only) so we match Genet's *security posture* without her hardware.
         `list_security_findings` (advisory log `src/security.js`). Frank flags;
         humans act. All control actions (arm/disarm, lock, password/account changes)
         stay behind the chief's confirmation gate.
-      - [ ] real read-only signal monitors (auth/login events, breach feeds, device/
-        update status, home-system alerts) — need external integrations; TODO
-      - [ ] heartbeat security feed via `gatherSignals()` (kitchen feed landed as the
-        pattern; security monitors still TODO)
+      - [~] read-only signal monitors — breach-feed monitor BUILT 2026-06-24
+        (`src/security-monitor.js` checkBreaches via HaveIBeenPwned; new exposures ->
+        high findings + owner alert; `securityPosture` summary; Frank `security_posture`
+        tool). Inert until `HIBP_API_KEY` + `SECURITY_WATCH_EMAILS` set. Still TODO:
+        device/OS-update status + home-system alerts (need local/device integrations).
+      - [x] heartbeat security feed — `maybeSecurityScan()` runs the breach monitor on a
+        weekly cadence from the heartbeat (Lloyd-side: it needs network + records
+        findings + notifies, which a remote specialist must not do).
 - [ ] **Progressive trust** — start specialists with minimal tools, widen over time.
       Bake into F by gating powerful tools behind config flags.
