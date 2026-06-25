@@ -25,7 +25,21 @@ LABEL=com.freyfam.steve     # or com.freyfam.cos / com.freyfam.frank
 
 ## 1. Pre-flight (do NOT skip)
 
-**On Lloyd (`com.freyfam.cos`) — check for staged approvals first.** Restarting
+**ALWAYS restart from `main`.** Multiple sessions share this one working directory
+and switch its branch (resale, prompt-cache, rx-sync, ...). The daemon runs whatever
+is on disk at restart time, so restarting while the worktree sits on a feature branch
+deploys that branch's in-progress code, not merged `main`. Before anything else:
+
+```bash
+git checkout main && git pull --ff-only
+git rev-parse HEAD; git rev-parse origin/main   # must match before you restart
+```
+
+If the tree is dirty (a session left uncommitted work), do NOT stash/discard it —
+that's someone else's work. Coordinate, or restart later. Only restart from a clean
+`main` synced to `origin/main`.
+
+**On Lloyd (`com.freyfam.cos`) — check for staged approvals next.** Restarting
 mid-flight drops any pending confirmation, so an outbound action the family already
 approved (or is about to) is lost silently. Inspect it; never clear it blindly:
 
@@ -52,6 +66,7 @@ tail -5 steve.err.log steve.out.log   # frank.* on Frank; quiet == idle
 ## 2. Confirm it's launchd-managed, then restart
 
 ```bash
+git branch --show-current             # MUST read "main" (see step 1) before restarting Lloyd
 launchctl list | grep "$LABEL"        # shows <pid> <status> <label> if managed
 launchctl kickstart -k "gui/$(id -u)/$LABEL"   # -k = kill then restart
 ```
