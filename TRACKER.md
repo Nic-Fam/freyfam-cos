@@ -548,8 +548,10 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
       triggered; `COS_ENQUEUE` already true. So email threading + subject + document
       intake + MMS images are now live end-to-end (confirm CI run succeeded in Azure).
       Inline `{attachments:[{name,contentType,contentBytes}]}` also supported.
-- [ ] Routing polish: nudge receipts→finance, invites→Lloyd scheduling, etc. (the
-      chief already delegates from the extracted text; this is tuning, not blocking).
+- [x] Routing polish (2026-06-24): `src/routing.js` `routingHints(subject, body)` adds
+      conservative advisory notes (receipt→finance, shipping→track, invite→schedule),
+      folded into BOTH triage (model tier) and the chief's content (he picks the
+      specialist). Never a hard route — the model still decides. Unit-tested.
 - **Bright Horizons curriculum needs NO credentials (verified 2026-06-20).** The BH
       *email* media links (`mbdgw.brighthorizons.com/api/parent/medias/.../email`) are
       **public direct-fetch PDFs** — the long media id is the access token; HTTP 200,
@@ -1208,5 +1210,7 @@ only) so we match Genet's *security posture* without her hardware.
       - [x] heartbeat security feed — `maybeSecurityScan()` runs the breach monitor on a
         weekly cadence from the heartbeat (Lloyd-side: it needs network + records
         findings + notifies, which a remote specialist must not do).
-- [ ] **Progressive trust** — start specialists with minimal tools, widen over time.
-      Bake into F by gating powerful tools behind config flags.
+- [x] **Progressive trust (2026-06-24)** — `COS_TRUST_<AGENT>` narrows a specialist to a
+      subset of its allowlist (plus the always-on memory/decision baseline) while it
+      earns trust; unset = full allowlist (default), empty = observe-only. Narrows the
+      K#4 allowlist, never widens. `trustedTools()` in `agents/tools.js`, unit-tested.
