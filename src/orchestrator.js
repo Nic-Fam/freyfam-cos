@@ -14,7 +14,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { sendSms, notifyOwner } from "./channels/twilio.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
@@ -266,6 +266,12 @@ const tools = [
     description:
       "Read a store's Microsoft To Do shopping list (the list the family fills by voice at the fridge via Alexa). store is 'Ralphs' or 'Costco'. Use for 'what's on the Ralphs/Costco list?'. Read-only.",
     input_schema: { type: "object", properties: { store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] } }, required: ["store"] },
+  },
+  {
+    name: "add_to_store_list",
+    description:
+      "Add an item to a store's Microsoft To Do shopping list — the SAME lists the Alexa skills fill and the Friday Ralphs order reads. This is the reliable backup to Alexa: use it when the family says 'add milk to the Ralphs list', 'put paper towels on the Costco list', etc. store is 'Ralphs', 'Costco', or 'Amazon Shopping List'. Does not order anything.",
+    input_schema: { type: "object", properties: { store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] }, item: { type: "string" } }, required: ["store", "item"] },
   },
   {
     name: "remove_shopping_item",
@@ -598,6 +604,14 @@ function toolHandlers({ images, onDelegate } = {}) {
         return items.length ? `${store} list (${items.length}):\n${items.map((i) => `- ${i.title}`).join("\n")}` : `The ${store} list is empty.`;
       } catch (e) {
         return `Could not read the ${store} list: ${e.message}`;
+      }
+    },
+    add_to_store_list: async ({ store, item }) => {
+      try {
+        const t = await addTodoTask(store, item);
+        return `Added "${t.title}" to the ${store} list.`;
+      } catch (e) {
+        return `Could not add to the ${store} list: ${e.message}`;
       }
     },
     remove_shopping_item: async ({ item, clearAll }) => {

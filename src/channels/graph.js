@@ -113,6 +113,23 @@ export async function completeTodoTask(listId, taskId, { user = TODO_USER() } = 
   await graph().api(`/users/${user}/todo/lists/${listId}/tasks/${taskId}`).patch({ status: "completed" });
 }
 
+/**
+ * Add an item to a named To Do list (the same lists the Alexa skills write to), so
+ * Lloyd can add to the Ralphs/Costco/Amazon list from any channel — the reliable
+ * backup to Alexa (Option B). Creates the list if it's missing. Returns {id,title,listId}.
+ */
+export async function addTodoTask(listName, title, { user = TODO_USER() } = {}) {
+  const item = String(title || "").trim();
+  if (!item) throw new Error("item is required");
+  let listId = await todoListId(listName, user);
+  if (!listId) {
+    const created = await graph().api(`/users/${user}/todo/lists`).post({ displayName: listName });
+    listId = created.id;
+  }
+  const task = await graph().api(`/users/${user}/todo/lists/${listId}/tasks`).post({ title: item });
+  return { id: task.id, title: task.title, listId };
+}
+
 // --- Calendar (workstream: close the scheduling gap / Genet's "Claire") --------
 // The real family schedule lives on the family members' OWN calendars (nic@ +
 // shelli@), not on cos@. listEvents MERGES those (GRAPH.calendars) via
