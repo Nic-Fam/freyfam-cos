@@ -8,8 +8,13 @@ const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 // messages. We mark the STABLE prefix (tools + persona system block) with
 // cache_control so every turn only pays full price for the new user content.
 // Cache reads cost ~10% of input; this is the single biggest lever after triage.
-// Default TTL is 5 min; pass ttl:"1h" for the heartbeat if ticks are >5 min apart.
-// ---------------------------------------------------------------------------
+// The STABLE prefix (tools + persona) uses the 1-HOUR cache TTL so it survives across
+// heartbeat ticks (every ~15 min) and bursty back-and-forth conversations, instead of
+// expiring after the default 5 min and re-paying full price for the persona each tick.
+// The per-turn conversation breakpoint stays 5 min (it changes every turn anyway).
+// Descending TTL down the prompt (tools/system 1h -> messages 5m) is the required order.
+// 1h TTL needs the extended-cache-ttl beta header (sent in complete()).
+const STABLE_TTL = "1h";
 function cacheable(text, ttl) {
   const cache_control = ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" };
   return { type: "text", text, cache_control };
@@ -17,10 +22,10 @@ function cacheable(text, ttl) {
 
 /**
  * Build a system array with the stable persona cached.
- * @param {string} stable  Persona / instructions that rarely change -> cached.
+ * @param {string} stable  Persona / instructions that rarely change -> cached (1h TTL).
  * @param {string} [volatile] Per-turn context (date, fresh signals) -> not cached.
  */
-export function systemBlocks(stable, volatile, { ttl } = {}) {
+export function systemBlocks(stable, volatile, { ttl = STABLE_TTL } = {}) {
   const blocks = [cacheable(stable, ttl)];
   if (volatile) blocks.push({ type: "text", text: volatile });
   return blocks;
@@ -74,14 +79,17 @@ export async function complete({
   };
   if (system) req.system = system;
   if (tools && tools.length) {
-    // Mark the final tool so the whole tool block is treated as a cached prefix.
+    // Mark the final tool so the whole tool block is cached — 1h TTL, same as the
+    // persona, so the stable prefix (tools + system) survives between heartbeat ticks.
     req.tools = tools.map((t, i) =>
       i === tools.length - 1
-        ? { ...t, cache_control: { type: "ephemeral" } }
+        ? { ...t, cache_control: { type: "ephemeral", ttl: STABLE_TTL } }
         : t
     );
   }
-  return client.messages.create(req);
+  // The 1h cache TTL requires the extended-cache-ttl beta header. Harmless if the
+  // feature is GA; required while it's beta.
+  return client.messages.create(req, { headers: { "anthropic-beta": "extended-cache-ttl-2025-04-11" } });
 }
 
 export function textOf(resp) {
