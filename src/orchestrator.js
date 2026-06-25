@@ -32,6 +32,7 @@ import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
 import { formatDashboard } from "./dashboard.js";
+import { routingHints } from "./routing.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("orchestrator");
@@ -964,12 +965,22 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     triageNotes.push(...summaries);
   }
 
+  // Advisory routing hints (receipt->finance, shipping->track, invite->schedule) so
+  // triage AND the chief route common kinds well. Conservative; the model still decides.
+  triageNotes.push(...routingHints(msg.subject, msg.body));
+
+  // Fold the notes into BOTH what triage sees (for the model tier) and what the chief
+  // sees (for routing/delegation) — the chief picks the specialist, so the hint must
+  // reach his content, not just triage.
+  const noteText = triageNotes.length ? `\n\n[Context: ${triageNotes.join("; ")}]` : "";
+  const bodyText = msg.body?.trim() || "";
   let content;
-  let triageText = msg.body || "";
   if (extraBlocks.length) {
-    content = [{ type: "text", text: msg.body?.trim() || "(attachment, no message)" }, ...extraBlocks];
-    triageText = [msg.body || "", `[${triageNotes.join("; ")}]`].filter((s) => s.trim()).join("\n").trim();
+    content = [{ type: "text", text: (bodyText || "(attachment, no message)") + noteText }, ...extraBlocks];
+  } else if (noteText) {
+    content = [{ type: "text", text: (bodyText || "(no message)") + noteText }];
   }
+  const triageText = [msg.body || "", triageNotes.length ? `[${triageNotes.join("; ")}]` : ""].filter((s) => s.trim()).join("\n").trim() || (msg.body || "");
 
   // 2. Memory key. A forced per-agent channel (e.g. Slack #resale) shares ONE
   //    thread for the whole channel (channel+agent), so text and photos posted
