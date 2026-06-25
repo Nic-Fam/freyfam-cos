@@ -14,7 +14,8 @@ import { recall, remember } from "../memory.js";
 import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
-import { analyzeTransactions } from "../finance.js";
+import { analyzeTransactions, detectRecurring } from "../finance.js";
+import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
@@ -147,7 +148,8 @@ const REGISTRY = {
     handlers: {
       ...memoryHandlers("finance"),
       ...decisionHandlers("finance"),
-      analyze_transactions: async ({ transactions }) => JSON.stringify(analyzeTransactions(transactions)),
+      analyze_transactions: async ({ transactions }) =>
+        JSON.stringify({ ...analyzeTransactions(transactions), recurring: detectRecurring(transactions) }),
     },
   }),
 
@@ -270,7 +272,12 @@ const REGISTRY = {
       },
       kitchen_inventory: async (filter) => JSON.stringify(await listActive(filter || {})),
       inventory_summary: async () => JSON.stringify(await summary()),
-      expiring_soon: async ({ days } = {}) => JSON.stringify(await getExpiringSoon(days ?? 4)),
+      expiring_soon: async ({ days } = {}) => {
+        const items = await getExpiringSoon(days ?? 4);
+        // #5 use-it-up: hand Carmine a ready nudge so he proactively suggests a meal
+        // to use the soonest-expiring items, not just lists them.
+        return JSON.stringify({ items, useItUp: useItUpSuggestion(items) });
+      },
       add_inventory_item: async (input) => JSON.stringify(await addItem({ ...input, addedBy: "carmine", source: "manual" })),
       consume_inventory_item: async ({ id, quantity }) => {
         const r = await consume(id, { quantity, actor: "carmine" });

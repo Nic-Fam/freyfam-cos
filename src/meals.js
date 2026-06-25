@@ -78,6 +78,24 @@ export function todayLocal() {
   return normalizeDate(new Date());
 }
 
+/**
+ * Use-it-up nudge (#5): given expiring-soon inventory items, produce a short prompt
+ * so Carmine proactively suggests a meal to use them rather than just listing them.
+ * Pure. Items are [{name, daysUntil}] (from getExpiringSoon). "" when nothing's close.
+ */
+export function useItUpSuggestion(expiring = []) {
+  const soon = (expiring || [])
+    .filter((i) => i && i.name && (i.daysUntil == null || i.daysUntil <= 3))
+    .sort((a, b) => (a.daysUntil ?? 99) - (b.daysUntil ?? 99));
+  if (!soon.length) return "";
+  const names = soon.slice(0, 6).map((i) => {
+    const d = i.daysUntil;
+    const when = d == null ? "" : d <= 0 ? " (expired)" : d === 1 ? " (tomorrow)" : ` (${d}d)`;
+    return `${i.name}${when}`;
+  });
+  return `Use these up soon: ${names.join(", ")}. Suggest a meal that uses the closest-to-expiring ones.`;
+}
+
 function entityToMeal(e) {
   return {
     date: e.partitionKey,
@@ -87,11 +105,14 @@ function entityToMeal(e) {
     notes: e.notes || "",
     source: e.source || "manual",
     recipeUrl: e.recipeUrl || "",
+    // Ingredients stored as a "|"-joined string in the table; back to an array here.
+    // Feeds the meal-plan -> grocery-list flow (mealsToGroceryItems).
+    ingredients: e.ingredients ? String(e.ingredients).split("|").map((s) => s.trim()).filter(Boolean) : [],
     createdAt: e.createdAt || "",
   };
 }
 
-export async function saveMeal({ date, mealType, name, prepMinutes, notes, source, recipeUrl, createdBy }) {
+export async function saveMeal({ date, mealType, name, prepMinutes, notes, source, recipeUrl, createdBy, ingredients }) {
   const partitionKey = normalizeDate(date);
   const rowKey = normalizeMealType(mealType);
   if (!partitionKey) throw new Error(`Invalid date: ${date}`);
@@ -107,6 +128,7 @@ export async function saveMeal({ date, mealType, name, prepMinutes, notes, sourc
       notes: (notes || "").substring(0, 500),
       source: source || "manual",
       recipeUrl: recipeUrl || "",
+      ingredients: (Array.isArray(ingredients) ? ingredients : []).map((s) => String(s).trim()).filter(Boolean).join("|").substring(0, 1000),
       createdAt: new Date().toISOString(),
       createdBy: createdBy || "",
     },
