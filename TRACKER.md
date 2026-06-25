@@ -267,10 +267,24 @@ resolved to the EXACT products they buy via order history. Costco same idea (lat
       shopping list + the To Do `Ralphs` list (deduped); the Friday assembly now
       sources from both; `read_store_list` chief tool reads a store list on demand.
       266 tests green.
-- [ ] **Input decision (Nic, pending):** native fridge Shopping List → IFTTT/Make →
-      To Do `Ralphs` (fridge-visible, natural phrasing; recommended) vs the "Frey"
-      skill ("ask Frey to add X to Ralphs"; cleaner Ralphs/Costco routing, no fridge
-      view). Either lands in the SAME To Do list Phase 1 reads, so it doesn't block code.
+- **Input decision (RESOLVED 2026-06-24):** native-list → IFTTT is DEAD — Amazon cut
+      third-party read access to the Alexa Shopping List (~2021), so IFTTT/Make no
+      longer have an "item added to your Alexa list" trigger. Going with per-store
+      PRIVATE Alexa skills instead, store = invocation name.
+  - [x] **Option B — Lloyd writes to the lists (DONE 2026-06-24, live on next restart).**
+        `graph.js addTodoTask` + `add_to_store_list` chief tool: "add milk to the Ralphs
+        list" from any channel. The reliable, Alexa-independent input path. Verified live.
+  - [x] **Backend skill routing (DONE 2026-06-24, front door, committed not deployed).**
+        `alexa-skill.js` routes by calling skill: `Ralph`->Ralphs, `Costco`->Costco,
+        general (`ALEXA_SKILL_ID`)->Amazon. Per-store intents still work (back-compat).
+  - [ ] **FOLLOW-UP (Nic + deploy): stand up the per-store skills.** In the Alexa dev
+        console create two PRIVATE skills (keep in Development — that's how "Costco" is
+        allowed as an invocation): invocation `ralph` and `costco`, each with an
+        `AddItemIntent` ({item}=AMAZON.SearchQuery, "add {item} to the shopping list"),
+        endpoint = the Function `/api/alexa-skill`. The existing "Frey" skill stays as
+        the general->Amazon one. Then set app settings `ALEXA_SKILL_ID_RALPHS` /
+        `ALEXA_SKILL_ID_COSTCO`, push the front door (CI deploy), and verify
+        ("ask Ralph to add milk to the shopping list" -> lands in the Ralphs To Do list).
 - [~] **Phase 2 — bounce against order history (matcher DONE 2026-06-24; fetch
       pending live capture).** `src/grocery-match.js` resolves a free-text item to the
       exact product via token-coverage scoring against purchase history (phrase bonus;
