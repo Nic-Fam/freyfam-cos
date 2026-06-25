@@ -1,7 +1,7 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
-import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
+import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
@@ -113,6 +113,50 @@ async function maybeScanShipments() {
     if (tracked || delivered) log.info("shipment scan recorded", { tracked, delivered });
   } catch (err) {
     log.error("shipment scan failed", { reason: err.message });
+  }
+}
+
+// Propose a calendar pickup event for any package sent to a pickup location (UPS
+// Store / locker / hold) that we haven't scheduled yet. We delegate to Lloyd so he
+// can read the right person's calendar and slot it intelligently: Shelli's packages
+// are ASAP (soonest open slot), Nic's fit into his next convenient free time. The
+// event is CREATED through the confirmation gate (create_calendar stages an
+// approval), so nothing lands on the calendar without a YES. Marked proposed once
+// so it isn't re-suggested every tick. Runs cheaply: only spends tokens when a NEW
+// pickup package is waiting.
+async function maybeSchedulePickups() {
+  let pending = [];
+  try {
+    pending = await listPickupsNeedingSchedule();
+  } catch (err) {
+    log.error("pickup list failed", { reason: err.message });
+    return;
+  }
+  for (const p of pending) {
+    const who = p.owner === "shelli" ? "Shelli" : "Nic";
+    const urgency =
+      p.owner === "shelli"
+        ? "This is SHELLI'S package, so treat it as high priority: schedule the pickup ASAP — the soonest open slot, today if the location is still open."
+        : "This is NIC'S package: fit the pickup into his next convenient free slot; do not disrupt existing plans.";
+    try {
+      // Lloyd reads the calendar and stages a pickup event via create_calendar
+      // (which routes through the confirmation gate). We mark it proposed after,
+      // so a denied/edited proposal isn't nagged again automatically.
+      await runChief(
+        `A package is ready for pickup and needs a calendar event for ${who}.\n` +
+          `Package: ${p.description || p.carrier} (${p.carrier} ${p.trackingNumber}).\n` +
+          `Pickup location: ${p.location || "the carrier's pickup location"}.\n` +
+          `${urgency}\n` +
+          `Use list_calendar to find ${who}'s free time, then create_calendar to propose a ~30 min ` +
+          `event titled "Pick up package - ${p.location || p.carrier}" during plausible store hours. ` +
+          `It will go through approval; do not claim it is booked.`,
+        MODELS.standard
+      );
+      await markPickupScheduled(p.trackingNumber);
+      log.info("pickup proposed", { tracking: p.trackingNumber, owner: p.owner, location: p.location });
+    } catch (err) {
+      log.error("pickup scheduling failed", { tracking: p.trackingNumber, reason: err.message });
+    }
   }
 }
 
@@ -262,6 +306,7 @@ export async function tick() {
   await maybeCheckCosts();
   await maybeBackup();
   await maybeScanShipments();
+  await maybeSchedulePickups();
   await maybeSecurityScan();
   await maybeRunDigest();
   await maybeFireReminders();
