@@ -45,3 +45,48 @@ test("formatPackages reads cleanly and handles empty", () => {
   const out = pkg.formatPackages([{ trackingNumber: "TBA303384950001", carrier: "Amazon", description: "Books", addedAt: "2026-06-22T00:00:00Z" }]);
   assert.match(out, /Books — Amazon TBA303384950001/);
 });
+
+test("attributeOwner defaults to Nic unless the email names Shelli", () => {
+  assert.equal(pkg.attributeOwner("Your order shipped", "Ship to: Nic Frey"), "nic");
+  assert.equal(pkg.attributeOwner("Shipped", "no name here"), "nic"); // default
+  assert.equal(pkg.attributeOwner("Shelli, your order shipped", "Ship to Shelli Frey"), "shelli");
+});
+
+test("detectPickupLocation flags pickup locations and labels them, ignores home delivery", () => {
+  assert.deepEqual(pkg.detectPickupLocation("Ready", "Your package is at The UPS Store, 123 Main St."), {
+    isPickup: true,
+    location: "The UPS Store",
+  });
+  assert.equal(pkg.detectPickupLocation("Picked", "Available for pickup at the Amazon Hub Locker").isPickup, true);
+  assert.deepEqual(pkg.detectPickupLocation("Out for delivery", "Arriving at your home today"), { isPickup: false, location: "" });
+});
+
+test("processShipmentEmail records owner + pickup + location; pickup queue and mark work", async () => {
+  const tn = "1Z999AA10123456784";
+  const r = await pkg.processShipmentEmail({
+    subject: "Shelli, your package is ready",
+    body: `Available for pickup at The UPS Store. Tracking ${tn}.`,
+    description: "Dress",
+  });
+  assert.equal(r.owner, "shelli");
+  assert.equal(r.pickup, true);
+  assert.equal(r.location, "The UPS Store");
+
+  const [stored] = await pkg.listActivePackages();
+  assert.equal(stored.owner, "shelli");
+  assert.equal(stored.pickup, true);
+  assert.equal(stored.location, "The UPS Store");
+
+  // It shows up as needing a pickup event, until we mark it proposed.
+  let queue = await pkg.listPickupsNeedingSchedule();
+  assert.deepEqual(queue.map((p) => p.trackingNumber), [tn]);
+  await pkg.markPickupScheduled(tn);
+  queue = await pkg.listPickupsNeedingSchedule();
+  assert.equal(queue.length, 0, "a proposed pickup is not re-queued");
+});
+
+test("a home-delivery package is tracked but never enters the pickup queue", async () => {
+  await pkg.processShipmentEmail({ subject: "Shipped", body: "On its way to your home. Tracking TBA303384950001", description: "Soap" });
+  assert.equal((await pkg.listActivePackages()).length, 1);
+  assert.deepEqual(await pkg.listPickupsNeedingSchedule(), []);
+});

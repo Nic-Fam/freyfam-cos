@@ -63,6 +63,40 @@ export function isDeliveryConfirmation(subject, body) {
   return bodyPast && !bodyFuture;
 }
 
+// Whose package is it? Default to Nic unless the email names Shelli (the chosen
+// policy 2026-06-25). Drives pickup urgency: Shelli's are ASAP. Pure.
+export function attributeOwner(subject = "", body = "") {
+  return /\bshell?i\b/i.test(`${subject} ${body}`) ? "shelli" : "nic";
+}
+
+// Pickup-location patterns: a parcel sent to a staffed counter / locker / hold,
+// which the family must go COLLECT (vs a home delivery, which needs no event).
+// Ordered most-specific first; the label is what the pickup calendar event names.
+const PICKUP_PATTERNS = [
+  { re: /\bthe ups store\b/i, label: "The UPS Store" },
+  { re: /\bups (access point|store|location)\b/i, label: "UPS Access Point" },
+  { re: /\bamazon (hub ?)?(locker|counter)\b/i, label: "Amazon Hub Locker" },
+  { re: /\bfedex (office|onsite|hold|location|pickup)\b/i, label: "FedEx pickup location" },
+  { re: /\b(usps|post office) (hold|pickup|for pickup)\b/i, label: "USPS pickup" },
+  { re: /\bhold(ing)? (for|at) (a )?(pickup|location)\b/i, label: "Hold for pickup" },
+  { re: /\b(available|ready|waiting) for (you to )?pick ?up\b/i, label: "Ready for pickup" },
+  { re: /\bpick ?up (location|point|at the)\b/i, label: "Pickup location" },
+];
+
+/**
+ * Detect whether a shipping email routes to a PICKUP location and, if so, a short
+ * label for it (e.g. "The UPS Store"). Pure. The exact street address is often
+ * absent from carrier emails, so we capture the provider label reliably and leave
+ * the precise spot to the family's one known location / the tracking page.
+ */
+export function detectPickupLocation(subject = "", body = "") {
+  const text = `${subject}\n${body}`;
+  for (const { re, label } of PICKUP_PATTERNS) {
+    if (re.test(text)) return { isPickup: true, location: label };
+  }
+  return { isPickup: false, location: "" };
+}
+
 // --- local store ------------------------------------------------------------
 
 async function load() {
@@ -78,8 +112,11 @@ async function save(db) {
   await writeFile(STORE_PATH(), JSON.stringify(db, null, 2));
 }
 
-/** Upsert a tracked package (keeps the original addedAt). */
-export async function addPackage({ trackingNumber, carrier, description = "", url = "" }, now = Date.now()) {
+/** Upsert a tracked package (keeps the original addedAt + any pickup scheduling). */
+export async function addPackage(
+  { trackingNumber, carrier, description = "", url = "", owner, pickup, location },
+  now = Date.now()
+) {
   if (!trackingNumber) return;
   const db = await load();
   const prev = db.items[trackingNumber];
@@ -88,9 +125,28 @@ export async function addPackage({ trackingNumber, carrier, description = "", ur
     carrier: carrier || prev?.carrier || "Unknown",
     description: (description || prev?.description || "").slice(0, 300),
     url: url || prev?.url || "",
+    owner: owner || prev?.owner || "nic",        // who it's for (drives pickup urgency)
+    pickup: pickup ?? prev?.pickup ?? false,     // true => sent to a pickup location
+    location: location || prev?.location || "",  // pickup location label, if any
+    pickupScheduledAt: prev?.pickupScheduledAt || null, // set once we propose a pickup event
     addedAt: prev?.addedAt || new Date(now).toISOString(),
     delivered: prev?.delivered || false,
   };
+  await save(db);
+}
+
+/** Packages awaiting a pickup event: active, at a pickup location, not yet proposed. */
+export async function listPickupsNeedingSchedule() {
+  const db = await load();
+  return Object.values(db.items).filter((p) => !p.delivered && p.pickup && !p.pickupScheduledAt);
+}
+
+/** Mark that a pickup calendar event has been PROPOSED, so we don't re-propose it. */
+export async function markPickupScheduled(trackingNumber, now = Date.now()) {
+  const db = await load();
+  const p = db.items[trackingNumber];
+  if (!p) return;
+  p.pickupScheduledAt = new Date(now).toISOString();
   await save(db);
 }
 
@@ -117,7 +173,9 @@ export function formatPackages(packages) {
   return packages
     .map((p) => {
       const date = p.addedAt ? new Date(p.addedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "unknown";
-      return `${p.description || "Package"} — ${p.carrier} ${p.trackingNumber} (since ${date})${p.url ? `\n  ${p.url}` : ""}`;
+      const who = p.owner ? `${p.owner[0].toUpperCase()}${p.owner.slice(1)}: ` : "";
+      const pickup = p.pickup ? ` [pickup${p.location ? ` @ ${p.location}` : ""}]` : "";
+      return `${who}${p.description || "Package"} — ${p.carrier} ${p.trackingNumber}${pickup} (since ${date})${p.url ? `\n  ${p.url}` : ""}`;
     })
     .join("\n");
 }
@@ -130,6 +188,8 @@ export function formatPackages(packages) {
 export async function processShipmentEmail({ subject = "", body = "", description = "" } = {}) {
   const found = extractTrackingNumbers(`${subject}\n${body}`);
   const isDelivery = isDeliveryConfirmation(subject, body);
+  const owner = attributeOwner(subject, body);
+  const { isPickup, location } = detectPickupLocation(subject, body);
   const tracked = [];
   const delivered = [];
   for (const n of found) {
@@ -137,9 +197,9 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
       await markDelivered(n.trackingNumber);
       delivered.push(n);
     } else {
-      await addPackage({ ...n, description });
+      await addPackage({ ...n, description, owner, pickup: isPickup, location });
       tracked.push(n);
     }
   }
-  return { isDelivery, found, tracked, delivered };
+  return { isDelivery, found, tracked, delivered, owner, pickup: isPickup, location };
 }
