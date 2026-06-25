@@ -28,6 +28,10 @@ import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
 import { isWorkDomain, shouldAutoReply } from "./guards.js";
+import { logAction, listActions, formatAudit } from "./audit.js";
+import { getMealsInRange } from "./meals.js";
+import { mealsToGroceryItems } from "./meal-grocery.js";
+import { formatDashboard } from "./dashboard.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("orchestrator");
@@ -274,6 +278,24 @@ const tools = [
     input_schema: { type: "object", properties: { store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] }, item: { type: "string" } }, required: ["store", "item"] },
   },
   {
+    name: "meals_to_grocery_list",
+    description:
+      "Turn the planned meals over a date range into a grocery list: collect their ingredients and add them to a store's To Do list (default Ralphs). Use for 'add this week's dinners to the shopping list'. Dates YYYY-MM-DD; store optional. Only meals that have ingredients contribute.",
+    input_schema: { type: "object", properties: { startDate: { type: "string" }, endDate: { type: "string" }, store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] } }, required: ["startDate", "endDate"] },
+  },
+  {
+    name: "recent_actions",
+    description:
+      "Show what you (Lloyd) have actually done recently — the audit log of outbound actions (emails sent, calendar events, orders). Use for 'what have you done this week?' / 'did you send that email?'. `days` optional (default 7). Read-only.",
+    input_schema: { type: "object", properties: { days: { type: "number" } } },
+  },
+  {
+    name: "show_today",
+    description:
+      "Build a quick 'today' card: schedule, Fox's day + wardrobe, meals, due/overdue tasks, packages arriving. A fast deterministic snapshot (no research). Use for 'what's today?' / 'give me the rundown'.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "remove_shopping_item",
     description: "Remove an item from the shopping list by its id (from list_shopping) or name. Pass clearAll true to empty the whole list (e.g. after a shopping run).",
     input_schema: { type: "object", properties: { item: { type: "string" }, clearAll: { type: "boolean" } } },
@@ -371,21 +393,28 @@ const tools = [
 // they take serializable params, not closures. Registered once at module load.
 registerActionHandler("calendar", async (input) => {
   const r = await createEvent(input);
+  await logAction("calendar", `Created event "${r.subject}"${input.start ? ` at ${input.start}` : ""}`);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
 });
 registerActionHandler("email", async ({ to, cc, bcc, subject, body }) => {
   await sendMail({ to, cc, bcc, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
   await recordEmailContact(to); // remember we've now written them, so next time isn't "first contact"
+  await logAction("email", `Sent email to ${to}${subject ? ` re: "${subject}"` : ""}`);
   return "Email sent.";
 });
 registerActionHandler("order", async ({ url, steps }) => {
   const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
+  await logAction("order", `Ran order flow at ${r.finalUrl}`);
   return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
 });
 // The weekly Ralphs grocery order (assembled Friday from the shopping list). Runs
 // on Lloyd's local Mac (real IP) only after the family approves; placeRalphsOrder
 // handles the slow, signed-in-Chrome checkout (live steps pending).
-registerActionHandler("grocery", async (order) => placeRalphsOrder(order));
+registerActionHandler("grocery", async (order) => {
+  const r = await placeRalphsOrder(order);
+  await logAction("order", `Ralphs grocery order (${order?.count ?? "?"} items, ${order?.deliveryWindow || "Friday"})`);
+  return r;
+});
 
 // --- Transports: how one turn delivers its result + mirrors its work --------
 // A transport is { reply(text), mirror(event) }. SMS and email are built in;
@@ -613,6 +642,44 @@ function toolHandlers({ images, onDelegate } = {}) {
       } catch (e) {
         return `Could not add to the ${store} list: ${e.message}`;
       }
+    },
+    meals_to_grocery_list: async ({ startDate, endDate, store }) => {
+      try {
+        const meals = await getMealsInRange(startDate, endDate);
+        const items = mealsToGroceryItems(meals);
+        if (!items.length) return "None of those meals have ingredients listed, so there's nothing to add. (Add ingredients when planning a meal to use this.)";
+        const target = store || "Ralphs";
+        for (const it of items) await addTodoTask(target, it);
+        await logAction("list", `Added ${items.length} meal ingredient(s) to the ${target} list`);
+        return `Added ${items.length} ingredient(s) from ${meals.length} meal(s) to the ${target} list: ${items.slice(0, 15).join(", ")}${items.length > 15 ? "…" : ""}`;
+      } catch (e) {
+        return `Could not build the grocery list: ${e.message}`;
+      }
+    },
+    recent_actions: async ({ days } = {}) => formatAudit(await listActions({ sinceDays: days || 7 })),
+    show_today: async () => {
+      const tz = process.env.FAMILY_TZ || "America/Los_Angeles";
+      const now = new Date();
+      const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+      const dateLabel = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(now);
+      const safe = async (fn, fb) => { try { return await fn(); } catch { return fb; } };
+      const rawEvents = (await safe(() => listEvents({ days: 1 }), [])) || [];
+      const events = rawEvents.slice(0, 8).map((e) => ({
+        time: String(e.start?.dateTime || e.start || "").slice(11, 16),
+        title: e.subject || e.title || "(event)",
+        who: Array.isArray(e.calendars) ? e.calendars.join("/") : e.calendars || "",
+      }));
+      const foxRaw = await safe(() => getFoxToday(), null);
+      const fox = foxRaw ? { activities: foxRaw.activities || "", wardrobe: foxRaw.clothingHint || "" } : null;
+      const meals = (await safe(() => getMealsInRange(todayKey, todayKey), [])) || [];
+      const pkgs = (await safe(() => listActivePackages(), [])) || [];
+      const packages = pkgs.map((p) => ({ label: p.label || p.carrier, carrier: p.carrier, eta: p.eta || p.status }));
+      const taskList = (await safe(() => listTasks(), [])) || [];
+      const tasks = taskList
+        .filter((t) => !t.done && t.dueDate)
+        .map((t) => ({ title: t.title, overdue: t.dueDate < todayKey }))
+        .filter((t) => t.overdue || taskList.find((x) => x.title === t.title)?.dueDate === todayKey);
+      return formatDashboard({ dateLabel, events, fox, meals, packages, tasks });
     },
     remove_shopping_item: async ({ item, clearAll }) => {
       if (clearAll) return `Cleared the shopping list (${await clearShopping()} items).`;
