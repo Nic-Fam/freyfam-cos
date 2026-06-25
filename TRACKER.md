@@ -786,7 +786,7 @@ only Steve's execution backend changes.
 - Note: this is a capability upgrade too — Claude Code gives Steve real file/bash/build
   tools (vs the current text-only runner), which is what "build a household app" needs.
 
-### R. Resilience & disaster recovery (local hardware failure / power outage)  `[ ]`  — BIG ITEM, added 2026-06-24
+### R. Resilience & disaster recovery (local hardware failure / power outage)  `[~]`  — SOFTWARE DONE 2026-06-24; hardware (auto-power-on, UPS) remains at provisioning
 
 The system is local-first, so the Mac mini running Lloyd is a single point of failure:
 a power outage or hardware/disk failure takes down the host that owns the queue
