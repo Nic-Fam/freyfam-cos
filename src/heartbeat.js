@@ -19,6 +19,8 @@ import { shouldAutoReply, isFamilyAddress } from "./guards.js";
 import { recordLiveness } from "./liveness.js";
 import { backupState } from "./backup.js";
 import { checkOutageOnBoot, setLastSeen } from "./outage.js";
+import { checkBreaches, newBreachFindings } from "./security-monitor.js";
+import { addFinding, listFindings } from "./security.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("heartbeat");
@@ -83,6 +85,32 @@ async function maybeBackup() {
   if (now - lastBackupAt < BACKUP_INTERVAL_MS) return;
   lastBackupAt = now;
   await backupState();
+}
+
+// Frank's breach-feed monitor (read-only): on a weekly cadence, check the family's
+// emails against HaveIBeenPwned; a NEW exposure becomes a high-severity finding +
+// an owner alert. Inert until SECURITY_WATCH_EMAILS + HIBP_API_KEY are set.
+let lastSecurityScanAt = 0;
+const SECURITY_SCAN_INTERVAL_MS = Number(process.env.SECURITY_SCAN_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000);
+const SECURITY_WATCH_EMAILS = (process.env.SECURITY_WATCH_EMAILS || "").split(",").map((s) => s.trim()).filter(Boolean);
+async function maybeSecurityScan() {
+  const now = Date.now();
+  if (now - lastSecurityScanAt < SECURITY_SCAN_INTERVAL_MS) return;
+  lastSecurityScanAt = now;
+  if (!SECURITY_WATCH_EMAILS.length) return; // not configured
+  try {
+    const { skipped, results } = await checkBreaches(SECURITY_WATCH_EMAILS);
+    if (skipped) return;
+    const seen = new Set((await listFindings()).map((f) => f.title));
+    const fresh = newBreachFindings(results, seen);
+    for (const b of fresh) {
+      await addFinding({ title: b.title, severity: "high", summary: `${b.email} appears in the ${b.breach} breach (HaveIBeenPwned).`, recommendation: "Change that account's password and enable 2FA." });
+      await notifyOwner(`Security: ${b.email} found in a new breach (${b.breach}). Frank logged it; consider changing that password.`);
+    }
+    log.info("security scan complete", { emails: SECURITY_WATCH_EMAILS.length, newExposures: fresh.length });
+  } catch (err) {
+    log.error("security scan failed", { reason: err.message });
+  }
 }
 
 // Morning digest: fire once per local day in the morning window. Lloyd composes
@@ -204,6 +232,7 @@ export async function tick() {
   await setLastSeen(); // local heartbeat stamp for boot-time outage detection
   await maybeCheckCosts();
   await maybeBackup();
+  await maybeSecurityScan();
   await maybeRunDigest();
   await maybeFireReminders();
   await maybeRunResale();
