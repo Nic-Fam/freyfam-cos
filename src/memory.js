@@ -1,6 +1,5 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { embed, cosine, isEnabled, MODEL_ID } from "./embeddings.js";
+import { createCollection } from "./stores/collection.js";
 
 // ===========================================================================
 // The shared "brain" lives LOCALLY on the MacBook (no Azure AI Search needed
@@ -18,18 +17,16 @@ import { embed, cosine, isEnabled, MODEL_ID } from "./embeddings.js";
 // corpus outgrows an in-memory scan. Keep the recall()/remember() interface.
 // ===========================================================================
 
-const STORE_PATH = process.env.BRAIN_PATH || "./data/brain.json";
+// Lloyd's brain on the pluggable collection store (workstream R — durable memory):
+// local JSON (data/brain.json, identical format) by default, or his own
+// managed-identity Azure Table when COS_TABLE_* is set, so recall/remember survive a
+// local disk failure NATIVELY (not only via the periodic Blob snapshot). The
+// recall/remember interface is unchanged; only where the bytes live moved.
+const col = () => createCollection({ file: process.env.BRAIN_PATH || "./data/brain.json", partition: "brain" });
 
+// Read the whole brain (recall scans it; corpus is small at household size).
 async function load() {
-  try {
-    return JSON.parse(await readFile(STORE_PATH, "utf8"));
-  } catch {
-    return { items: [] };
-  }
-}
-async function save(db) {
-  await mkdir(dirname(STORE_PATH), { recursive: true });
-  await writeFile(STORE_PATH, JSON.stringify(db, null, 2));
+  return { items: await col().list() };
 }
 
 // Compute the stored vector for a fact. Returns { embedding, embModel } where
@@ -72,10 +69,8 @@ function termCounts(tokens) {
 }
 
 export async function remember(text, meta = {}) {
-  const db = await load();
   const { embedding, embModel } = await embedItem(text);
-  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
-  await save(db);
+  await col().add({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
 }
 
 /**
@@ -84,11 +79,10 @@ export async function remember(text, meta = {}) {
  * without piling up duplicates. (recall/remember stay unchanged for callers.)
  */
 export async function rememberOnce(text, meta = {}) {
-  const db = await load();
-  if (db.items.some((it) => it.text === text)) return false;
+  const items = await col().list();
+  if (items.some((it) => it.text === text)) return false;
   const { embedding, embModel } = await embedItem(text);
-  db.items.push({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
-  await save(db);
+  await col().add({ id: Date.now() + ":" + Math.random().toString(36).slice(2), text, meta, embedding, embModel });
   return true;
 }
 

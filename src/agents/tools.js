@@ -23,6 +23,7 @@ import {
   listActive, summary, getExpiringSoon, addItem, consume,
 } from "../meals.js";
 import { addFinding, listFindings, SECURITY_SEVERITIES } from "../security.js";
+import { securityPosture } from "../security-monitor.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("agent-tools");
@@ -43,7 +44,7 @@ export const AGENT_ALLOWLIST = {
   finance: [...COMMON_TOOLS, "analyze_transactions"], // NO search/browse/outbound — finance stays locked down
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
-  security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings"],
+  security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
   dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
 };
 
@@ -302,6 +303,7 @@ const REGISTRY = {
         }, ["title"]),
       },
       { name: "list_security_findings", description: "List recorded security findings.", input_schema: obj({}) },
+      { name: "security_posture", description: "Summarize the OPEN security findings worst-first (counts by severity + what needs attention). Use for 'how's our security?' / a posture check. Read-only.", input_schema: obj({}) },
     ],
     handlers: {
       ...memoryHandlers("security"),
@@ -309,6 +311,7 @@ const REGISTRY = {
       ...searchHandler(),
       log_security_finding: async (input) => JSON.stringify(await addFinding(input)),
       list_security_findings: async () => JSON.stringify(await listFindings()),
+      security_posture: async () => securityPosture(await listFindings()),
     },
   }),
 
