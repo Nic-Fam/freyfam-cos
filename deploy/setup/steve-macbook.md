@@ -5,47 +5,27 @@ access. Like Frank, he runs the HTTP harness `deploy/specialists/local-server.mj
 (`npm run specialist`) and Lloyd reaches him over the LAN with the same
 `{agent,task} -> {text}` contract, key auth, and agent pin.
 
-**What makes Steve different (workstream Q):** instead of the metered Anthropic API,
-Steve's runner shells out to a **Claude Code subscription** (headless `claude -p`).
-Dev work — file edits, running tests, building the household's little apps — is
-exactly Claude Code's wheelhouse, flat-rate billing takes the heaviest agent off
-per-token cost, and it's a capability upgrade: Steve gets real file/bash/build tools
-instead of the text-only runner. The `delegate` contract is unchanged; only Steve's
-execution backend differs, and only when `COS_DEV_BACKEND=claude-code`.
+**Steve runs on the metered Anthropic API, like every other specialist.** An earlier
+design ran him on a flat-rate Claude Code *subscription* (headless `claude -p`); that
+was **removed 2026-06-25** because driving a Claude subscription headlessly from an
+automated agent violates Anthropic's terms of service. There is no subscription
+backend anymore.
 
-> Code reference: `src/specialists/dev-claude-code.js` + the `DEV` block in
-> `src/config.js`. The runner branches to this backend for `agent==="dev"`.
+**How Steve keeps cost low instead:** he proposes changes (he does not edit files
+himself), and he triages by size — small, well-scoped tweaks he handles directly on
+the API (cheap), and large or open-ended work he hands off to Nic to run in a
+**human-driven remote Claude Code session**, with a crisp brief. He also coordinates
+the dev backlog (his items + Nic's) via `propose_change` / `list_proposals`. See his
+persona (`src/agents/dev.md`).
 
 ---
 
 ## 0. What this box must have when you're done
 
 - Node 22+, this repo checked out, a minimal `.env`.
-- **Claude Code installed and logged into the subscription** (OAuth profile).
-- **`ANTHROPIC_API_KEY` NOT in this process's environment** (it shadows the
-  subscription — see the critical gotcha below).
+- An **`ANTHROPIC_API_KEY`** in this process's environment (Steve reasons via the API).
 - A stable LAN hostname + a function key that matches Lloyd's `COS_SPECIALIST_KEY_DEV`.
-- The specialist server running under `launchd`, pinned to `COS_AGENT=dev`,
-  `COS_DEV_BACKEND=claude-code`.
-
----
-
-## ⚠️ The critical gotcha: API key SHADOWS the subscription
-
-Claude Code resolves a **subscription via OAuth profile** (`claude /login`) — no API
-key. But if `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) is present, it **wins
-credential precedence** and Claude Code uses the metered API instead, defeating the
-entire point (and a key + auth token together can 401).
-
-Two layers protect against this:
-1. The backend's `subscriptionEnv()` **deletes** both vars from the child process it
-   spawns, so the subscription always wins for delegated dev tasks.
-2. You should still **keep `ANTHROPIC_API_KEY` out of Steve's environment** entirely
-   (don't set it in `.env` or the plist) so nothing — a manual `claude` run, the
-   fallback path — accidentally bills the API.
-
-Trade-off to decide (see `COS_DEV_FALLBACK_API` in step 4): pure subscription vs. a
-metered safety net when the subscription cap is hit.
+- The specialist server running under `launchd`, pinned to `COS_AGENT=dev`.
 
 ---
 
@@ -71,32 +51,10 @@ node -v                  # v22.x
 which node               # note the absolute path for launchd
 ```
 
-## 3. Install Claude Code + log into the subscription
+## 3. Minimal `.env`
 
-```bash
-# install the CLI (see https://claude.com/claude-code for the current installer)
-npm install -g @anthropic-ai/claude-code     # or the documented install method
-which claude                                 # note the absolute path -> CLAUDE_CODE_BIN
-
-# authenticate ONCE against the subscription (interactive, opens a browser):
-claude     # then run /login inside the session and choose the subscription
-```
-
-Verify the subscription works headlessly **with the API key unset**:
-```bash
-env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-  claude -p "say hello in five words" --output-format json
-# expect JSON with "is_error": false and a "result" string — and NO API spend
-```
-
-> The OAuth profile is a credential on this machine (persisted by Claude Code), not
-> an `.env` value. Confirm the subscription's **usage limits** (Max/Pro caps) are
-> enough for the expected dev volume.
-
-## 4. Minimal `.env`
-
-Steve needs **no** Anthropic API key, Twilio, Graph, or queue creds — the
-subscription handles reasoning and Lloyd owns everything outward-facing.
+Steve needs an **Anthropic API key** (for reasoning) plus his identity/auth. He needs
+no Twilio, Graph, or queue creds — Lloyd owns everything outward-facing.
 
 ```bash
 cp .env.example .env
@@ -109,41 +67,25 @@ COS_AGENT=dev                      # pins this process to ONE agent; misroutes g
 COS_SPECIALIST_LOCAL_KEY=<long-random-key>   # must equal Lloyd's COS_SPECIALIST_KEY_DEV
 PORT=8787
 
-# --- Workstream Q: route Steve to the Claude Code subscription ---
-COS_DEV_BACKEND=claude-code        # api | claude-code
-CLAUDE_CODE_BIN=claude             # or the absolute path from `which claude`
-COS_DEV_CWD=/Users/<user>/steve-workspace   # the dir Steve edits/builds in
-COS_DEV_TIMEOUT_MS=180000          # per-task budget (a build/test run can be slow)
-COS_DEV_FALLBACK_API=false         # see below
+# --- Reasoning (metered API, same as the other specialists) ---
+ANTHROPIC_API_KEY=sk-ant-...        # Steve runs on the API; keep usage low via triage
 
-# --- Local-time + memory (local JSON on this Mac; recall runs before the dev branch) ---
+# --- Local-time + memory (local JSON on this Mac) ---
 FAMILY_TZ=America/Los_Angeles
-
-# IMPORTANT: do NOT set ANTHROPIC_API_KEY on this box.
 ```
 
-**`COS_DEV_FALLBACK_API`:**
-- `false` (recommended for pure subscription) — if the subscription cap is hit, the
-  delegation returns a clear error to Lloyd. No surprise API spend. Keeps the API key
-  off the box.
-- `true` — on a cap/timeout, Steve spills back to the metered API loop. That path
-  needs `ANTHROPIC_API_KEY` present in Steve's env to actually work; note that adding
-  the key is safe for the subscription itself (the `claude -p` child still scrubs it)
-  but it means a cap silently becomes metered spend. Only enable if you want that
-  safety net and accept the cost.
+> There is no `COS_DEV_BACKEND` / `CLAUDE_CODE_BIN` / `COS_DEV_FALLBACK_API` anymore —
+> those configured the removed subscription backend. Do **not** install or wire a
+> headless `claude` CLI for Steve.
 
-> Make `COS_DEV_CWD` a directory Steve is allowed to operate in (e.g. a clone of the
-> app he maintains). Claude Code's file/bash tools act there — never on the family's
-> behalf; outbound + confirmation still live only on Lloyd.
-
-## 5. Run it (foreground first)
+## 4. Run it (foreground first)
 
 ```bash
 COS_AGENT=dev PORT=8787 COS_SPECIALIST_LOCAL_KEY=<key> npm run specialist
 # -> [specialist] local specialist listening { agent: 'dev', port: 8787, authed: true }
 ```
 
-### Verify locally — and confirm it used the subscription, not the API
+### Verify locally
 ```bash
 curl -s -X POST http://localhost:8787/ \
   -H "content-type: application/json" \
@@ -151,13 +93,11 @@ curl -s -X POST http://localhost:8787/ \
   -d '{"agent":"dev","task":"In one sentence, what would you check first if a Node daemon exits on boot?"}'
 # expect {"text":"..."}
 ```
-Then confirm there was **no Anthropic API usage** for that call in the Console (it
-should have gone against the subscription). Wrong-agent → 403, bad/missing key → 401,
-same as Frank.
+Wrong-agent → 403, bad/missing key → 401, same as Frank.
 
 From **Lloyd's** box, repeat against `http://steve.local:8787/` to confirm the LAN path.
 
-## 6. Run under launchd
+## 5. Run under launchd
 
 Create `~/Library/LaunchAgents/com.freyfam.steve.plist` (structure from
 `deploy/com.freyfam.cos.plist`, running the specialist entry point):
@@ -177,10 +117,7 @@ Create `~/Library/LaunchAgents/com.freyfam.steve.plist` (structure from
   <key>COS_AGENT</key>               <string>dev</string>
   <key>PORT</key>                    <string>8787</string>
   <key>COS_SPECIALIST_LOCAL_KEY</key><string><key></string>
-  <key>COS_DEV_BACKEND</key>         <string>claude-code</string>
-  <key>CLAUDE_CODE_BIN</key>         <string>/ABS/PATH/TO/claude</string>
-  <key>COS_DEV_CWD</key>             <string>/Users/<user>/steve-workspace</string>
-  <!-- deliberately NO ANTHROPIC_API_KEY here -->
+  <key>ANTHROPIC_API_KEY</key>       <string>sk-ant-...</string>
 </dict>
 <key>RunAtLoad</key>  <true/>
 <key>KeepAlive</key>  <true/>
@@ -188,10 +125,8 @@ Create `~/Library/LaunchAgents/com.freyfam.steve.plist` (structure from
 <key>StandardErrorPath</key><string>/Users/<user>/freyfam-cos/steve.err.log</string>
 ```
 
-> launchd jobs do **not** inherit your shell `.zshrc`/`.zprofile` env. Make sure
-> Claude Code's OAuth profile is readable by the user the LaunchAgent runs as (run
-> `claude /login` as that same user), and that `PATH` covers `claude` and `node` — or
-> use absolute paths as above.
+> launchd jobs do **not** inherit your shell `.zshrc`/`.zprofile` env, so set
+> `ANTHROPIC_API_KEY` in the plist (as above) or via a sourced env file the job reads.
 
 Install + lid-closed:
 ```bash
@@ -199,7 +134,7 @@ launchctl load -w ~/Library/LaunchAgents/com.freyfam.steve.plist
 sudo pmset -c disablesleep 1     # optional; revert with 0
 ```
 
-## 7. Wire Lloyd
+## 6. Wire Lloyd
 
 On **Lloyd's** Mac mini `.env`:
 ```ini
@@ -207,23 +142,17 @@ COS_SPECIALIST_MODE=remote
 COS_SPECIALIST_URL_DEV=http://steve.local:8787/
 COS_SPECIALIST_KEY_DEV=<same key>
 ```
-Restart Lloyd's daemon, delegate a dev task, and confirm Steve answers over the LAN
-on the subscription.
+Restart Lloyd's daemon, delegate a dev task, and confirm Steve answers over the LAN.
 
 ---
 
 ## Notes & troubleshooting
 
-- **ToS:** confirm the subscription's terms allow this automated household use before
-  relying on it.
-- **`claude` not found under launchd** → set `CLAUDE_CODE_BIN` to the absolute path;
-  LaunchAgents don't load your interactive shell `PATH`.
-- **It's billing the API, not the subscription** → `ANTHROPIC_API_KEY` is set
-  somewhere in Steve's environment. Remove it from `.env` and the plist; verify with
-  `env | grep ANTHROPIC` in the same context the server runs.
-- **Tasks error with "usage limit reached"** → the subscription cap is hit. Either
-  wait for reset, or set `COS_DEV_FALLBACK_API=true` **and** provide an API key (see
-  step 4 trade-off).
+- **Large dev tasks:** Steve will not grind a big feature/refactor out on the metered
+  API. He returns a "remote-session job" recommendation with a brief — run it yourself
+  in a remote Claude Code session. That's by design (cost + ToS), not a failure.
+- **Cost:** Steve's API spend stays low because he only fully works small tweaks; the
+  cost watchdog still alerts at the usual threshold.
 - **Restart after code pulls / `.env` changes** — Node caches imported modules, so
   new code only loads on restart. Follow the full safe-restart procedure in
   [`restart.md`](./restart.md) (pre-flight → `kickstart -k` → verify), which is the
@@ -234,6 +163,5 @@ on the subscription.
   tail -5 steve.out.log steve.err.log              # expect "local specialist listening", no NEW errors
   ```
 - **Memory persists** on this Mac's local disk (no Azure Tables needed for a local box).
-- **Hard constraint:** Steve returns text only. The file/bash/build tools act in
-  `COS_DEV_CWD`, never as the family; every real-world effect goes through Lloyd's
-  confirmation gate.
+- **Hard constraint:** Steve returns text only (proposals/plans). He never edits,
+  deploys, or sends; every real-world effect goes through Lloyd's confirmation gate.
