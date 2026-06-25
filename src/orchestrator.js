@@ -1,7 +1,7 @@
 import { agentLoop, systemBlocks } from "./claude.js";
 import { modelForComplexity, GRAPH } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
-import { processShipmentEmail, listActivePackages, formatPackages } from "./packages.js";
+import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
@@ -27,7 +27,7 @@ import { getCommuteTime, formatCommute } from "./commute.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
-import { isWorkDomain, shouldAutoReply } from "./guards.js";
+import { isWorkDomain, shouldAutoReply, isSelfAddress } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
@@ -913,6 +913,25 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   //     so this is the chokepoint that stops bounce loops and saves tokens. SMS /
   //     Slack senders never match, so they always pass.
   if (!shouldAutoReply(msg.from)) {
+    // Carrier shipping/delivery notices come from no-reply/automated senders, so we
+    // won't auto-REPLY. But the tracking number is still worth keeping: record it
+    // silently (no outbound) so package tracking works hands-off. Previously these
+    // were dropped entirely here, which is why auto-tracking never fired. Idempotent
+    // (upsert by tracking number), so the heartbeat scan re-seeing it is harmless.
+    if (
+      msg.channel === "email" &&
+      !isSelfAddress(msg.from) &&
+      (isShippingEmail(msg.subject, msg.body) || isDeliveryConfirmation(msg.subject, msg.body))
+    ) {
+      try {
+        const r = await processShipmentEmail({ subject: msg.subject, body: msg.body });
+        if (r.tracked.length || r.delivered.length) {
+          log.info("auto-tracked shipment (suppressed sender)", { from: msg.from, tracked: r.tracked.length, delivered: r.delivered.length });
+        }
+      } catch (e) {
+        log.error("shipment auto-track failed", { reason: e.message });
+      }
+    }
     log.info("auto-reply suppressed (automated/self sender)", { from: msg.from, channel: msg.channel });
     return;
   }

@@ -1,6 +1,7 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
-import { recentMailSignals } from "./channels/graph.js";
+import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
+import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
@@ -15,7 +16,7 @@ import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, s
 import { formatResolution } from "./grocery-match.js";
 import { listShopping } from "./shopping.js";
 import { requestConfirmation } from "./confirm.js";
-import { shouldAutoReply, isFamilyAddress } from "./guards.js";
+import { shouldAutoReply, isFamilyAddress, isSelfAddress } from "./guards.js";
 import { recordLiveness } from "./liveness.js";
 import { backupState } from "./backup.js";
 import { checkOutageOnBoot, setLastSeen } from "./outage.js";
@@ -56,7 +57,8 @@ async function gatherSignals() {
   } catch (err) {
     log.error("kitchen signal fetch failed", { reason: err.message });
   }
-  // TODO (Claude Code): add calendar deltas, reminders, resale saved-search hits.
+  // TODO (Claude Code): add calendar deltas. (Reminders fire via maybeFireReminders;
+  // shipments are recorded by maybeScanShipments; resale runs on its own schedule.)
   return signals;
 }
 
@@ -85,6 +87,33 @@ async function maybeBackup() {
   if (now - lastBackupAt < BACKUP_INTERVAL_MS) return;
   lastBackupAt = now;
   await backupState();
+}
+
+// Proactive shipment scan: on a slow cadence, read recent inbox mail (bodies) and
+// record any tracking numbers, so packages are tracked hands-off even though the
+// carrier's no-reply emails never reach the chief. Silent by design (no owner ping
+// per shipment — that would be noisy); the family sees packages via the dashboard /
+// "what's on the way?". processShipmentEmail is idempotent, so re-seeing the same
+// mail each scan is a no-op. Best-effort; a Graph hiccup never sinks the tick.
+let lastShipmentScanAt = 0;
+const SHIPMENT_SCAN_INTERVAL_MS = Number(process.env.SHIPMENT_SCAN_INTERVAL_MS || 30 * 60 * 1000); // 30 min
+async function maybeScanShipments() {
+  const now = Date.now();
+  if (now - lastShipmentScanAt < SHIPMENT_SCAN_INTERVAL_MS) return;
+  lastShipmentScanAt = now;
+  try {
+    let tracked = 0, delivered = 0;
+    for (const m of await recentShipmentMail({ top: 25 })) {
+      if (isSelfAddress(m.from)) continue; // never act on our own outbound
+      if (!isShippingEmail(m.subject, m.body) && !isDeliveryConfirmation(m.subject, m.body)) continue;
+      const r = await processShipmentEmail({ subject: m.subject, body: m.body });
+      tracked += r.tracked.length;
+      delivered += r.delivered.length;
+    }
+    if (tracked || delivered) log.info("shipment scan recorded", { tracked, delivered });
+  } catch (err) {
+    log.error("shipment scan failed", { reason: err.message });
+  }
 }
 
 // Frank's breach-feed monitor (read-only): on a weekly cadence, check the family's
@@ -232,6 +261,7 @@ export async function tick() {
   await setLastSeen(); // local heartbeat stamp for boot-time outage detection
   await maybeCheckCosts();
   await maybeBackup();
+  await maybeScanShipments();
   await maybeSecurityScan();
   await maybeRunDigest();
   await maybeFireReminders();

@@ -65,6 +65,27 @@ export async function recentMailSignals({ top = 15 } = {}) {
 }
 
 /**
+ * Recent inbox messages WITH bodies, for the proactive shipment scan (the
+ * heartbeat reads tracking numbers, which live in the body, not the headers).
+ * Distinct from recentMailSignals (headers only) because pulling bodies is
+ * heavier, so callers run it on a slow cadence. Returns {from, subject, body}.
+ */
+export async function recentShipmentMail({ top = 25 } = {}) {
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/mailFolders/inbox/messages`)
+    .top(top)
+    .select("from,subject,body,receivedDateTime")
+    .orderby("receivedDateTime desc")
+    .get();
+  return (res.value || []).map((m) => ({
+    from: m.from?.emailAddress?.address,
+    subject: m.subject || "",
+    body: m.body?.content || "",
+    receivedAt: m.receivedDateTime,
+  }));
+}
+
+/**
  * Fetch file attachments for one message (workstream L: document intake). The
  * front door passes the `graphMessageId`; the daemon pulls the bytes via the
  * app-only Mail.Read it already has (no new consent). Returns materialized
