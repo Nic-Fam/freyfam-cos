@@ -1,10 +1,9 @@
 import { agentLoop, systemBlocks } from "../claude.js";
-import { MODELS, DEV } from "../config.js";
+import { MODELS } from "../config.js";
 import { recall } from "../memory.js";
 import { persona } from "../persona.js";
 import { specialistTools } from "../agents/tools.js";
 import { getAgentRules, formatAgentRules } from "../rules.js";
-import { runDevViaClaudeCode } from "./dev-claude-code.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("specialist");
@@ -45,23 +44,6 @@ export async function runSpecialist(agent, task, { images } = {}) {
     formatAgentRules(rules),
     mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
-  // Workstream Q: route Steve to the Claude Code subscription backend (flat-rate,
-  // real file/bash/build tools) instead of the metered API loop below. Text-only
-  // path -- if the turn carried photos (the headless prompt is text), or the
-  // subscription is capped/unavailable, we fall back to the API loop, so this is
-  // a strict upgrade: never worse than before. Same {agent,task}->text result.
-  if (agent === "dev" && DEV.backend === "claude-code" && !images?.length) {
-    try {
-      return await runDevViaClaudeCode(task, { persona: p, ctx, cfg: DEV });
-    } catch (err) {
-      if (!DEV.fallbackToApi) throw err;
-      log.warn("dev claude-code backend failed; falling back to API", {
-        code: err?.code,
-        error: String(err?.message || err),
-      });
-    }
-  }
-
   const { tools: specTools, handlers: rawHandlers } = specialistTools(agent);
   // Trace each tool call so a runaway loop (the one that ends in "max tool turns
   // reached") is visible: we log the tool name before invoking it, and any failure.
