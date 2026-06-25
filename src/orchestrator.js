@@ -7,6 +7,7 @@ import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { watchItem, listWatched, unwatchItem } from "./watch.js";
 import { placeRalphsOrder } from "./grocery.js";
+import { planRxSync, formatRxPlan } from "./rx.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
@@ -386,6 +387,30 @@ const tools = [
       required: ["url", "summary"],
     },
   },
+  {
+    name: "plan_rx_sync",
+    description:
+      "Plan a synced monthly CVS prescription delivery. Given each regular med's next ready date and its return-to-stock deadline, it picks ONE delivery date, says which early refills to hold until then, and flags any that can't wait (would be returned to stock first). PLANNING ONLY — it surfaces the plan; it does not contact CVS, change a fill, or order anything. Use when the family wants to consolidate refills onto one monthly delivery.",
+    input_schema: {
+      type: "object",
+      properties: {
+        meds: {
+          type: "array",
+          description: "The regular medications to sync onto one delivery.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              readyDate: { type: "string", description: "YYYY-MM-DD — when the next fill is ready to ship" },
+              returnByDate: { type: "string", description: "YYYY-MM-DD — last day before CVS returns it to stock (optional)" },
+            },
+            required: ["name", "readyDate"],
+          },
+        },
+      },
+      required: ["meds"],
+    },
+  },
 ];
 
 // Executors for the gated actions, keyed by the `kind` staged in confirm.js. They
@@ -589,6 +614,7 @@ function toolHandlers({ images, onDelegate } = {}) {
       return `Now tracking: ${fmt(r.tracked)}.`;
     },
     list_packages: async () => formatPackages(await listActivePackages()),
+    plan_rx_sync: async ({ meds }) => formatRxPlan(planRxSync(meds)),
     add_task: async ({ title, dueDate, owner }) => {
       try {
         const t = await addTask({ title, dueDate, owner });
