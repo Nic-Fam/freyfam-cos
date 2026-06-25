@@ -347,6 +347,20 @@ const REGISTRY = {
  * chief-only (outbound/high-stakes) tool is a hard misconfiguration and throws.
  * Unknown agent -> empty sets (no tools).
  */
+// Progressive trust (the Genet "limited access first, expanded as it proves out"
+// principle). An agent may be temporarily narrowed to a SUBSET of its allowlist while
+// it earns trust: `COS_TRUST_<AGENT>` (comma-separated tool names) enables ONLY those,
+// plus the always-on memory/decision baseline (so even the lowest-trust agent can
+// observe + remember, never act beyond scope). UNSET => the full allowlist (default,
+// no restriction). Set it empty (e.g. COS_TRUST_DEV=) for baseline-only "observe" mode.
+// This NARROWS the K#4 allowlist; it can never widen past it. Pure (env-driven).
+export function trustedTools(agent, allow) {
+  const raw = process.env[`COS_TRUST_${String(agent).toUpperCase()}`];
+  if (raw === undefined) return new Set(allow); // not configured -> full allowlist
+  const enabled = new Set([...COMMON_TOOLS, ...raw.split(",").map((s) => s.trim()).filter(Boolean)]);
+  return new Set([...allow].filter((t) => enabled.has(t)));
+}
+
 export function specialistTools(agent) {
   const make = REGISTRY[agent];
   if (!make) return { tools: [], handlers: {} };
@@ -360,21 +374,20 @@ export function specialistTools(agent) {
       throw new Error(`Tool allowlist for "${agent}" contains chief-only tool "${name}": specialists never send or spend.`);
     }
   }
+  // Progressive trust narrows (never widens) the allowlist for what's CURRENTLY enabled.
+  const trusted = trustedTools(agent, allow);
 
   const { tools, handlers } = make();
-  // Fail CLOSED: keep only allowlisted tools/handlers. If the registry produced
-  // anything outside the allowlist, drop it and log so the drift is visible.
-  const keptTools = tools.filter((t) => allow.has(t.name));
-  const droppedTools = tools.map((t) => t.name).filter((n) => !allow.has(n));
-  if (droppedTools.length) log.error("blocked out-of-allowlist tools", { agent, dropped: droppedTools });
+  // Fail CLOSED on registry DRIFT: a tool the registry produced that isn't even in the
+  // allowlist is a bug -> drop + log error (distinct from an intentional trust restriction).
+  const drift = tools.map((t) => t.name).filter((n) => !allow.has(n));
+  if (drift.length) log.error("blocked out-of-allowlist tools", { agent, dropped: drift });
 
+  // Keep only TRUSTED tools/handlers (allowlisted AND currently enabled by trust level).
+  const keptTools = tools.filter((t) => trusted.has(t.name));
   const keptHandlers = {};
-  const droppedHandlers = [];
   for (const [name, fn] of Object.entries(handlers)) {
-    if (allow.has(name)) keptHandlers[name] = fn;
-    else droppedHandlers.push(name);
+    if (trusted.has(name)) keptHandlers[name] = fn;
   }
-  if (droppedHandlers.length) log.error("blocked out-of-allowlist handlers", { agent, dropped: droppedHandlers });
-
   return { tools: keptTools, handlers: keptHandlers };
 }

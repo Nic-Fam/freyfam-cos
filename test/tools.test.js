@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { specialistTools, AGENT_ALLOWLIST, CHIEF_ONLY_TOOLS } from "../src/agents/tools.js";
+import { specialistTools, AGENT_ALLOWLIST, CHIEF_ONLY_TOOLS, trustedTools } from "../src/agents/tools.js";
 
 test("each specialist exposes scoped memory tools, all with handlers + valid schemas", () => {
   for (const agent of ["finance", "resale", "dev", "chef", "security"]) {
@@ -73,4 +73,39 @@ test("an allowlist naming a chief-only tool is a hard misconfiguration (throws)"
   } finally {
     AGENT_ALLOWLIST.finance.pop(); // restore so later tests are unaffected
   }
+});
+
+// --- progressive trust (narrows the allowlist while an agent earns trust) ----
+
+test("trustedTools: unset = full allowlist; subset adds the baseline; empty = baseline only", () => {
+  const allow = AGENT_ALLOWLIST.resale;
+  delete process.env.COS_TRUST_RESALE;
+  assert.deepEqual([...trustedTools("resale", allow)].sort(), [...allow].sort()); // unset -> full
+
+  process.env.COS_TRUST_RESALE = "search";
+  const narrowed = trustedTools("resale", allow);
+  assert.ok(narrowed.has("search"));
+  assert.ok(narrowed.has("recall_memory")); // baseline always on
+  assert.ok(!narrowed.has("add_saved_search")); // restricted out
+  delete process.env.COS_TRUST_RESALE;
+
+  process.env.COS_TRUST_RESALE = ""; // observe mode -> baseline only
+  const baseOnly = trustedTools("resale", allow);
+  assert.ok(baseOnly.has("recall_memory") && baseOnly.has("log_decision"));
+  assert.ok(!baseOnly.has("search"));
+  delete process.env.COS_TRUST_RESALE;
+});
+
+test("specialistTools honors COS_TRUST_<AGENT> (narrows, never widens)", () => {
+  process.env.COS_TRUST_DEV = ""; // dev in observe-only mode
+  try {
+    const names = specialistTools("dev").tools.map((t) => t.name).sort();
+    // observe-only = the always-on baseline (memory + decision log), nothing else
+    assert.deepEqual(names, ["list_decisions", "log_decision", "recall_memory", "remember"]);
+    assert.ok(!names.includes("propose_change")); // restricted while earning trust
+  } finally {
+    delete process.env.COS_TRUST_DEV;
+  }
+  // Back to default -> full allowlist again.
+  assert.ok(specialistTools("dev").tools.some((t) => t.name === "propose_change"));
 });
