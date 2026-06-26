@@ -33,7 +33,25 @@ in the per-workstream sections and the topology section below.
 
 `_smoke.mjs` covers guards + confirm parser + memory round-trip with zero network.
 Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
-suite (49 tests).
+suite (~300 tests).
+
+**Recently shipped (2026-06-23 → 06-25), not mapped to a letter:**
+- **Inbound image intake hardened** — byte-sniffed `media_type` + iPhone **HEIC→JPEG**
+  transcode + graceful skip-with-reason (fixes the Slack/resale "Could not process
+  image" failure); shared across MMS/Slack/iMessage (extends I).
+- **iMessage attachment parity** — images→vision, PDF/.ics/.vcf (incl. vCards)→document
+  extraction, matching the Slack/email front doors (extends I/L).
+- **Hands-off package tracking** — carrier no-reply shipping mail is carved out of the
+  auto-reply suppressor + a proactive heartbeat scan records tracking numbers; plus
+  **owner attribution + pickup-location detection** and **auto-proposed pickup calendar
+  events** (Shelli ASAP, Nic next free slot; through the confirmation gate).
+- **Email CC/BCC** — real `ccRecipients`/`bccRecipients` (was body-text only, so CCs
+  never sent).
+- **Calendar weekday fix** — `list_calendar` attaches an authoritative `day` label so
+  the model stops misnaming days (e.g. Sat Jun 27 as "Friday").
+- **Resale** — Farfetch + Grailed added to Shey's marketplace coverage (persona).
+- **Morning digest** — shows only the first work event of the day.
+- **Restart discipline** — always restart from `main` (runbook + memory); see R.
 
 ---
 
@@ -744,7 +762,19 @@ heartbeat.
 - Freshness note: today's Fox row is empty until the next Bright Horizons email is
   filed; the digest just skips Fox's section until then. 95/95 daemon tests pass.
 
-### Q. Steve on a Claude Code subscription (not the API)  `[~]`  — backend BUILT + VERIFIED LIVE 2026-06-22 (merged to main); go-live is the MacBook login
+### Q. Steve's dev backend — API-only  `[x]`  — REVERSED 2026-06-25 (ToS): the Claude Code subscription backend was REMOVED; Steve runs on the metered API.
+
+> **REVERSED 2026-06-25 (ToS).** Driving a Claude Code subscription headlessly from an
+> automated agent violates Anthropic's terms, so the subscription backend was removed
+> (PR #10): deleted `src/specialists/dev-claude-code.js` + its test, the `runner.js`
+> branch + import, and the `DEV` config block. **Steve now runs on the metered API**
+> like every other specialist, and keeps cost low by triaging by size — small, scoped
+> tweaks he handles directly and returns as a proposal; large/open-ended work he routes
+> to a **human-driven remote Claude Code session** with a crisp brief; he coordinates the
+> dev backlog (his + Nic's) via `propose_change`/`list_proposals`. See persona
+> `src/agents/dev.md`, onboarding `docs/STEVE_HANDOFF.md`, and setup
+> `deploy/setup/steve-macbook.md` (all API-only, PR #10/#11). **The build log below is
+> HISTORICAL** — that backend no longer exists.
 
 Run **Steve (dev)** on a **Claude Code / Claude Max subscription** instead of the
 metered Anthropic API. Two reasons it's the right agent for this: dev work (file
@@ -844,6 +874,19 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
       the eventual durable end state; the Blob snapshot is the quick, complete win.)
       DEPLOY NOTE: takes effect on the next daemon restart (the running process predates
       backup.js); held off here because a parallel session had the working tree.
+- [x] **Dedicated main-only daemon checkout + main-safe nightly restart — SCHEDULED
+      cutover 2026-06-26 01:05.** The single working dir was being branch-switched
+      between parallel sessions, so a restart could deploy a feature branch's in-progress
+      code instead of merged `main`. Fix: the live daemon moves to its OWN checkout
+      `/Users/nfrey2/cos-live` that only ever tracks `main` (carries `data/` state; dev
+      happens in the separate dir / git worktrees, so branch churn never reaches the
+      daemon). A main-safe **nightly 4am restart** (`com.freyfam.cos.restart` ->
+      `cos-ops/restart-from-main.sh`: `git reset --hard origin/main` + `npm install` +
+      kickstart) replaces the old plain-kickstart job, so the automated restart is always
+      from `main`. The cutover runs unattended at 01:05 (copies state, repoints launchd,
+      auto-rolls-back to the old dir if the daemon doesn't come up). See
+      `deploy/setup/restart.md` (PR #9) + the always-restart-from-main memory. Verify:
+      `tail /Users/nfrey2/cos-ops/cutover.log`; `pgrep -fl cos-live/src/daemon.js`.
 - [ ] **Auto-power-on after an outage.** launchd restarts the daemon on boot, but the
       Mac must boot itself first: set `sudo pmset -a autorestart 1` (power back →
       Mac powers on) and confirm the firmware "start up after power failure" setting.
