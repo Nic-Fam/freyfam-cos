@@ -28,7 +28,7 @@ const round2 = (x) => Math.round(Number(x) * 100) / 100;
  * @param {{amount:number, date?:string, merchant?:string, card?:string,
  *          category?:string, note?:string}} input
  */
-export async function logTransaction({ amount, date, merchant, card, category, note } = {}) {
+export async function logTransaction({ amount, date, merchant, card, category, note, source } = {}) {
   if (amount == null || Number.isNaN(Number(amount))) throw new Error("amount is required");
   const item = {
     id: randomUUID().slice(0, 8),
@@ -36,6 +36,10 @@ export async function logTransaction({ amount, date, merchant, card, category, n
     date: date ? String(date).trim() : new Date().toISOString().slice(0, 10),
     merchant: merchant ? String(merchant).trim() : null,
     card: card ? String(card).trim() : null,
+    // source separates credit-card spend from checking-account spend so the
+    // weekly report can break them out. Defaults to "credit" (card alerts are
+    // the common case); checking ingestion passes "checking".
+    source: source === "checking" ? "checking" : "credit",
     category: category ? String(category).trim() : null,
     note: note ? String(note).trim() : null,
     at: new Date().toISOString(),
@@ -44,9 +48,10 @@ export async function logTransaction({ amount, date, merchant, card, category, n
   return item;
 }
 
-/** Newest-first list, optionally filtered by recency window, card, or merchant. */
-export async function listTransactions({ sinceDays, card, merchant } = {}) {
+/** Newest-first list, optionally filtered by recency window, source, card, or merchant. */
+export async function listTransactions({ sinceDays, source, card, merchant } = {}) {
   let items = await col().list();
+  if (source) items = items.filter((it) => (it.source || "credit") === source);
   if (card) {
     const c = String(card).trim().toLowerCase();
     items = items.filter((it) => String(it.card || "").toLowerCase().includes(c));
@@ -69,11 +74,11 @@ export async function listTransactions({ sinceDays, card, merchant } = {}) {
  * @returns {{window:number, count:number, total:number, totalsByCategory:object,
  *           duplicates:Array, notable:Array, recurring:Array}}
  */
-export async function summarizeSpend({ sinceDays = 7, now = new Date() } = {}) {
-  const txns = await listTransactions({ sinceDays });
+export async function summarizeSpend({ sinceDays = 7, source, now = new Date() } = {}) {
+  const txns = await listTransactions({ sinceDays, source });
   const analysis = analyzeTransactions(txns);
   const recurring = detectRecurring(txns, { now });
-  return { window: sinceDays, ...analysis, recurring };
+  return { window: sinceDays, source: source || "all", ...analysis, recurring };
 }
 
 /** Human one-block summary for Patrick's reply / the digest. Pure. */
