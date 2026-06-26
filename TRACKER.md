@@ -700,6 +700,12 @@ the rules layer.
       target brands/sizes; Patrick → accounts, budgets, recurring bills; Steve → the
       stack, repos, deploy targets. Either tell Lloyd as they come up (above) or add
       agent-scoped entries in `data/seed-notes.json` (`meta.agent`) then `npm run seed`.
+- [ ] **Seed each local box's brain** when provisioning it. `data/brain.json` and
+      `data/seed-family-domains.json` are gitignored (sensitive household data), so they
+      do NOT arrive with `git clone`. Transfer the seed source out of band (AirDrop/scp/
+      USB), then `npm run seed` + `node data/seed-family-identity.mjs` + `npm run seed
+      data/seed-family-domains.json` (or copy a populated `brain.json` over). Per-box
+      steps are in each `deploy/setup/*.md` (Lloyd §5 canonical; Frank §4b; Steve §3b).
 - [x] **Per-agent domain rules (2026-06-20).** `src/rules.js` gained `getAgentRules`/
       `formatAgentRules` reading an optional `agentRules` map in the same
       `house-rules.json`; `runSpecialist` now injects a local-time line + the agent's
