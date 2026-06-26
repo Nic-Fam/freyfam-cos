@@ -600,45 +600,50 @@ the app-only `Mail.Read` it already has — no new creds, keeps the pull model.
   all touch `handleInbound`'s content-building, so do K's `reply()`/`mirror()`/content
   seam FIRST and hang I and L off it rather than racing the same function.
 
-### M. Voice calling  `[ ]`  — FUTURE SCOPE (not started)
+### M. Voice notes over iMessage (STT in / TTS out)  `[ ]`  — FUTURE SCOPE (not started); redefined 2026-06-25 for the iMessage-only world
 
-A third human channel alongside SMS and Slack: the family calls (or is called by)
-the assistant. Twilio Programmable Voice / ConversationRelay (we already have the
-Twilio account + number). **Read this before building — there's a real architecture
-tension**, so it splits into two tiers.
+Voice for the family, **asynchronous, over the iMessage channel — NOT phone calls.**
+Twilio SMS was closed 2026-06-23 and Apple/iMessage has no PSTN bridge, so the old
+plan (Twilio Programmable Voice / ConversationRelay answering real calls) is off the
+table. Instead: the family sends an iMessage **voice memo**, Lloyd transcribes it and
+runs the normal pipeline; he replies in text or as a synthesized voice note. This fits
+the existing BlueBubbles intake and the pull-only posture — no public endpoint, no
+telephony.
 
-**The tension:** the whole design is pull-only — the Mac is never publicly reachable
-(Twilio → Azure Function → queue → Mac pulls). A *live* voice agent needs a
-persistent **public WebSocket** (ConversationRelay / media streams) with
-conversation-latency response, which a queue round-trip can't meet and the home Mac
-must not expose. So real-time voice cannot live on Lloyd's Mac the way SMS does.
+**Inbound (voice memo → text):**
+- [ ] A voice memo arrives as an `audio/*` (m4a) attachment. Today
+      `normalizeBlueBubbles` buckets non-images into `attachments` → `extractDocuments`
+      → SKIPPED, so it is silently dropped. Add an audio branch: download the
+      attachment, run **speech-to-text**, and feed the transcript into the EXISTING
+      triage → `runChief` → specialist flow (treat it like a text message whose body is
+      the transcript; tag it as a voice memo so Lloyd knows the source).
 
-**Tier 1 — async voice (fits the pull model, do first):**
-- [ ] **Inbound voicemail → text.** Call hits the number → Twilio records + transcribes
-      → the front door enqueues `{channel:"voice", body:<transcript>, …}` (+ optional
-      recording URL as media). Flows through the EXISTING pipeline; Lloyd replies by
-      SMS or callback. (This also closes the "forwarded-voicemail audio" media-gap note.)
-- [ ] **Outbound calls (notify / simple IVR).** Lloyd initiates via Twilio
-      `calls.create()` (outbound HTTP — no public endpoint needed); TwiML hosted in the
-      Azure front door. **High-stakes → confirm gate + `guards.js`** (placing a call on
-      the family's behalf), same posture as `send_email`/`place_order`.
+**Outbound (optional, text-or-voice reply):**
+- [ ] `sendImessage` is text-only today (`POST /api/v1/message/text`). To reply IN
+      voice, add a **text-to-speech** step and send the audio via BlueBubbles
+      `POST /api/v1/message/attachment` (m4a). Default to a text reply; a voice reply is
+      a nicety. Outbound stays a Lloyd capability behind the confirmation gate, same as
+      every other send — a specialist never sends audio.
 
-**Tier 2 — real-time conversational voice (needs Azure, like the specialists):**
-- [ ] Live two-way voice via **ConversationRelay** (ASR + TTS + streaming). The public
-      WebSocket + agent loop run **in Azure**, reusing `runChief`/`runSpecialist`
-      (transport-agnostic) — NOT on the home Mac. Treat it as another remote
-      participant in the hybrid topology, not a Lloyd-local channel.
+**STT/TTS provider (the one real new dependency):**
+- [ ] Anthropic models do not do audio I/O, so this needs a separate STT (and, for
+      voice replies, TTS) engine. PREFER LOCAL to keep the local-first/privacy posture:
+      `whisper.cpp` for STT + a local/edge TTS, both on Lloyd's Mac so audio never
+      leaves the house. A hosted STT/TTS is the easier-but-less-private fallback. Make
+      it a lazy/optional dependency (like `@slack/bolt` / `playwright`) so the daemon
+      runs fine without it.
 
 **Constraints / notes:**
-- Outbound voice is its own Twilio trust program (STIR/SHAKEN, Voice Integrity) —
-  registration before traffic, like A2P was for SMS. Skills available:
-  `twilio-voice-twiml`, `twilio-voice-outbound-calls`, `twilio-voice-conversation-relay`.
-- Hard constraints unchanged: a specialist never dials out; outbound calling stays a
-  Lloyd capability behind confirmation.
-- Recording/transcription has consent implications (two-party-consent states) — gate
-  before recording.
-- Parallel-safe: Tier 1 reuses the queue contract (add `channel:"voice"`) + front
-  door; Tier 2 is an Azure-side build independent of Lloyd. Sequence Tier 1 first.
+- Pull-only preserved: everything rides the local BlueBubbles webhook + send API; no
+  public endpoint, unlike the old Twilio-Voice plan.
+- Hard constraints unchanged: outbound (incl. a voice note) stays a Lloyd capability
+  through `confirm.js`; specialists return text only.
+- **Out of scope (parked — needs a telephony provider):** real phone calls to/from
+  arbitrary numbers. FaceTime Audio is Apple-only and exposes no clean real-time audio
+  hook for an agent, so it is at most a presence/relay nicety, not a voice assistant.
+- Parallel-safe: inbound reuses the iMessage intake (`imessage-inbound.js`) + the
+  queue/chief contract (transcript as `body`); outbound is an additive `imessage.js`
+  helper. Sequence inbound first.
 
 ### N. Web search tool  `[x]`  — LIVE + verified 2026-06-22 (Brave key in)
 
