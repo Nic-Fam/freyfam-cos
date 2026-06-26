@@ -86,6 +86,23 @@ FAMILY_TZ=America/Los_Angeles
 
 Everything else in `.env.example` can stay blank on Frank's box.
 
+## 4b. Seed Frank's brain (recommended)
+
+`data/brain.json` and `data/seed-family-domains.json` are **gitignored** (sensitive
+household data) so `git clone` does not bring them. Transfer the seed source **out of
+band** (AirDrop / scp / USB), never via git, then seed — recall filters by agent, so
+this box only surfaces `security`-scoped notes (alarm/cameras/locks, network topology,
+VPN) plus shared facts:
+
+```bash
+npm run seed                                # shared starter facts (in git)
+node data/seed-family-identity.mjs          # family identity backfill
+npm run seed data/seed-family-domains.json  # surfaces Frank's security-scoped + shared notes
+```
+
+Idempotent; safe to re-run. (Or copy a populated `data/brain.json` over directly.) See
+Lloyd's setup §5 for the canonical explanation.
+
 ## 5. Run it (foreground first)
 
 ```bash
