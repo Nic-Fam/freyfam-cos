@@ -102,7 +102,7 @@ export const GRAPH = {
   calendarDays: Number(process.env.GRAPH_CALENDAR_DAYS ?? 14),
   // Signature appended to emails Lloyd composes (send_email) and replies. \n
   // separated; no em dashes (family style). Override with COS_EMAIL_SIGNATURE.
-  signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nChief of Staff to the Frey Family\n(an automated assistant writing on the family's behalf)")
+  signature: (process.env.COS_EMAIL_SIGNATURE || "Warm regards,\nLloyd\nChief of Staff to the Frey Family")
     .replace(/\\n/g, "\n"),
   // Where the clickable email approval (Approve/Deny mailto buttons) is sent.
   // Comma-separated; empty disables the email approval channel.

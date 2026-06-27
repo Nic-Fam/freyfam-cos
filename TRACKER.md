@@ -689,7 +689,7 @@ Azure) the tool runs in their env; transport-agnostic, no special handling.
   `REGISTRY` (shared with F) and the chief tool list in `orchestrator.js`. Pairs with
   finishing K#4 (explicit allowlist).
 
-### O. Persona depth + per-agent brains (the "soul")  `[~]`  — souls + rules DONE 2026-06-20; memory seeds need family data
+### O. Persona depth + per-agent brains (the "soul")  `[x]`  — souls + rules DONE 2026-06-20; memory seeds DONE 2026-06-26
 
 The agents work, but their personas are thin and uneven (dev 86w, finance 105w,
 resale 111w vs chef/security/chief ~290w) and read as role blurbs, not characters.
@@ -717,12 +717,13 @@ the rules layer.
       removal, agent validation, key-preserving). Rules re-read per turn → live on the
       next message, no restart. Hand-editing the JSON + `npm run seed` stays for bulk/
       power use. Chief persona instructs Lloyd to capture facts + always/never rules.
-- [ ] **Bulk-seed each specialist's memory** with durable domain knowledge — NEEDS REAL
-      FAMILY DATA from Nic (don't fabricate): Carmine → allergies/dislikes, equipment,
-      go-to meals; Frank → home-security devices, network, alarm/camera setup; Shey →
-      target brands/sizes; Patrick → accounts, budgets, recurring bills; Steve → the
-      stack, repos, deploy targets. Either tell Lloyd as they come up (above) or add
-      agent-scoped entries in `data/seed-notes.json` (`meta.agent`) then `npm run seed`.
+- [x] **Bulk-seed each specialist's memory with durable domain knowledge — DONE
+      2026-06-26.** Populated via the conversational `remember` path (workstream O
+      above), the intended channel. The local brain now carries real per-agent facts:
+      security 38, finance 22, chef 18, resale 15, dev 5, plus 57 shared (155 total),
+      well beyond the 8-note starter in `data/seed-notes.json`. The JSON seed +
+      `npm run seed` stays available for bulk/power additions; ongoing facts get added
+      by messaging Lloyd.
 - [ ] **Seed each local box's brain** when provisioning it. `data/brain.json` and
       `data/seed-family-domains.json` are gitignored (sensitive household data), so they
       do NOT arrive with `git clone`. Transfer the seed source out of band (AirDrop/scp/
