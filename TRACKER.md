@@ -136,6 +136,19 @@ Owns: the existing Azure Functions project (NOT in this repo). Branch
       COS_ENQUEUE is on (no media field in the payload). The front-door half of the
       MMS work lives here; see **workstream I (Multimodal / MMS intake)** for the
       full cross-repo plan and rationale.
+- [x] **Inbound-email reconciler — LIVE 2026-06-27 (freyfam-assistant PR #2).**
+      GOTCHA: email reaches the daemon via the `email-handler` webhook, which fires on
+      Graph CHANGE NOTIFICATIONS — and those are **best-effort**. A dropped notification
+      (or a mark-read race that trips the handler's `isRead` "already processed" skip)
+      leaves an email in the inbox that is NEVER enqueued — silently lost. Observed live:
+      a forwarded email sat read-but-unprocessed, queue empty, config all correct.
+      FIX: `src/functions/email-reconciler.js` — a 5-min timer scans recent inbox mail and
+      enqueues anything the webhook missed, deduped via a shared seen-store
+      (`src/cos-inbound-seen.js`, Table `cosinboundseen`) the webhook now also writes on
+      enqueue (the daemon dedups on QUEUE-id, not email-id, so double-enqueue would
+      double-process). 2-min floor = never races the webhook; checkpoint = clean first-run
+      baseline (no backfill). Verified: deployed, function registered, baseline checkpoint
+      written on first tick. So inbound email is now self-healing against missed notifications.
 - Parallel-safe: fully independent — different repo, different session, no overlap
   with this codebase. Only the queue *message shape* is the contract (see
   `queue.js:9-11`). Pin that shape and this can proceed in total isolation.
