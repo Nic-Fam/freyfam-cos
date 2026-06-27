@@ -246,9 +246,12 @@ RETURN text and have side-effect-light tools — no outbound, no confirmation po
 - [x] Dev (Steve): change-proposal log propose/list (**never deploys**) — `src/proposals.js`.
 - [x] Chef (Carmine): meal planner + food-inventory read/write — `src/meals.js`.
 - [x] Security (Frank): findings add/list with severities — `src/security.js`.
-- [ ] FUTURE depth (not blocking): live marketplace fetchers for the resale sites
-      (Poshmark/eBay/Vestiaire/RealReal/1stDibs) — needs network + per-site selectors,
-      overlaps G (browser).
+- [~] Live marketplace fetchers for the resale sites — BUILT 2026-06-26
+      (`src/marketplaces.js` `runMarketplaceFeeds`, wired into `maybeRunResale`; reads
+      each saved search across its sites via the LOCAL browser, surfaces NEW listings).
+      eBay selectors trusted; Poshmark/Vestiaire/1stDibs selectors are best-effort and
+      need a live capture pass on the Mac. Go-live = signed-in Chrome profile (same as
+      First Look). TheRealReal excluded (First Look owns it).
 - Tested across `test/finance|saved-searches|proposals|meals|security|tools.test.js`.
 
 ### G. Browser automation (Playwright)  `[~]`  — capability + tools landed 2026-06-19
@@ -376,7 +379,7 @@ Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.pli
 - Parallel-safe: mostly yes — `queue.js` and `deploy/` are isolated. Touches
   `daemon.js` lightly. Independent of E/F/G.
 
-### I. Multimodal / MMS intake  `[~]`  — daemon half DONE 2026-06-19; front door pending (cross-repo)
+### I. Multimodal / MMS intake  `[~]`  — daemon + front door DONE; only the remote CHEF Function redeploy remains (resale is local now, so its images already work)
 
 Promoted from a buried bullet under B so it stays visible. Today the front door
 enqueues **text only**; inbound MMS images, vCards, and forwarded-voicemail audio
@@ -936,7 +939,12 @@ writes to the cloud must not carry family content (just liveness signals).
 
 ---
 
-### S. COO agents — one "first employee" per company  `[ ]`  — DESIGN ONLY (groundwork 2026-06-25)
+### S. COO agents — one "first employee" per company  `[ ]`  — DESIGN ONLY (groundwork 2026-06-25; roster + thresholds confirmed 2026-06-26)
+
+**Companion doc:** `ORG_STRUCTURE.md` (repo root) holds the business shape — the concrete
+org chart, the company roster, the per-company specialist tier, the Azure resource-group
+layout, and the cost-governance thresholds. This section is the engineering plan; that
+doc is the org reference. The two were reconciled 2026-06-26 and should move together.
 
 **Vision (Nic).** Build an agent for each company idea — the company's first employee,
 a **COO**. Each COO manages its company end to end: project schedules, communication,
@@ -1018,13 +1026,65 @@ Azure, Brave). Per-COO budgets need attribution:
   authoritative $ per key. Matches the future per-specialist Azure isolation model.
   Flip per COO as needed; the local ledger stays as the live early-warning layer.
 
+**Concrete governance thresholds (CONFIRMED 2026-06-26, see `ORG_STRUCTURE.md`).** Finance
+(the shared family cost watcher) auto-approves below these and escalates to Nic above them,
+so routine work never loops him in:
+
+| Scope | Threshold | Action |
+|---|---|---|
+| Per-request cost estimate | $10 | Escalate to Nic |
+| Per-request token usage | 100,000 tokens (adjustable) | Escalate to Nic |
+| Monthly budget per resource group | $80 | Budget + alert per rg (freyfam/sasshey/dariviant/pontable) |
+| Monthly total subscription | $400 | Hard limit for the Freyfam subscription |
+
+Two complementary layers: the local token ledger (phase 1) is the live per-COO early
+warning; the Azure RG budgets are the authoritative monthly view finance reconciles
+against. Azure budgets are notification-only by default — to make $400 a true hard stop,
+wire the alert to an action group that throttles/stops resources at the limit. The two
+escalation outcomes map onto the request seam: **approve agent execution** (finance
+green-lights, orchestrator runs it, `request_specialist`-style) vs **hand to Nic**
+(`request_heavy_lift`, Nic does the heavy lifting in his own session). Only Nic ever
+touches the subscription account directly.
+
 #### Data-driven roster (so "an agent per idea" is a config edit)
 
 Today the roster is hardcoded (`KNOWN_AGENTS`, `AGENT_ALLOWLIST`, `REGISTRY`). Make COOs
 **config-driven**: `data/companies.json` — each `{ key, company, budgetUsd, cycle,
-allowedSpecialists:[...], persona, apiKey? }`. A loader registers each COO's persona +
-scoped allowlist + memory namespace + budget at boot. Adding a company = add an entry +
-a persona file; no core code change.
+allowedSpecialists:[...], specialists:[...], persona, apiKey? }`. A loader registers each
+COO's persona + scoped allowlist + memory namespace + budget at boot, plus each company
+specialist's persona/allowlist/namespace. Adding a company = add an entry + persona
+files; no core code change.
+
+**Holding + roster (CONFIRMED 2026-06-26, see `ORG_STRUCTURE.md`).** `freyfam`
+(freyfam.com) is the holding shell — Lloyd and the family specialists live here and
+service all companies. Three companies sit beneath it:
+
+| Company | key | Business |
+|---|---|---|
+| **Sasshey** | `sasshey` | SaaS wardrobe-inventory tool + consignment marketplace; membership + brokering revenue |
+| **Dariviant** | `dariviant` | Aftermarket parts for Rivian / EV pickups; funds a long-term range-extended R1T overland camper |
+| **Pontable** | `pontable` | Recreational water sports; floating picnic table; B2C + B2B hospitality |
+
+**Per-company specialists are real agent personas** (CONFIRMED 2026-06-26), not org-chart
+placeholders. Each COO owns a tier of company-scoped specialists that hold the operational
+data and feed it up (specialist → COO → Lloyd). They are shaped like family specialists
+(own persona, scoped memory, NO `CHIEF_ONLY_TOOLS`) but namespaced to their company:
+- **Sasshey:** inventory, marketing, buyer-behavior analyst, sales.
+- **Dariviant:** supply chain (owns compliance/certification for now), inventory, orders,
+  community intelligence (Rivian/Slate forums, Reddit), manufacturing engineering, sales,
+  marketing.
+- **Pontable:** supply chain, inventory, orders, sales, marketing, manufacturing engineering.
+
+So the roster has **two scopes**: *family specialists* (shared, freyfam-level: finance,
+Steve, resale, plus a shared manufacturing-engineering baseline) and *company specialists*
+(namespaced under a COO). This widens `request_specialist`: a COO can request its OWN
+company specialist directly, or — via Lloyd — a shared family specialist (e.g. Steve).
+
+**Shared but splittable.** Company specialists inherit from family-level templates (e.g.
+the inventory schema, the manufacturing-engineering standards). A change to a shared
+template propagates to the company specialists that inherit it (Dariviant/Pontable
+inventory, both mfg-eng roles). Architected so a company that takes off can be peeled out
+into its own tooling/daemon later without breaking the rest.
 
 #### COO capability surface (what it manages)
 
@@ -1035,9 +1095,10 @@ Schedule/project tracking (reuse `tasks.js`/`reminders.js`/calendar reads), comm
 #### Staged plan
 
 - [ ] **0. This design doc** (done) — review the shape before any code.
-- [ ] **1. Roster + persona template.** `data/companies.json` loader; `agents/coo.template.md`
-      charter; register one COO's persona + a COO `AGENT_ALLOWLIST` (planning/read/request
-      tools only, NO `CHIEF_ONLY_TOOLS`).
+- [ ] **1. Roster + persona template.** `data/companies.json` loader seeded with the three
+      confirmed companies (sasshey/dariviant/pontable); `agents/coo.template.md` charter +
+      a company-specialist persona template; register one COO's persona + a COO
+      `AGENT_ALLOWLIST` (planning/read/request tools only, NO `CHIEF_ONLY_TOOLS`).
 - [ ] **2. Request seam.** COO request tools → Lloyd router; `request_specialist` (→Steve,
       metered API), `request_heavy_lift` (→gated ask to Nic to run it in his own human-driven
       Claude Code session — NOT an agent on the subscription), `request_action` (→`confirm.js`).
@@ -1052,8 +1113,10 @@ Schedule/project tracking (reuse `tasks.js`/`reminders.js`/calendar reads), comm
 
 - COO ↔ Lloyd cadence: how often does an autonomous tick run, and what's the per-COO
   token budget per tick (bounds runaway spend)?
-- Where COOs run: in-process on Lloyd at first (like specialists today) vs their own
-  box later (the topology already supports per-agent hosts via the `delegate` endpoint).
+- ~~Where COOs run~~ (RESOLVED 2026-06-26, see `ORG_STRUCTURE.md`): one orchestrator runs
+  all four personas (Lloyd + 3 COOs) in-process while early — shared context, lower cost.
+  Architected to split into per-company daemons later (the topology already supports
+  per-agent hosts via the `delegate` endpoint), so no debt now.
 - Soft-cap policy: at budget, warn-only, or hard-pause non-essential COO spend until reset?
 - Marketing/comms: how much can a COO DRAFT autonomously vs require a Nic prompt?
 
@@ -1385,10 +1448,10 @@ only) so we match Genet's *security posture* without her hardware.
 - [ ] **Image generation** (Sylvie) — a creative tool (Gemini or another provider).
       New tool module → wired in F.
 - [ ] **Printer access** (Sylvie) — local print tool (pairs with browser stream G).
-- [~] **Per-agent `soul.md` + `decision.md`** — `decision.md` DONE (E, 2026-06-19):
-      `src/decisions.js` + per-agent `data/decisions/<agent>.md`, exposed as
-      `log_decision`/`list_decisions` on every specialist. `soul.md` ≈ our
-      `agents/*.md` (rename/align concept) — still TODO.
+- [x] **Per-agent `soul.md` + `decision.md`** — DONE. `decision.md` = `src/decisions.js`
+      + per-agent `data/decisions/<agent>.md` (`log_decision`/`list_decisions` on every
+      specialist). `soul.md` ≈ our `agents/*.md` — all six standardized + fleshed out
+      (workstream O `[x]`, 2026-06-20) and the brains are seeded (O, 2026-06-26).
 - [x] **Add the `chef` agent (Carmine)** — done 2026-06-18:
       - [x] persona `src/agents/chef.md` (Kitchen & Meals — Carmine)
       - [x] `"chef"` in the delegate enum + both triage enums, with guidance
