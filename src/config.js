@@ -245,6 +245,26 @@ export const DIGEST = {
     .filter(Boolean),
 };
 
+// Weekly finance report (Patrick): Sunday-night spend summary, checking vs
+// credit, with MoM/YoY; the first Sunday of the month adds a prior-month
+// retrospective. Ships dark (disabled) until FINANCE_REPORT_ENABLED=true.
+export const FINANCE_REPORT = {
+  enabled: String(process.env.FINANCE_REPORT_ENABLED ?? "false").toLowerCase() === "true",
+  weekday: Number(process.env.FINANCE_REPORT_WEEKDAY ?? 0), // 0 = Sunday
+  hour: Number(process.env.FINANCE_REPORT_HOUR ?? 20),      // local hour (evening)
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  windowHours: Number(process.env.FINANCE_REPORT_WINDOW_HOURS ?? 3),
+  // Daily ingest of queued transaction alerts into the spend log (one Haiku
+  // batch). Separate flag so ingestion can run even before the report is on.
+  ingestEnabled: String(process.env.FINANCE_INGEST_ENABLED ?? "false").toLowerCase() === "true",
+  ingestHour: Number(process.env.FINANCE_INGEST_HOUR ?? 6),
+  // Owner-only delivery (finance is sensitive). Comma-separated; empty disables email.
+  emailTo: (process.env.FINANCE_REPORT_EMAIL_TO || "nic@freyfam.com")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+};
+
 // Azure Maps: precise commute times with live traffic (geocode + route).
 // Ported from the legacy assistant; powers the chief's commute_time tool.
 export const MAPS = {
