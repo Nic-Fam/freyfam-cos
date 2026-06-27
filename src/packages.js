@@ -150,13 +150,33 @@ export async function markPickupScheduled(trackingNumber, now = Date.now()) {
   await save(db);
 }
 
-/** Mark a package delivered (creating the record if a delivery email is the first we see). */
-export async function markDelivered(trackingNumber, now = Date.now()) {
+/**
+ * Mark a package delivered (creating the record if a delivery email is the first
+ * we see). `opts.pickup`/`opts.location` capture a pickup-location delivery (e.g.
+ * the UPS Store) even when the delivery email is the first sighting, so the
+ * afternoon pickup digest can surface it. Existing flags are preserved when not
+ * provided.
+ */
+export async function markDelivered(trackingNumber, now = Date.now(), { pickup, location } = {}) {
   if (!trackingNumber) return;
   const db = await load();
   const prev = db.items[trackingNumber] || { trackingNumber, carrier: "Unknown", description: "", url: "", addedAt: new Date(now).toISOString() };
-  db.items[trackingNumber] = { ...prev, delivered: true, deliveredAt: new Date(now).toISOString() };
+  db.items[trackingNumber] = {
+    ...prev,
+    delivered: true,
+    deliveredAt: new Date(now).toISOString(),
+    pickup: pickup || prev.pickup || false,
+    location: location || prev.location || "",
+  };
   await save(db);
+}
+
+/** Delivered packages that went to a pickup location (e.g. the UPS Store), newest delivery first. */
+export async function listDeliveredPickups() {
+  const db = await load();
+  return Object.values(db.items)
+    .filter((p) => p.delivered && p.pickup)
+    .sort((a, b) => String(b.deliveredAt || "").localeCompare(String(a.deliveredAt || "")));
 }
 
 /** Active (undelivered) packages, newest first. */
@@ -194,7 +214,7 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
   const delivered = [];
   for (const n of found) {
     if (isDelivery) {
-      await markDelivered(n.trackingNumber);
+      await markDelivered(n.trackingNumber, Date.now(), { pickup: isPickup, location });
       delivered.push(n);
     } else {
       await addPackage({ ...n, description, owner, pickup: isPickup, location });

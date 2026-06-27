@@ -1,4 +1,4 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
@@ -9,6 +9,7 @@ import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate } from "./finance-ingest.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
+import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
@@ -238,6 +239,22 @@ async function maybeRunFinanceReport() {
   }
 }
 
+// Afternoon package-pickup digest: weekday 5:30pm, iMessage to the owner, listing
+// what was delivered today to the UPS Store. Persisted once-per-day guard.
+async function maybeRunPackageDigest() {
+  if (!PACKAGE_DIGEST.enabled) return;
+  const last = await getLastPackageDigestDate();
+  const { run, date } = shouldRunPackageDigest(new Date(), last, PACKAGE_DIGEST);
+  if (!run) return;
+  await setLastPackageDigestDate(date); // persist BEFORE running so a restart mid-window can't double-fire
+  try {
+    const r = await runPackageDigest();
+    if (r.sent) log.info("package pickup digest sent", { date, count: r.count });
+  } catch (err) {
+    log.error("package pickup digest failed", { reason: err.message });
+  }
+}
+
 // Fire any reminders that have come due: notify the owner, then re-arm recurring
 // ones / mark one-shots done. Persisted, so a restart never drops one.
 async function maybeFireReminders() {
@@ -345,6 +362,7 @@ export async function tick() {
   await maybeRunDigest();
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
+  await maybeRunPackageDigest();
   await maybeFireReminders();
   await maybeRunResale();
   await maybeRunGroceryOrder();

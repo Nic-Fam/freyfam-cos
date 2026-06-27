@@ -253,6 +253,20 @@ export const FINANCE_REPORT = {
     .filter(Boolean),
 };
 
+// Afternoon package-pickup digest: a weekday 5:30pm SMS listing packages
+// delivered TODAY to the family's pickup location (the UPS Store on Foothill),
+// so they can grab them on the way home. Deterministic (no model). Enabled by
+// default like the morning digest; needs minute precision since 5:30 is off the
+// :00/:15 heartbeat grid, so it fires within a catch-up window.
+export const PACKAGE_DIGEST = {
+  enabled: String(process.env.PACKAGE_DIGEST_ENABLED ?? "true").toLowerCase() === "true",
+  hour: Number(process.env.PACKAGE_DIGEST_HOUR ?? 17),
+  minute: Number(process.env.PACKAGE_DIGEST_MINUTE ?? 30),
+  windowMinutes: Number(process.env.PACKAGE_DIGEST_WINDOW_MINUTES ?? 60), // catch-up after target
+  weekdaysOnly: String(process.env.PACKAGE_DIGEST_WEEKDAYS_ONLY ?? "true").toLowerCase() === "true",
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+};
+
 // Azure Maps: precise commute times with live traffic (geocode + route).
 // Ported from the legacy assistant; powers the chief's commute_time tool.
 export const MAPS = {
