@@ -96,3 +96,34 @@ test("a failing action surfaces as an error message, not a throw", async () => {
 test("requestConfirmation rejects an unregistered kind", async () => {
   await assert.rejects(() => requestConfirmation("x", "nope", {}), /no action handler/);
 });
+
+
+registerActionHandler("email", async (p) => `sent to ${p.to}`);
+
+test("flood guard: first NOTIFY_CAP(3) to a recipient ping; further ones stage silently (throttled)", async () => {
+  const to = "nfrey2@gmail.com";
+  const r = [];
+  // 5 misfiring-loop warnings, varied subjects, same recipient+kind
+  for (const s of ["Heads-up: Apple ID phishing", "URGENT: Apple ID attempt", "Action needed: Apple ID",
+                   "Apple ID security alert", "Possible Apple ID access"]) {
+    r.push(await requestConfirmation(s, "email", { to, subject: s }));
+  }
+  assert.deepEqual(r.map((x) => Boolean(x.throttled)), [false, false, false, true, true],
+    "first 3 notify, 4th+ throttled");
+  // EVERY action still staged (nothing dropped) — even a throttled one resolves
+  const res = await tryResolveConfirmation(`YES ${r[4].code}`);
+  assert.equal(res.handled, true, "throttled approval is still staged + resolvable");
+});
+
+test("a different recipient is counted separately (not throttled by another's flood)", async () => {
+  const to1 = "a@x.com";
+  for (let i = 0; i < 4; i++) await requestConfirmation("x"+i, "email", { to: to1, subject: "x"+i });
+  const other = await requestConfirmation("real one", "email", { to: "b@y.com", subject: "Approve grocery order" });
+  assert.notEqual(other.throttled, true);
+});
+
+test("kinds with no recipient never throttle (cap keys on recipient)", async () => {
+  const out = [];
+  for (let i = 0; i < 6; i++) out.push(await requestConfirmation("t"+i, "test", { what: "t"+i }));
+  assert.ok(out.every((x) => !x.throttled));
+});

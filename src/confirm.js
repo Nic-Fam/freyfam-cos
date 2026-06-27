@@ -64,28 +64,52 @@ async function savePending(map) {
   await writeFile(PENDING_PATH(), JSON.stringify(Object.fromEntries(map), null, 2));
 }
 
+const approvalRecipient = (params) =>
+  String((params || {}).to || (params || {}).recipient || "").toLowerCase().trim();
+
+// How many pending approvals to the SAME kind+recipient before we stop pinging
+// the owner about more. A misfiring loop (security false-positive, etc.) that
+// re-asks every tick should ping at most this many times per TTL window, not 24.
+const NOTIFY_CAP = Number(process.env.APPROVAL_NOTIFY_CAP || 3);
+
 /**
  * Stage a high-stakes action for approval and return its code immediately (does
  * NOT block, persists across restarts). `kind` selects the registered executor;
  * `params` must be JSON-serializable and is passed to that executor on approval.
- * @returns {Promise<{code:string, instruction:string}>}
+ *
+ * Flood guard: the action ALWAYS stages (nothing is ever dropped — this is the
+ * safety gate), but once NOTIFY_CAP approvals to the same kind+recipient are
+ * already pending, further ones stage SILENTLY (no owner ping) and return
+ * `throttled:true`. This caps the alert spam from a re-asking loop without ever
+ * losing or merging a distinct approval; it only suppresses a redundant ping.
+ * @returns {Promise<{code:string, instruction:string, throttled?:boolean}>}
  */
 export async function requestConfirmation(actionDescription, kind, params, { now = Date.now() } = {}) {
   if (!handlers.has(kind)) throw new Error(`no action handler registered for kind "${kind}"`);
   const code = randomUUID().slice(0, 4).toUpperCase();
   const pending = await loadPending(now);
+
+  const to = approvalRecipient(params);
+  const sameTarget = [...pending.values()].filter(
+    (e) => e && e.kind === kind && approvalRecipient(e.params) === to
+  ).length;
+
   pending.set(code, { kind, params, action: actionDescription, createdAt: now });
   await savePending(pending);
 
-  // SMS is best-effort (the code is also returned in-thread). Defer + catch so a
-  // Twilio misconfig — sync OR async — can never break staging.
-  Promise.resolve()
-    .then(() => notifyOwner(`Approval needed:\n${actionDescription}\n\nReply "YES ${code}" to approve or "NO ${code}" to cancel.`))
-    .catch(() => {});
-  for (const n of notifiers) {
-    try { n({ code, action: actionDescription }); } catch { /* a broken notifier must never block */ }
+  // Suppress the ping (only) once this recipient+kind is clearly piling up.
+  const throttled = Boolean(to) && sameTarget >= NOTIFY_CAP;
+  if (!throttled) {
+    // SMS is best-effort (the code is also returned in-thread). Defer + catch so a
+    // Twilio misconfig — sync OR async — can never break staging.
+    Promise.resolve()
+      .then(() => notifyOwner(`Approval needed:\n${actionDescription}\n\nReply "YES ${code}" to approve or "NO ${code}" to cancel.`))
+      .catch(() => {});
+    for (const n of notifiers) {
+      try { n({ code, action: actionDescription }); } catch { /* a broken notifier must never block */ }
+    }
   }
-  return { code, instruction: `Reply "YES ${code}" to confirm or "NO ${code}" to cancel.` };
+  return { code, instruction: `Reply "YES ${code}" to confirm or "NO ${code}" to cancel.`, throttled };
 }
 
 /**
