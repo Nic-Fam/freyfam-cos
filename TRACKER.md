@@ -936,6 +936,135 @@ writes to the cloud must not carry family content (just liveness signals).
 
 ---
 
+### S. COO agents — one "first employee" per company  `[ ]`  — DESIGN ONLY (groundwork 2026-06-25)
+
+**Vision (Nic).** Build an agent for each company idea — the company's first employee,
+a **COO**. Each COO manages its company end to end: project schedules, communication,
+marketing, and development. COOs are managers, not doers of last resort: they **request
+specialists through Lloyd** (e.g. ask for Steve when dev help or an extra push is
+needed) and **request Nic to run heavy lifting on his Claude Code subscription** for
+serious work. Each COO runs under its own **cost watchdog + budget**.
+
+This is a NEW TIER above the household specialists. It does NOT change the hard
+constraints — it is designed to inherit them by construction.
+
+#### Where it fits the existing architecture
+
+Three enforced layers exist today; COOs slot in as a fourth, *between* Lloyd and the
+specialists in authority but *like a specialist* in containment:
+
+| Layer | Holds outbound? | Role |
+|---|---|---|
+| **Lloyd** (chief) | YES — sole holder of `CHIEF_ONLY_TOOLS`, the confirmation gate | host + router + chokepoint (unchanged) |
+| **COOs** (new) | **NO** | manage a company; surface plans + emit **requests**; never act directly |
+| **Specialists** (finance/dev/resale/chef/security) | NO | scoped doers; surface, don't act (unchanged) |
+
+A COO is shaped like a specialist — own persona, agent-scoped memory (`memory.js`),
+decision log (`decisions.js`), standing rules (`rules.js`), and a **scoped tool
+allowlist** (`AGENT_ALLOWLIST`) that **excludes every `CHIEF_ONLY_TOOLS` entry**
+(`specialistTools()` already throws if an allowlist contains one). So a COO physically
+cannot send mail, spend money, place orders, or delegate to a specialist on its own.
+It produces text + structured **requests**; Lloyd fulfills them behind the gate.
+
+#### Hard constraints preserved (by construction)
+
+1. **Outbound + confirmation stay on Lloyd.** A COO has no channel and no
+   `CHIEF_ONLY_TOOLS`; every real-world effect (a hire-a-specialist run, a marketing
+   email, a spend) routes COO → Lloyd → `confirm.js`. Same chokepoint as today.
+2. **Human-in-the-loop for high stakes.** "Heavy lifting on Nic's subscription" and any
+   money/marketing send are confirmation-gated asks to Nic, never auto-run.
+3. **No money movement.** A COO surfaces spend/marketing actions; Nic executes them.
+4. **Isolation.** Per-COO memory/decision scope (one COO can't read another's), per-COO
+   budget, and — phase 2 — per-COO API key/Table scope, mirroring the specialist model.
+
+#### The request + escalation seam (the heart of it)
+
+COOs can't call `delegate` (it's `CHIEF_ONLY`). Instead a COO emits requests that Lloyd
+routes. Two invocation modes:
+
+- **Delegated:** Lloyd hands a COO a management task; the COO returns its plan + a list
+  of requests; Lloyd fulfills each (delegate to Steve, gated ask to Nic, etc.).
+- **Autonomous tick:** on a schedule (heartbeat-style, per-COO cadence), Lloyd runs each
+  COO's "review the company" pass; actionable output becomes gated requests — mirrors
+  the existing heartbeat → triage → escalate pattern (`heartbeat.js`).
+
+Request types (all flow through Lloyd's gate):
+- `request_specialist` → Lloyd `delegate`s to the named specialist (e.g. **Steve for a
+  dev push**). Routine help. Steve runs on the **metered API** (workstream Q was
+  REVERSED on ToS grounds 2026-06-25 — no automated agent drives a Claude Code
+  subscription; see Q).
+- `request_heavy_lift` → a **confirmation-gated ask to Nic** to run a scoped task in a
+  **human-driven Claude Code session** — Nic, a person, at his own keyboard. This is NOT
+  an automated agent on the subscription (that path was removed; `dev-claude-code.js` /
+  `DEV` no longer exist). It mirrors Steve's own reversed pattern: small tweaks Steve
+  returns as a proposal on the API; large/open-ended work routes to a human-driven remote
+  Claude Code session with a crisp brief. Serious dev/build work, human-initiated.
+- `request_action` → any outbound/spend (marketing email, tool signup) → `confirm.js`.
+
+#### Cost watchdog — BOTH, phased (Nic's call 2026-06-25)
+
+Today `cost.js` only meters **org-wide** month-to-date (`anthropicMonthToDateUsd`,
+Azure, Brave). Per-COO budgets need attribution:
+
+- **Phase 1 (now): local token ledger.** Tag every agent run with its COO key, thread
+  it into `agentLoop`/`complete`, and record `resp.usage` (input/output/cache tokens)
+  into a per-COO, per-cycle ledger (new `src/cost-ledger.js`, JSON like
+  `cost-alerts.json`). Convert to $ via `MODELS` price table. Soft cap: warn Nic at a
+  COO's budget threshold (reuse the watchdog alert path), optionally refuse further
+  non-essential spend until the cycle resets. Approximate but works with zero new
+  accounts.
+- **Phase 2 (when a company gets real): per-COO Anthropic key/workspace.** A roster
+  entry carries its own key; that COO's calls use it; the Admin `cost_report` attributes
+  authoritative $ per key. Matches the future per-specialist Azure isolation model.
+  Flip per COO as needed; the local ledger stays as the live early-warning layer.
+
+#### Data-driven roster (so "an agent per idea" is a config edit)
+
+Today the roster is hardcoded (`KNOWN_AGENTS`, `AGENT_ALLOWLIST`, `REGISTRY`). Make COOs
+**config-driven**: `data/companies.json` — each `{ key, company, budgetUsd, cycle,
+allowedSpecialists:[...], persona, apiKey? }`. A loader registers each COO's persona +
+scoped allowlist + memory namespace + budget at boot. Adding a company = add an entry +
+a persona file; no core code change.
+
+#### COO capability surface (what it manages)
+
+Schedule/project tracking (reuse `tasks.js`/`reminders.js`/calendar reads), comms drafts
+(surface; Lloyd sends), marketing planning (surface; gated send), and dev planning
+(propose; request Steve or heavy-lift). All read/plan/propose — never act.
+
+#### Staged plan
+
+- [ ] **0. This design doc** (done) — review the shape before any code.
+- [ ] **1. Roster + persona template.** `data/companies.json` loader; `agents/coo.template.md`
+      charter; register one COO's persona + a COO `AGENT_ALLOWLIST` (planning/read/request
+      tools only, NO `CHIEF_ONLY_TOOLS`).
+- [ ] **2. Request seam.** COO request tools → Lloyd router; `request_specialist` (→Steve,
+      metered API), `request_heavy_lift` (→gated ask to Nic to run it in his own human-driven
+      Claude Code session — NOT an agent on the subscription), `request_action` (→`confirm.js`).
+- [ ] **3. Per-COO cost ledger (phase 1).** `cost-ledger.js`: tag `agentLoop` usage by
+      agent, per-cycle accumulation, budget alert + soft cap. Tests.
+- [ ] **4. Autonomous tick.** Per-COO scheduled review (heartbeat-style), escalate
+      actionable output as gated requests.
+- [ ] **5. First real COO** end-to-end as the reference impl.
+- [ ] **6. Per-COO key (phase 2)** when a company warrants authoritative billing.
+
+#### Open questions (decide before phase 1)
+
+- COO ↔ Lloyd cadence: how often does an autonomous tick run, and what's the per-COO
+  token budget per tick (bounds runaway spend)?
+- Where COOs run: in-process on Lloyd at first (like specialists today) vs their own
+  box later (the topology already supports per-agent hosts via the `delegate` endpoint).
+- Soft-cap policy: at budget, warn-only, or hard-pause non-essential COO spend until reset?
+- Marketing/comms: how much can a COO DRAFT autonomously vs require a Nic prompt?
+
+- Parallel-safe: mostly additive (new roster loader, new persona, new `cost-ledger.js`,
+  new COO allowlist). The serial touch-point is `orchestrator.js` (request-router tools)
+  and `agentLoop`/`complete` (usage tagging) — coordinate those edits. Builds directly on
+  E (memory), F (specialist tools), J (cost watchdog), O (personas), and Q (Steve, now
+  API-only — heavy lifting is a human-driven session, never an agent on the subscription).
+
+---
+
 ## Suggested parallel session plan
 
 Run these as separate Claude Code sessions; they barely touch each other:
