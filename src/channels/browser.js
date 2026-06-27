@@ -158,30 +158,48 @@ export async function readPage(url, { maxChars = 4000, timeoutMs = 30000 } = {})
 
 /**
  * READ-ONLY: read a product LISTING feed (a grid/new-arrivals page) into structured
- * rows. Cards are identified by their product anchor (`anchorPrefix`); for each
- * unique anchor we climb to the smallest ancestor that still contains only that one
- * anchor (its card) and pull the configured `fields` (a {key: cssSelector} map) from
- * within it. This isolates one card without relying on a stable container class.
- * Verified live on TheRealReal's new-arrivals grid. When signed in (the family's
- * Chrome profile), this is how First Look early-access items surface.
+ * rows. Cards are identified by their product anchor; for each unique anchor we climb
+ * to the smallest ancestor that still contains only that one anchor (its card) and
+ * pull the configured `fields` (a {key: cssSelector} map) from within it. This
+ * isolates one card without relying on a stable container class. Verified live on
+ * TheRealReal's new-arrivals grid. When signed in (the family's Chrome profile), this
+ * is how First Look early-access items surface.
+ *
+ * A product link is matched by `anchorPrefix` (href starts with it, the default, e.g.
+ * "/products/") OR by `anchorMatch` (a regex source string) for sites whose product
+ * URLs aren't a clean path prefix — e.g. Vestiaire's "...-<id>.shtml" suffix or
+ * 1stDibs' "/id-f_<n>/" segment. When `anchorMatch` is set it takes precedence.
  * @param {string} url
- * @param {{anchorPrefix?:string, fields?:Record<string,string>, max?:number, timeoutMs?:number}} [opts]
+ * @param {{anchorPrefix?:string, anchorMatch?:string, fields?:Record<string,string>, max?:number, timeoutMs?:number}} [opts]
  */
-export async function readListingFeed(url, { anchorPrefix = "/products/", fields = {}, max = 60, timeoutMs = 30000 } = {}) {
+export async function readListingFeed(url, { anchorPrefix = "/products/", anchorMatch = null, fields = {}, max = 60, timeoutMs = 30000 } = {}) {
   hostOf(url);
   const page = await newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     // The grid is an SPA that paints async; wait briefly for the first card, but
     // don't fail the run if it never appears (e.g. redirected to a sign-in wall).
-    try { await page.waitForSelector(`a[href^="${anchorPrefix}"]`, { timeout: 8000 }); } catch { /* empty feed */ }
-    const items = await page.evaluate(({ anchorPrefix, fields, max }) => {
+    try {
+      if (anchorMatch) {
+        await page.waitForFunction(
+          (m) => [...document.querySelectorAll("a[href]")].some((a) => new RegExp(m).test(a.getAttribute("href") || "")),
+          anchorMatch,
+          { timeout: 8000 }
+        );
+      } else {
+        await page.waitForSelector(`a[href^="${anchorPrefix}"]`, { timeout: 8000 });
+      }
+    } catch { /* empty feed */ }
+    const items = await page.evaluate(({ anchorPrefix, anchorMatch, fields, max }) => {
+      const re = anchorMatch ? new RegExp(anchorMatch) : null;
+      const isProduct = (href) => (href ? (re ? re.test(href) : href.startsWith(anchorPrefix)) : false);
+      const productAnchors = (root) => [...root.querySelectorAll("a[href]")].filter((a) => isProduct(a.getAttribute("href")));
       const byHref = new Map();
-      for (const a of document.querySelectorAll(`a[href^="${anchorPrefix}"]`)) {
+      for (const a of productAnchors(document)) {
         const href = a.getAttribute("href");
-        if (!href || byHref.has(href)) continue;
+        if (byHref.has(href)) continue;
         let card = a;
-        while (card.parentElement && card.parentElement.querySelectorAll(`a[href^="${anchorPrefix}"]`).length === 1) {
+        while (card.parentElement && productAnchors(card.parentElement).length === 1) {
           card = card.parentElement;
         }
         const row = { href };
@@ -193,7 +211,7 @@ export async function readListingFeed(url, { anchorPrefix = "/products/", fields
         if (byHref.size >= max) break;
       }
       return [...byHref.values()];
-    }, { anchorPrefix, fields, max });
+    }, { anchorPrefix, anchorMatch, fields, max });
     return { url, finalUrl: page.url(), items };
   } finally {
     await page.close();

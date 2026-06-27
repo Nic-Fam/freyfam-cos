@@ -15,6 +15,8 @@ import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
+import { runMarketplaceFeeds, formatMarketRun } from "./marketplaces.js";
+import { listSavedSearches } from "./saved-searches.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
 import { formatResolution } from "./grocery-match.js";
 import { listShopping } from "./shopping.js";
@@ -297,11 +299,25 @@ async function maybeRunResale() {
         } catch (e) {
           log.error("first-look feed failed", { reason: e.message });
         }
+        // Per-marketplace saved-search feeds: read each saved search across its
+        // requested sites (eBay/Poshmark/Vestiaire/1stDibs) via the LOCAL browser
+        // and surface NEW listings. Deeper than the web-search delegate above and,
+        // like First Look, local-only because it needs a real browser. No-ops
+        // gracefully (empty) if Playwright isn't installed / a selector is stale.
+        let marketNew = 0;
+        try {
+          const runs = await runMarketplaceFeeds({ searches: await listSavedSearches() });
+          marketNew = runs.reduce((n, r) => n + r.newItems.length, 0);
+          const summary = formatMarketRun(runs);
+          if (summary) await notifyOwner(`New marketplace finds:\n${summary}`);
+        } catch (e) {
+          log.error("marketplace feeds failed", { reason: e.message });
+        }
         // Price-watch: re-check watched listings via the LOCAL browser (Lloyd) and
         // flag any drops / target hits. Done here on Lloyd, not the remote resale.
         const flagged = await checkWatched();
         if (flagged.length) await notifyOwner(`Price drop:\n${formatWatchFlags(flagged)}`);
-        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew });
+        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew, marketNew });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
