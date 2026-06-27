@@ -149,6 +149,37 @@ box's agent-scoped notes plus shared facts. Embeddings download a ~90MB model on
 > transfer) instead of re-running the seeds — useful to mirror Lloyd's current brain to
 > a new box. Keep `BRAIN_PATH` pointed at this machine's local copy.
 
+### 5a. Migrating an EXISTING live Lloyd here? Restore `data/`, don't re-seed.
+
+If you're moving an already-running Lloyd onto this mini (not standing up a brand-new
+family), seeding is the wrong move — it would lose everything Lloyd has learned and every
+standing rule the family added. **Code travels with the clone; runtime state does not.**
+A `git clone` of `main` brings all code fixes (e.g. the security-finding dedup), but the
+entire `data/` directory is **gitignored**, so none of the live state comes with it:
+
+- `data/brain.json` — the whole learned brain (family facts, preferences, history)
+- `data/house-rules.json` — household + per-agent **standing rules** (e.g. the security
+  rule that says the family's own email volume isn't a threat)
+- `data/decisions/*` — the per-agent decision logs
+- `data/conversations.json` — short-term per-sender threads
+- `data/cost-alerts.json`, `data/digest-state.json`, `data/*-state.json` — watchdog +
+  schedule guards (so the cost watchdog and digest don't re-fire/re-alert after the move)
+- `data/security-findings.json` — Frank's findings (a fresh empty one is fine — 0 open)
+
+Bring that state over one of two ways:
+
+1. **Off-site backup restore (preferred — workstream R).** The live daemon snapshots
+   `data/` to the Azure `cos-state-backup` blob every ~6h (`backupState`). Restore the
+   latest snapshot into this box's `data/` before first `npm start`. This is atomic and
+   is the designed migration/disaster-recovery path.
+2. **One-time out-of-band copy.** `scp`/AirDrop the source box's `data/` directory here
+   (skip `data/models` — the ~90MB embedding model re-downloads on first run). Same
+   out-of-band rule as the seeds: **never via git.**
+
+After restoring, **check `data/pending-approvals.json` is `{}`** (no approval mid-flight)
+before starting, then `npm start`. Do NOT also run the seeds — the restored brain already
+has the family data, and re-seeding is redundant (idempotent, but unnecessary).
+
 ## 6. First live run (foreground)
 
 ```bash
