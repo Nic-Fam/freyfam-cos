@@ -16,7 +16,9 @@ test("logAction + listActions round-trip, newest first, windowed", async () => {
   await a.logAction("order", "Ralphs grocery order (5 items)", { now: () => "2026-06-24T09:00:00Z" });
   await a.logAction("email", "old one", { now: () => "2026-05-01T10:00:00Z" }); // outside 7d
 
-  const recent = await a.listActions({ sinceDays: 7 });
+  // Pin "now" so the 7-day window is deterministic regardless of the real date
+  // (without this the hardcoded dates above drift out of the window over time).
+  const recent = await a.listActions({ sinceDays: 7, now: () => "2026-06-25T10:00:00Z" });
   assert.equal(recent.length, 2);
   assert.equal(recent[0].kind, "order"); // newest first
   assert.equal(recent[1].summary, "Sent email to nic re: dinner");

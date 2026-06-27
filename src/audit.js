@@ -27,11 +27,12 @@ export async function logAction(kind, summary, { now = () => new Date().toISOStr
   }
 }
 
-/** Actions in the last `sinceDays`, newest first. */
-export async function listActions({ sinceDays = 7 } = {}) {
+/** Actions in the last `sinceDays`, newest first. `now` (ISO string) is injectable
+ *  so the window is deterministic in tests — mirrors logAction's `now`. */
+export async function listActions({ sinceDays = 7, now = () => new Date().toISOString() } = {}) {
   let items = [];
   try { items = await col().list(); } catch { items = []; }
-  const cutoff = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  const cutoff = Date.parse(now()) - sinceDays * 24 * 60 * 60 * 1000;
   return items
     .filter((a) => a && a.at && Date.parse(a.at) >= cutoff)
     .sort((a, b) => String(b.at).localeCompare(String(a.at)));
