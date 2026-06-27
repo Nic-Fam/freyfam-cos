@@ -15,6 +15,7 @@ import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions, detectRecurring } from "../finance.js";
+import { logTransaction, listTransactions, summarizeSpend, formatSpend } from "../finance-log.js";
 import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun } from "../saved-searches.js";
 import { addProposal, listProposals } from "../proposals.js";
@@ -145,12 +146,44 @@ const REGISTRY = {
           },
         }, ["transactions"]),
       },
+      {
+        name: "log_transaction",
+        description: "Record ONE transaction from a forwarded bank/card alert into the running spend log. Do this for each transaction alert you see. Logging only; never moves money.",
+        input_schema: obj({
+          amount: { type: "number" },
+          date: { type: "string" },
+          merchant: { type: "string" },
+          card: { type: "string" },
+          category: { type: "string" },
+          note: { type: "string" },
+        }, ["amount"]),
+      },
+      {
+        name: "list_transactions",
+        description: "List logged transactions, newest first. Optionally filter by recency window (sinceDays), card, or merchant.",
+        input_schema: obj({
+          sinceDays: { type: "number" },
+          card: { type: "string" },
+          merchant: { type: "string" },
+        }),
+      },
+      {
+        name: "spending_summary",
+        description: "Roll up the logged transactions over the last `sinceDays` (default 7): total, totals by category, duplicate charges, notable price jumps, and recurring-charge radar.",
+        input_schema: obj({ sinceDays: { type: "number" } }),
+      },
     ],
     handlers: {
       ...memoryHandlers("finance"),
       ...decisionHandlers("finance"),
       analyze_transactions: async ({ transactions }) =>
         JSON.stringify({ ...analyzeTransactions(transactions), recurring: detectRecurring(transactions) }),
+      log_transaction: async (input) => JSON.stringify(await logTransaction(input)),
+      list_transactions: async (input) => JSON.stringify(await listTransactions(input || {})),
+      spending_summary: async ({ sinceDays } = {}) => {
+        const summary = await summarizeSpend(sinceDays != null ? { sinceDays } : {});
+        return JSON.stringify({ ...summary, text: formatSpend(summary) });
+      },
     },
   }),
 

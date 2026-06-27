@@ -21,6 +21,7 @@ import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
+import { isTransactionAlert, queueAlert } from "./finance-ingest.js";
 import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KNOWN_AGENTS } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
@@ -956,6 +957,21 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
         }
       } catch (e) {
         log.error("shipment auto-track failed", { reason: e.message });
+      }
+    }
+    // Bank/card transaction alerts: file silently for the daily finance ingest
+    // (no triage, no reply, no model). The daily batch (heartbeat) extracts the
+    // queue into the spend log. Same silent-capture pattern as shipment tracking.
+    if (
+      msg.channel === "email" &&
+      !isSelfAddress(msg.from) &&
+      isTransactionAlert({ from: msg.from, subject: msg.subject, body: msg.body })
+    ) {
+      try {
+        await queueAlert({ from: msg.from, subject: msg.subject, body: msg.body });
+        log.info("queued transaction alert for finance ingest", { from: msg.from });
+      } catch (e) {
+        log.error("queue transaction alert failed", { reason: e.message });
       }
     }
     log.info("auto-reply suppressed (automated/self sender)", { from: msg.from, channel: msg.channel });

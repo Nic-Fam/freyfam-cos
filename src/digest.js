@@ -53,7 +53,9 @@ Gather what you need first:
 - Open tasks: call list_tasks. Surface anything OVERDUE or due today (skip the
   section if nothing is due or overdue).
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
-- Anything money-related worth a heads-up: delegate to finance (Patrick).
+- Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
+  trends live in the separate weekly finance report, so keep this to anything
+  time-sensitive: a bill due, an unusual charge worth flagging today.)
 - Any security flags: delegate to security (Frank).
 - Notable resale finds worth a glance: delegate to resale (Shey).
 

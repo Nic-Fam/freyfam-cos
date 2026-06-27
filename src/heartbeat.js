@@ -1,4 +1,4 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
@@ -6,7 +6,9 @@ import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
-import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate } from "./digest.js";
+import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
+import { buildDailyIngest, getLastIngestDate, setLastIngestDate } from "./finance-ingest.js";
+import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
@@ -204,6 +206,38 @@ async function maybeRunDigest() {
   }
 }
 
+// Finance: drain queued transaction alerts into the spend log once per local day
+// (one Haiku batch + reconcile pass), and deliver the weekly report on Sunday
+// night. Both guards are persisted like the digest so restarts don't re-fire.
+async function maybeRunFinanceIngest() {
+  if (!FINANCE_REPORT.ingestEnabled) return;
+  const { date, hour } = localParts(new Date(), FINANCE_REPORT.tz);
+  if (hour < FINANCE_REPORT.ingestHour || hour >= FINANCE_REPORT.ingestHour + 3) return;
+  const last = await getLastIngestDate();
+  if (last === date) return;
+  await setLastIngestDate(date);
+  try {
+    const r = await buildDailyIngest();
+    if (r.alerts) log.info("finance ingest", { date, alerts: r.alerts, logged: r.logged, flagged: r.flagged.length });
+  } catch (err) {
+    log.error("finance ingest failed", { reason: err.message });
+  }
+}
+
+async function maybeRunFinanceReport() {
+  if (!FINANCE_REPORT.enabled) return;
+  const last = await getLastReportDate();
+  const { run, date } = shouldRunWeeklyReport(new Date(), last, FINANCE_REPORT);
+  if (!run) return;
+  await setLastReportDate(date); // persist BEFORE running so a restart mid-run can't double-fire
+  try {
+    await runWeeklyFinanceReport();
+    log.info("weekly finance report sent", { date });
+  } catch (err) {
+    log.error("weekly finance report failed", { reason: err.message });
+  }
+}
+
 // Fire any reminders that have come due: notify the owner, then re-arm recurring
 // ones / mark one-shots done. Persisted, so a restart never drops one.
 async function maybeFireReminders() {
@@ -309,6 +343,8 @@ export async function tick() {
   await maybeSchedulePickups();
   await maybeSecurityScan();
   await maybeRunDigest();
+  await maybeRunFinanceIngest();
+  await maybeRunFinanceReport();
   await maybeFireReminders();
   await maybeRunResale();
   await maybeRunGroceryOrder();
