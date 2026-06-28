@@ -78,10 +78,12 @@ export async function drainAlerts() {
 // --- 2. one-shot extraction (Haiku) -----------------------------------------
 const EXTRACT_SYSTEM = `You convert bank/credit-card transaction ALERT emails into structured data.
 You are given a numbered list of alert emails. Return ONLY a JSON object:
-{"transactions":[{"i":<index>,"date":"YYYY-MM-DD","merchant":<string>,"amount":<number>,"card":<string|null>,"source":"credit"|"checking"}],"unparsed":[<index>,...]}
+{"transactions":[{"i":<index>,"date":"YYYY-MM-DD","merchant":<string>,"amount":<number>,"card":<string|null>,"source":"credit"|"checking","direction":"in"|"out","balance":<number|null>}],"unparsed":[<index>,...]}
 Rules:
 - amount = the positive dollar amount of the single transaction.
 - source = "checking" if the alert is about a checking/debit/deposit/withdrawal on a bank account; "credit" if it is a credit-card purchase/charge.
+- direction = "in" if money ENTERS the account (a deposit, refund, or payment received into checking); "out" if money LEAVES (a debit, withdrawal, or a credit-card purchase/charge). A normal card purchase is "out".
+- balance = the account's available/posted balance AFTER this transaction if the alert states one (a dollar number), else null. Do NOT invent it.
 - card = the last 4 digits or the card/account name if present, else null.
 - Put an index in "unparsed" if the email is NOT a single posted transaction (statement notice, marketing, balance summary) or you cannot find a clear amount.`;
 
@@ -118,6 +120,8 @@ export async function extractTransactions(alerts, { complete = defaultComplete, 
       merchant: t.merchant || null,
       card: t.card || null,
       source: t.source === "checking" ? "checking" : "credit",
+      direction: t.direction === "in" ? "in" : "out",
+      balance: typeof t.balance === "number" && Number.isFinite(t.balance) ? t.balance : null,
       alert,
     });
   }
@@ -149,7 +153,7 @@ export async function buildDailyIngest({ complete = defaultComplete } = {}) {
 
   let logged = 0;
   for (const t of parsed) {
-    await logTransaction({ amount: t.amount, date: t.date, merchant: t.merchant, card: t.card, source: t.source });
+    await logTransaction({ amount: t.amount, date: t.date, merchant: t.merchant, card: t.card, source: t.source, direction: t.direction, balance: t.balance, at: t.alert?.at });
     logged++;
   }
   return { alerts: alerts.length, logged, flagged: leftovers };

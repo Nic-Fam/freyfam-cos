@@ -28,7 +28,7 @@ const round2 = (x) => Math.round(Number(x) * 100) / 100;
  * @param {{amount:number, date?:string, merchant?:string, card?:string,
  *          category?:string, note?:string}} input
  */
-export async function logTransaction({ amount, date, merchant, card, category, note, source } = {}) {
+export async function logTransaction({ amount, date, merchant, card, category, note, source, direction, balance, at } = {}) {
   if (amount == null || Number.isNaN(Number(amount))) throw new Error("amount is required");
   const item = {
     id: randomUUID().slice(0, 8),
@@ -40,9 +40,19 @@ export async function logTransaction({ amount, date, merchant, card, category, n
     // weekly report can break them out. Defaults to "credit" (card alerts are
     // the common case); checking ingestion passes "checking".
     source: source === "checking" ? "checking" : "credit",
+    // direction: "out" = money left (debit/charge/purchase, the common case),
+    // "in" = money entered (deposit/refund). Lets the checking ledger sign each
+    // flow so a paycheck is not counted like a bill. Defaults to "out".
+    direction: direction === "in" ? "in" : "out",
+    // balance: account available balance AFTER this transaction, when the alert
+    // stated one. The most authoritative anchor for the checking-balance ledger.
+    balance: typeof balance === "number" && Number.isFinite(balance) ? round2(balance) : null,
     category: category ? String(category).trim() : null,
     note: note ? String(note).trim() : null,
-    at: new Date().toISOString(),
+    // `at` orders flows for the balance ledger. Defaults to now; the daily ingest
+    // passes each alert's received time so a batch logged in one loop keeps a
+    // meaningful order instead of colliding on the same millisecond.
+    at: at && !Number.isNaN(Date.parse(at)) ? new Date(at).toISOString() : new Date().toISOString(),
   };
   await col().add(item);
   return item;

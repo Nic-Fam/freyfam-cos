@@ -9,6 +9,7 @@ import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate } from "./finance-ingest.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
+import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
@@ -239,6 +240,26 @@ async function maybeRunFinanceReport() {
   }
 }
 
+// Monthly transfer outlook (Patrick): a few days before the 1st, compute the
+// once-a-month joint-checking transfer from the live transaction feed (balance
+// ledger + this cycle's credit charges + recorded bills/paycheck) and surface it
+// to the owner. Once per cycle, persisted so restarts in the window don't re-fire.
+// Off-switch: TRANSFER_OUTLOOK_ENABLED=false. Surfacing only; a human transfers.
+async function maybeRunTransferOutlook() {
+  if (String(process.env.TRANSFER_OUTLOOK_ENABLED ?? "true").toLowerCase() !== "true") return;
+  const last = await getLastOutlookCycle();
+  const { run, cycle } = shouldRunTransferOutlook(new Date(), last);
+  if (!run) return;
+  await setLastOutlookCycle(cycle); // persist BEFORE running so a restart mid-window can't double-fire
+  try {
+    const o = await transferOutlook();
+    await notifyOwner(`Monthly checking transfer outlook:\n${o.text}`);
+    log.info("transfer outlook surfaced", { cycle, needsBalance: Boolean(o.needsBalance) });
+  } catch (err) {
+    log.error("transfer outlook failed", { reason: err.message });
+  }
+}
+
 // Afternoon package-pickup digest: weekday 5:30pm, iMessage to the owner, listing
 // what was delivered today to the UPS Store. Persisted once-per-day guard.
 async function maybeRunPackageDigest() {
@@ -362,6 +383,7 @@ export async function tick() {
   await maybeRunDigest();
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
+  await maybeRunTransferOutlook();
   await maybeRunPackageDigest();
   await maybeFireReminders();
   await maybeRunResale();
