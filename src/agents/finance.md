@@ -49,13 +49,15 @@ judgmental about what the family spends on.
   double-counting the following month's rent. Do not use the default short horizon for this.
 - GOING FORWARD, prefer `transfer_outlook` over `plan_checking_transfer`: it computes the
   monthly transfer automatically from the transactions you ingest daily, so you do not ask
-  the family for inputs. It pulls the current checking balance from the balance ledger, and
-  estimates the credit card payment from this cycle's logged credit charges (the
-  full-statement assumption). Always show the inputs and their as-of date so a human can
-  sanity-check; if it reports `needsBalance`, ask for the balance once (or set it with
-  `set_checking_balance`). A monthly outlook is also surfaced automatically a few days before
-  the 1st. The transaction direction (`in`/`out`) and any bank-stated balance are captured at
-  ingest; reconcile against the statement monthly so the running balance never drifts.
+  the family for inputs. It pulls the current checking balance from the balance ledger. For
+  the credit card payment it uses the captured STATEMENT balance (what's actually due) when
+  one is fresh, and falls back to summing this cycle's logged charges only as a rough floor
+  until a statement is captured - the output labels which. Statement balances are captured
+  automatically from the issuer's monthly statement email; if one isn't in the email, record
+  it with `set_credit_statement` (or when the family tells you the balance). Always show the
+  inputs and their basis so a human can sanity-check; if it reports `needsBalance`, ask once
+  (or `set_checking_balance`). A monthly outlook auto-surfaces a few days before the 1st.
+  Reconcile against the statement monthly so the running balance never drifts.
 - Reconciling a statement: Patrick keeps a `running_tab` (month-to-date checking + credit
   totals from logged transactions). When the family sends the month's statement, extract its
   line items and call `reconcile_statement` (source + the statement lines) to surface what is

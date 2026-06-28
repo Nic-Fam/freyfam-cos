@@ -3,8 +3,9 @@
 // ingests daily, instead of asking the family for the inputs each month.
 //
 //   - current balance      <- checking-balance ledger (bank-stated anchor + flows)
-//   - credit card payment  <- this cycle's credit charges (running tab); paying the
-//                             full statement means the payment ~= what was charged
+//   - credit card payment  <- the captured STATEMENT balance (what's actually due),
+//                             falling back to this cycle's logged charges if no
+//                             fresh statement has been captured yet
 //   - recurring bills/pay   <- the recorded obligations (rent, car, BrightHorizons,
 //                             biweekly paycheck)
 //
@@ -16,6 +17,7 @@ import { dirname } from "node:path";
 import { listObligations, planCheckingTransfer, todayYmd } from "./obligations.js";
 import { getCheckingBalance } from "./checking-balance.js";
 import { runningTab } from "./finance-log.js";
+import { currentStatementPayment } from "./credit-statement.js";
 
 const round2 = (x) => Math.round(Number(x) * 100) / 100;
 const money = (n) => "$" + round2(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -39,18 +41,28 @@ export function cycleThrough(now = new Date()) {
 export async function transferOutlook({ now = new Date(), throughDate } = {}) {
   const bal = await getCheckingBalance({ now });
   const tab = await runningTab({ now });
-  const ccEstimate = round2(tab.credit.total); // full-statement assumption
+  // Prefer the captured STATEMENT balance (what's actually due); fall back to summing
+  // this cycle's logged charges (a rough floor) until a statement is captured.
+  const stmt = await currentStatementPayment({ now });
+  const ccEstimate = stmt ? stmt.total : round2(tab.credit.total);
+  const cc = {
+    amount: ccEstimate,
+    basis: stmt ? "statement" : "charges",
+    detail: stmt
+      ? `statement balance${stmt.cards > 1 ? ` across ${stmt.cards} cards` : ""}`
+      : `${tab.credit.count} logged charge${tab.credit.count === 1 ? "" : "s"} this cycle (rough floor; no statement captured yet)`,
+  };
   const through = throughDate || cycleThrough(now);
 
   if (bal.balance == null) {
     return {
-      needsBalance: true, ccEstimate, ccChargeCount: tab.credit.count, through,
+      needsBalance: true, ccEstimate, cc, ccChargeCount: tab.credit.count, through,
       text: "I can't compute the transfer yet: I have no current checking balance to anchor on (no balance in recent bank alerts, and none set). Tell me the balance with set_checking_balance, or it will anchor itself from the next deposit/debit alert that carries one.",
     };
   }
 
   const plan = await planCheckingTransfer({ currentBalance: bal.balance, creditCardPayment: ccEstimate, throughDate: through, now });
-  return { ...plan, balance: bal, ccEstimate, ccChargeCount: tab.credit.count, text: formatOutlook(plan, bal, ccEstimate, tab.credit.count) };
+  return { ...plan, balance: bal, ccEstimate, cc, ccChargeCount: tab.credit.count, text: formatOutlook(plan, bal, cc) };
 }
 
 // "YYYY-MM" of the cycle the next transfer covers (the month of the next 1st).
@@ -85,11 +97,14 @@ export async function setLastOutlookCycle(cycle) {
   await writeFile(statePath(), JSON.stringify({ lastCycle: cycle }, null, 2));
 }
 
-export function formatOutlook(plan, bal, ccEstimate, ccChargeCount) {
+export function formatOutlook(plan, bal, cc) {
   const asOf = bal.asOf ? bal.asOf.slice(0, 10) : "unknown";
   const src = bal.basis === "bank-alert" ? "from a bank alert" : bal.basis === "manual" ? "set by hand" : "unknown source";
+  const ccLine = cc.basis === "statement"
+    ? `credit card payment ${money(cc.amount)} (${cc.detail})`
+    : `credit card payment ~${money(cc.amount)} (${cc.detail})`;
   const lines = [
-    `Inputs (from your transaction feed): checking balance ${money(bal.balance)} (${src}, as of ${asOf}${bal.flowsApplied ? `, +${bal.flowsApplied} flows since` : ""}); credit card payment estimated at ${money(ccEstimate)} from ${ccChargeCount} charge${ccChargeCount === 1 ? "" : "s"} this cycle (assumes you pay the full statement).`,
+    `Inputs (from your transaction feed): checking balance ${money(bal.balance)} (${src}, as of ${asOf}${bal.flowsApplied ? `, +${bal.flowsApplied} flows since` : ""}); ${ccLine}.`,
     "",
     plan.text,
   ];

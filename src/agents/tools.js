@@ -22,6 +22,7 @@ import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches,
 import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations } from "../obligations.js";
 import { transferOutlook } from "../transfer-outlook.js";
 import { setCheckingAnchor } from "../checking-balance.js";
+import { setStatement } from "../credit-statement.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
@@ -49,7 +50,7 @@ export const AGENT_ALLOWLIST = {
   // NO search/browse/outbound — finance stays locked down. All read/log/compute only.
   finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
-            "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance"],
+            "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement"],
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
@@ -224,6 +225,11 @@ const REGISTRY = {
         input_schema: obj({ amount: { type: "number" }, asOf: { type: "string" } }, ["amount"]),
       },
       {
+        name: "set_credit_statement",
+        description: "Record the current credit-card STATEMENT balance due (what gets paid on the due date). This is what the transfer outlook uses for the card payment, preferred over summing charges. Use when the family tells you the statement balance or you read it off a statement. Optional card (last 4 / name), minimumDue, dueDate (YYYY-MM-DD).",
+        input_schema: obj({ statementBalance: { type: "number" }, card: { type: "string" }, minimumDue: { type: "number" }, dueDate: { type: "string" } }, ["statementBalance"]),
+      },
+      {
         name: "running_tab",
         description: "The running tab: month-to-date totals and counts for checking and credit from the logged transactions. This is the live tally the monthly statement gets reconciled against. Optional `ym` (YYYY-MM) selects a month; defaults to the current one.",
         input_schema: obj({ ym: { type: "string" } }),
@@ -266,6 +272,7 @@ const REGISTRY = {
       },
       transfer_outlook: async ({ throughDate } = {}) => JSON.stringify(await transferOutlook(throughDate ? { throughDate } : {})),
       set_checking_balance: async ({ amount, asOf } = {}) => JSON.stringify(await setCheckingAnchor({ amount, asOf })),
+      set_credit_statement: async (input) => JSON.stringify(await setStatement(input || {})),
     },
   }),
 
