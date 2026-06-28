@@ -15,9 +15,11 @@ import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions, detectRecurring } from "../finance.js";
-import { logTransaction, listTransactions, summarizeSpend, formatSpend } from "../finance-log.js";
+import { logTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab } from "../finance-log.js";
+import { reconcile, formatReconciliation } from "../reconcile.js";
 import { useItUpSuggestion } from "../meals.js";
-import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun } from "../saved-searches.js";
+import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
+import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations } from "../obligations.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
@@ -42,7 +44,10 @@ const obj = (properties, required = []) => ({ type: "object", properties, requir
 // runSpecialist (the scoped path), never the chief's full toolset.
 const COMMON_TOOLS = ["recall_memory", "remember", "log_decision", "list_decisions"];
 export const AGENT_ALLOWLIST = {
-  finance: [...COMMON_TOOLS, "analyze_transactions"], // NO search/browse/outbound — finance stays locked down
+  // NO search/browse/outbound — finance stays locked down. All read/log/compute only.
+  finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
+            "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
+            "running_tab", "reconcile_statement"],
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
@@ -172,6 +177,54 @@ const REGISTRY = {
         description: "Roll up the logged transactions over the last `sinceDays` (default 7): total, totals by category, duplicate charges, notable price jumps, and recurring-charge radar.",
         input_schema: obj({ sinceDays: { type: "number" } }),
       },
+      {
+        name: "plan_checking_transfer",
+        description:
+          "Compute how much to transfer INTO joint checking to keep at least a buffer (default $1000) at every point through the upcoming bills. Reads the recorded checking obligations (rent, car payment, weekly BrightHorizons, etc.) and projects the running balance, protecting the LOWEST point, not just the ending balance. Always pass the current checking balance. For a variable bill like the credit card payment, pass `creditCardPayment` (or `amounts`). Surfacing only; never moves money.",
+        input_schema: obj({
+          currentBalance: { type: "number" },
+          buffer: { type: "number" },
+          creditCardPayment: { type: "number" },
+          throughDate: { type: "string" },
+          horizonDays: { type: "number" },
+          amounts: { type: "object" },
+          extraOutflows: { type: "array", items: obj({ name: { type: "string" }, amount: { type: "number" }, date: { type: "string" } }, ["amount", "date"]) },
+          expectedInflows: { type: "array", items: obj({ name: { type: "string" }, amount: { type: "number" }, date: { type: "string" } }, ["amount", "date"]) },
+        }, ["currentBalance"]),
+      },
+      {
+        name: "set_obligation",
+        description:
+          "Record or update a recurring checking flow. cadence monthly (dueDay 1-31; use 31 for end of month), weekly (dueWeekday 0=Sun..6=Sat), biweekly (anchorDate YYYY-MM-DD, a known occurrence; repeats every 14 days, e.g. a paycheck), or once (date YYYY-MM-DD). direction 'out' for a bill (default) or 'in' for a deposit/paycheck. Set variable:true for a flow whose amount changes each cycle (e.g. the credit card payment) - supplied at planning time, not stored.",
+        input_schema: obj({
+          name: { type: "string" },
+          amount: { type: "number" },
+          cadence: { type: "string", enum: ["monthly", "weekly", "biweekly", "once"] },
+          dueDay: { type: "number" },
+          dueWeekday: { type: "number" },
+          anchorDate: { type: "string" },
+          date: { type: "string" },
+          direction: { type: "string", enum: ["out", "in"] },
+          variable: { type: "boolean" },
+          note: { type: "string" },
+        }, ["name", "cadence"]),
+      },
+      { name: "list_obligations", description: "List the recorded recurring checking obligations.", input_schema: obj({}) },
+      { name: "remove_obligation", description: "Remove a recurring checking obligation by its name or id.", input_schema: obj({ idOrName: { type: "string" } }, ["idOrName"]) },
+      {
+        name: "running_tab",
+        description: "The running tab: month-to-date totals and counts for checking and credit from the logged transactions. This is the live tally the monthly statement gets reconciled against. Optional `ym` (YYYY-MM) selects a month; defaults to the current one.",
+        input_schema: obj({ ym: { type: "string" } }),
+      },
+      {
+        name: "reconcile_statement",
+        description: "Reconcile an official monthly statement against the running tab for one source. Pass `source` (checking or credit) and the statement's line items as `statement` [{date, amount, merchant}]; amounts are matched on absolute value (use the same sign convention). Reports what is on the statement but missing from the tab, what is on the tab but not the statement, and the totals/difference. Surfacing only.",
+        input_schema: obj({
+          source: { type: "string", enum: ["checking", "credit"] },
+          statement: { type: "array", items: obj({ date: { type: "string" }, amount: { type: "number" }, merchant: { type: "string" } }, ["amount"]) },
+          ym: { type: "string" },
+        }, ["source", "statement"]),
+      },
     ],
     handlers: {
       ...memoryHandlers("finance"),
@@ -183,6 +236,21 @@ const REGISTRY = {
       spending_summary: async ({ sinceDays } = {}) => {
         const summary = await summarizeSpend(sinceDays != null ? { sinceDays } : {});
         return JSON.stringify({ ...summary, text: formatSpend(summary) });
+      },
+      plan_checking_transfer: async (input) => JSON.stringify(await planCheckingTransfer(input || {})),
+      set_obligation: async (input) => JSON.stringify(await addObligation(input)),
+      list_obligations: async () => formatObligations(await listObligations()),
+      remove_obligation: async ({ idOrName }) => ((await removeObligation(idOrName)) ? "removed" : "not found"),
+      running_tab: async ({ ym } = {}) => {
+        const tab = await runningTab(ym ? { ym } : {});
+        return JSON.stringify({ ...tab, text: formatRunningTab(tab) });
+      },
+      reconcile_statement: async ({ source, statement, ym } = {}) => {
+        const src = source === "checking" ? "checking" : "credit";
+        const tab = await runningTab(ym ? { ym } : {});
+        const tabForSource = tab.transactions.filter((t) => (t.source === "checking" ? "checking" : "credit") === src);
+        const r = reconcile(tabForSource, statement || []);
+        return JSON.stringify({ ...r, text: formatReconciliation(r, { source: src }) });
       },
     },
   }),
@@ -202,8 +270,8 @@ const REGISTRY = {
           sites: { type: "array", items: { type: "string" } },
         }, ["query"]),
       },
-      { name: "list_saved_searches", description: "List the family's active saved searches.", input_schema: obj({}) },
-      { name: "remove_saved_search", description: "Remove a saved search by its id.", input_schema: obj({ id: { type: "string" } }, ["id"]) },
+      { name: "list_saved_searches", description: "List the family's active saved searches, each with its number (#). Use the number when referring to a specific hunt.", input_schema: obj({}) },
+      { name: "remove_saved_search", description: "Remove a saved search by its number (e.g. 3) or its id.", input_schema: obj({ id: { type: "string" } }, ["id"]) },
       {
         name: "run_saved_searches",
         description: "Run ALL saved searches now and report only the NEW matches since last time (past hits are tracked and not repeated). Use to check for fresh finds across the hunt list.",
@@ -215,7 +283,7 @@ const REGISTRY = {
       ...decisionHandlers("resale"),
       ...searchHandler(),
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
-      list_saved_searches: async () => JSON.stringify(await listSavedSearches()),
+      list_saved_searches: async () => formatSavedSearchList(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
       run_saved_searches: async () => formatSavedSearchRun(await runSavedSearches()),
     },

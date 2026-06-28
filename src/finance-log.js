@@ -81,6 +81,41 @@ export async function summarizeSpend({ sinceDays = 7, source, now = new Date() }
   return { window: sinceDays, source: source || "all", ...analysis, recurring };
 }
 
+// Local "YYYY-MM" for the family timezone (statement month anchor).
+function localYm(now = new Date(), tz = process.env.FAMILY_TZ || "America/Los_Angeles") {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(now).map((x) => [x.type, x.value])
+  );
+  return `${p.year}-${p.month}`;
+}
+
+/**
+ * The RUNNING TAB: month-to-date totals + counts, split checking vs credit, from
+ * the logged transactions. This is Patrick's live tally that the monthly statement
+ * is later reconciled against. Anchored on the transaction DATE (not ingest time)
+ * so it matches a statement period. Surfacing only.
+ * @returns {{month, checking:{count,total}, credit:{count,total}, combined, transactions}}
+ */
+export async function runningTab({ ym, now = new Date() } = {}) {
+  const month = ym || localYm(now);
+  const all = await listTransactions({});
+  const items = all.filter((t) => String(t.date || t.at || "").slice(0, 7) === month);
+  const acc = { checking: { count: 0, total: 0 }, credit: { count: 0, total: 0 } };
+  for (const t of items) {
+    const s = t.source === "checking" ? "checking" : "credit";
+    acc[s].count += 1;
+    acc[s].total = round2(acc[s].total + Number(t.amount || 0));
+  }
+  return { month, checking: acc.checking, credit: acc.credit, combined: round2(acc.checking.total + acc.credit.total), transactions: items };
+}
+
+/** Human one-line running tab. Pure. */
+export function formatRunningTab(tab) {
+  if (!tab) return "No running tab.";
+  const m = (n) => "$" + round2(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `Running tab ${tab.month}: checking ${m(tab.checking.total)} (${tab.checking.count}), credit ${m(tab.credit.total)} (${tab.credit.count}); combined ${m(tab.combined)}.`;
+}
+
 /** Human one-block summary for Patrick's reply / the digest. Pure. */
 export function formatSpend(summary) {
   const { window = 7, count = 0, total = 0, totalsByCategory = {}, duplicates = [], notable = [] } = summary || {};
