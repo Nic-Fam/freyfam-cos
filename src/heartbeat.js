@@ -7,7 +7,7 @@ import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
-import { buildDailyIngest, getLastIngestDate, setLastIngestDate } from "./finance-ingest.js";
+import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
@@ -211,6 +211,27 @@ async function maybeRunDigest() {
 // Finance: drain queued transaction alerts into the spend log once per local day
 // (one Haiku batch + reconcile pass), and deliver the weekly report on Sunday
 // night. Both guards are persisted like the digest so restarts don't re-fire.
+// Bank/card alert emails are "automated" senders, so the front door never enqueues
+// them to the cos queue - they only land in the cos mailbox. Scan the inbox on a
+// slow cadence and queue any transaction alerts directly for the daily ingest (same
+// approach as maybeScanShipments). Deduped, so re-scanning is a no-op. Gated on
+// ingest being enabled. Best-effort; a Graph hiccup never sinks the tick.
+let lastAlertScanAt = 0;
+const ALERT_SCAN_INTERVAL_MS = Number(process.env.FINANCE_ALERT_SCAN_INTERVAL_MS || 30 * 60 * 1000); // 30 min
+async function maybeScanTransactionAlerts() {
+  if (!FINANCE_REPORT.ingestEnabled) return;
+  const now = Date.now();
+  if (now - lastAlertScanAt < ALERT_SCAN_INTERVAL_MS) return;
+  lastAlertScanAt = now;
+  try {
+    const mails = await recentShipmentMail({ top: 40 }); // generic recent inbox bodies (from, subject, body, receivedAt)
+    const r = await scanInboxForAlerts(mails);
+    if (r.queued) log.info("transaction alerts queued from inbox", r);
+  } catch (err) {
+    log.error("transaction alert scan failed", { reason: err.message });
+  }
+}
+
 async function maybeRunFinanceIngest() {
   if (!FINANCE_REPORT.ingestEnabled) return;
   const { date, hour } = localParts(new Date(), FINANCE_REPORT.tz);
@@ -381,6 +402,7 @@ export async function tick() {
   await maybeSchedulePickups();
   await maybeSecurityScan();
   await maybeRunDigest();
+  await maybeScanTransactionAlerts();
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
   await maybeRunTransferOutlook();
