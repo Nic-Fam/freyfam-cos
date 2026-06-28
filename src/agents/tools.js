@@ -20,6 +20,8 @@ import { reconcile, formatReconciliation } from "../reconcile.js";
 import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
 import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations } from "../obligations.js";
+import { transferOutlook } from "../transfer-outlook.js";
+import { setCheckingAnchor } from "../checking-balance.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
@@ -47,7 +49,7 @@ export const AGENT_ALLOWLIST = {
   // NO search/browse/outbound — finance stays locked down. All read/log/compute only.
   finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
-            "running_tab", "reconcile_statement"],
+            "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance"],
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
@@ -212,6 +214,16 @@ const REGISTRY = {
       { name: "list_obligations", description: "List the recorded recurring checking obligations.", input_schema: obj({}) },
       { name: "remove_obligation", description: "Remove a recurring checking obligation by its name or id.", input_schema: obj({ idOrName: { type: "string" } }, ["idOrName"]) },
       {
+        name: "transfer_outlook",
+        description: "Compute the once-a-month joint-checking transfer AUTOMATICALLY from the daily transaction feed: current checking balance from the balance ledger, the credit card payment estimated from this cycle's logged credit charges, and the recorded recurring bills/paycheck. Use this for 'how much should Shelli transfer' going forward; it needs no manual balance or card amount. Surfacing only.",
+        input_schema: obj({ throughDate: { type: "string" } }),
+      },
+      {
+        name: "set_checking_balance",
+        description: "Set/override the known joint-checking balance (a hard anchor the balance ledger advances from as new transactions post). Use when the family tells you the balance directly. asOf defaults to now.",
+        input_schema: obj({ amount: { type: "number" }, asOf: { type: "string" } }, ["amount"]),
+      },
+      {
         name: "running_tab",
         description: "The running tab: month-to-date totals and counts for checking and credit from the logged transactions. This is the live tally the monthly statement gets reconciled against. Optional `ym` (YYYY-MM) selects a month; defaults to the current one.",
         input_schema: obj({ ym: { type: "string" } }),
@@ -252,6 +264,8 @@ const REGISTRY = {
         const r = reconcile(tabForSource, statement || []);
         return JSON.stringify({ ...r, text: formatReconciliation(r, { source: src }) });
       },
+      transfer_outlook: async ({ throughDate } = {}) => JSON.stringify(await transferOutlook(throughDate ? { throughDate } : {})),
+      set_checking_balance: async ({ amount, asOf } = {}) => JSON.stringify(await setCheckingAnchor({ amount, asOf })),
     },
   }),
 
