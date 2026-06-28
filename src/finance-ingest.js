@@ -9,7 +9,7 @@
 //      tagged with their source (credit vs checking).
 // So model usage is ~1 cheap call/day, not one per transaction.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createCollection } from "./stores/collection.js";
@@ -56,6 +56,39 @@ export async function queueAlert({ from, subject, body, at } = {}) {
 
 export async function peekAlerts() {
   return inbox().list();
+}
+
+// --- mailbox scan: pull alerts the front door dropped --------------------------
+// Bank/card ALERT senders (no.reply.alerts@chase.com, etc.) are "automated", so the
+// front door does NOT enqueue them to the cos queue - they only ever sit in the cos
+// mailbox. So the heartbeat scans the inbox directly and queues any transaction
+// alert it finds, exactly like the shipment scanner does for carrier no-reply mail.
+// Deduped against a persisted seen-set (keyed by sender+received-time+subject) so a
+// repeated scan never double-queues the same alert before the daily ingest drains it.
+const alertSeen = () =>
+  createCollection({ file: process.env.FINANCE_ALERT_SEEN_PATH || "./data/finance-alert-seen.json", partition: "financealertseen" });
+const alertKey = (m) =>
+  createHash("sha1").update(`${m.from || ""}|${m.receivedAt || m.at || ""}|${m.subject || ""}`).digest("hex").slice(0, 16);
+
+/**
+ * Scan a batch of recent inbox messages, queue the ones that are transaction
+ * alerts (deduped), and return how many were newly queued. `mails` are
+ * {from, subject, body, receivedAt}. Pure of network; the caller fetches the mail.
+ */
+export async function scanInboxForAlerts(mails = []) {
+  const store = alertSeen();
+  const seen = new Set((await store.list()).map((s) => s.id));
+  let queued = 0;
+  for (const m of mails || []) {
+    if (!isTransactionAlert({ from: m.from, subject: m.subject, body: m.body })) continue;
+    const id = alertKey(m);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    await queueAlert({ from: m.from, subject: m.subject, body: m.body, at: m.receivedAt });
+    await store.add({ id, at: new Date().toISOString() });
+    queued++;
+  }
+  return { scanned: (mails || []).length, queued };
 }
 
 // Persisted once-per-day guard for the ingest batch (survives restarts).
