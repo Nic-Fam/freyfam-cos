@@ -8,6 +8,7 @@ import { notifyOwner } from "./channels/twilio.js";
 import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
+import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
@@ -225,7 +226,14 @@ async function maybeScanTransactionAlerts() {
   lastAlertScanAt = now;
   try {
     const mails = await recentShipmentMail({ top: 40 }); // generic recent inbox bodies (from, subject, body, receivedAt)
-    const r = await scanInboxForAlerts(mails);
+    // Statement notices and per-transaction alerts come from the same senders;
+    // route statements to balance capture and the rest to the transaction queue so
+    // a statement email is not mis-ingested as a charge.
+    const statements = mails.filter((m) => isCreditStatement(m));
+    const charges = mails.filter((m) => !isCreditStatement(m));
+    const s = await scanInboxForStatements(statements);
+    if (s.captured) log.info("credit statement captured", s);
+    const r = await scanInboxForAlerts(charges);
     if (r.queued) log.info("transaction alerts queued from inbox", r);
   } catch (err) {
     log.error("transaction alert scan failed", { reason: err.message });
