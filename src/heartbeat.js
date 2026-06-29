@@ -247,6 +247,11 @@ async function maybeScanTransactionAlerts() {
 // any not-yet-seen family email in the front-door envelope. First run baselines
 // (enqueues nothing), so this never replays already-answered history. Best-effort.
 async function maybeReconcileInboundEmail() {
+  // Retired on the mini when the Azure front door (email-handler webhook +
+  // cloud email-reconciler) owns inbound email. Its local dedup is disjoint from
+  // the webhook cosinboundseen table, so running both double-enqueues -> double
+  // replies. Set COS_EMAIL_RECONCILE_ENABLED=false to retire it here.
+  if (String(process.env.COS_EMAIL_RECONCILE_ENABLED).toLowerCase() === "false") return;
   try {
     const r = await reconcileInboundEmail({ top: 25 });
     if (r.enqueued) log.info("inbound email reconciled to queue", r);
