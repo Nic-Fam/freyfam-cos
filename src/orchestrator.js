@@ -19,6 +19,7 @@ import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent,
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { readPage, runOrder } from "./channels/browser.js";
+import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
 import { isTransactionAlert, queueAlert } from "./finance-ingest.js";
@@ -359,6 +360,24 @@ const tools = [
         dest: { type: "string", description: "Destination address." },
       },
       required: ["origin", "dest"],
+    },
+  },
+  {
+    name: "list_printers",
+    description: "List the printers available to Lloyd's host (the Mac mini) and the default one. Use before printing if unsure which printer to target.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "print_document",
+    description: "Print a local file on the home printer via the Mac mini (CUPS). `file` must be a path on Lloyd's host (e.g. an image saved under data/). Optional `printer` (name) and `copies`. Local only -- nothing leaves the house. Pairs with image generation (generate then print).",
+    input_schema: {
+      type: "object",
+      properties: {
+        file: { type: "string", description: "Path to the file to print, on Lloyd's host." },
+        printer: { type: "string", description: "Printer name; omit for the system default." },
+        copies: { type: "number" },
+      },
+      required: ["file"],
     },
   },
   {
@@ -761,6 +780,14 @@ function toolHandlers({ images, onDelegate } = {}) {
       } catch (e) {
         return `Could not compute leave-by time: ${e.message}`;
       }
+    },
+    list_printers: async () => JSON.stringify(await listPrinters()),
+    print_document: async ({ file, printer, copies } = {}) => {
+      const r = await printDocument(file, { printer, copies });
+      if (r.ok) {
+        await logAction("print", `Printed ${file} on ${r.printer}${copies && copies > 1 ? ` x${copies}` : ""}`);
+      }
+      return r.message;
     },
     place_order: async ({ url, summary, steps }) => {
       const { instruction } = await requestConfirmation(

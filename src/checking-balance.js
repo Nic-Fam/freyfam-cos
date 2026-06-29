@@ -13,29 +13,43 @@
 //
 // Surfacing only; never moves money.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { listTransactions } from "./finance-log.js";
+import { createCollection, usingTableStore } from "./stores/collection.js";
 
 const round2 = (x) => Math.round(Number(x) * 100) / 100;
 const anchorPath = () => process.env.CHECKING_ANCHOR_PATH || "./data/checking-anchor.json";
 
+// On the pluggable collection store (local JSON by default, the finance MI Table
+// when COS_TABLE_* is set) like every other finance store, so remote Patrick can
+// read it. The anchor is a single value, so keep ONE row id="anchor" and replace
+// it on each set (remove+add = upsert across both backends).
+const ANCHOR_ID = "anchor";
+const anchorCol = () => createCollection({ file: anchorPath(), partition: "checkinganchor" });
+
 /** Manually set/override the known checking balance (a hard anchor). */
 export async function setCheckingAnchor({ amount, asOf } = {}) {
   if (amount == null || Number.isNaN(Number(amount))) throw new Error("amount is required");
-  const item = { amount: round2(amount), asOf: asOf || new Date().toISOString() };
-  await mkdir(dirname(anchorPath()), { recursive: true });
-  await writeFile(anchorPath(), JSON.stringify(item, null, 2));
-  return item;
+  const item = { id: ANCHOR_ID, amount: round2(amount), asOf: asOf || new Date().toISOString() };
+  const col = anchorCol();
+  await col.remove(ANCHOR_ID).catch(() => {}); // single anchor: replace
+  await col.add(item);
+  return { amount: item.amount, asOf: item.asOf };
 }
 
 export async function getCheckingAnchor() {
-  try {
-    const a = JSON.parse(await readFile(anchorPath(), "utf8"));
-    return a && a.amount != null ? a : null;
-  } catch {
-    return null;
+  const a = (await anchorCol().list()).find((x) => x.id === ANCHOR_ID && x.amount != null);
+  if (a) return { amount: round2(a.amount), asOf: a.asOf };
+  // Backward-compat: a pre-collection single-object {amount,asOf} file (local JSON
+  // only; the Table backend never held the old format). Keeps the existing anchor
+  // readable after this ships; the next set upgrades it to the collection format.
+  if (!usingTableStore()) {
+    try {
+      const old = JSON.parse(await readFile(anchorPath(), "utf8"));
+      if (old && old.amount != null && !old.items) return { amount: round2(old.amount), asOf: old.asOf };
+    } catch { /* none */ }
   }
+  return null;
 }
 
 /**

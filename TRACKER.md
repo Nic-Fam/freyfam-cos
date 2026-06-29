@@ -1380,6 +1380,15 @@ first, verify locally, then provision**.
         is set). Durable memory for workstream R (survives disk loss natively) AND the
         remote-recall path for the Azure split. recall/remember unchanged; verified
         against the existing 1.6MB brain.
+      - [x] `checking-balance.js` (finance) — DONE 2026-06-29. The last raw-file finance
+        holdout, moved onto the collection store (partition `checkinganchor`, single
+        `anchor` row) WITH backward-compat (reads the old `{amount,asOf}` file until the
+        next set upgrades it), so the existing anchor survives the change. With this,
+        ALL finance stores (financelog/obligation/creditstatement/categoryrule/
+        financeinbox/checkinganchor) are Table-ready. **Remaining for remote Patrick
+        (mini-side cutover, can't be done off-mini): push the live finance data into the
+        finance MI Table, add a cold-start warm-up, then flip `COS_SPECIALIST_URL_FINANCE`
+        on + restart.** Until then Patrick stays in-process (fully working).
 - LOCAL specialists (Frank=security, Steve=dev) use `deploy/specialists/local-server.mjs`
   (`npm run specialist`) — verified this session: same `{agent,task}->text` contract,
   x-functions-key auth (401), agent pin (403), round-trip via `delegate`. **Steve →
@@ -1479,7 +1488,12 @@ only) so we match Genet's *security posture* without her hardware.
       (groceries/receipts). See workstream I for the cross-repo plan.
 - [ ] **Image generation** (Sylvie) — a creative tool (Gemini or another provider).
       New tool module → wired in F.
-- [ ] **Printer access** (Sylvie) — local print tool (pairs with browser stream G).
+- [x] **Printer access** (Sylvie) — DONE 2026-06-29. `src/channels/printer.js` drives
+      local CUPS (`lp`) on Lloyd's mini (nothing leaves the house); chief tools
+      `print_document` + `list_printers`, audited. Lazy/defensive (clear message if no
+      lp/printer). Unit-verified (job-id parse, failure, missing-file, listing). GO-LIVE:
+      add a printer on the mini + set `PRINTER_NAME` (or rely on the system default) once
+      the mini pulls this. Pairs with image generation (generate -> print).
 - [x] **Per-agent `soul.md` + `decision.md`** — DONE. `decision.md` = `src/decisions.js`
       + per-agent `data/decisions/<agent>.md` (`log_decision`/`list_decisions` on every
       specialist). `soul.md` ≈ our `agents/*.md` — all six standardized + fleshed out
