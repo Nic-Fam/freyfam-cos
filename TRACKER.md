@@ -5,7 +5,7 @@ Development tracker for getting the daemon from "scaffold that compiles" to
 architecture and hard constraints; this file tracks *state* and *who-can-do-what-
 in-parallel*.
 
-Last synced to code: 2026-06-29 (email reconcile + TRR returns; legacy app trimmed to Alexa/inventory).
+Last synced to code: 2026-06-29 (LATER: real-time email webhook cutover + mini nightly git-sync; the 15-min daemon reconcile is now retired. Earlier same day: email reconcile + TRR returns; legacy app trimmed to Alexa/inventory).
 
 ## Status legend
 
@@ -35,6 +35,34 @@ in the per-workstream sections and the topology section below.
 Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
 suite (~300 tests).
 
+**Real-time email cutover + mini hardening (2026-06-29, later session):**
+- **Inbound email is now REAL-TIME via the Graph webhook front door** (supersedes the
+  15-min daemon reconcile below). Re-enabled the **cloud trio** in `freyfam-assistant`
+  host.json allowlist — `email-handler` (Graph change-notification webhook, runs in
+  `COS_ENQUEUE=true` mode: validate → mark read → enqueue to `inbound-messages` →
+  record id in the `cosinboundseen` table), `email-reconciler` (timer backstop for
+  dropped notifications, shares the same dedup table), `subscription-renewer` (daily,
+  keeps the ~3-day sub alive). The mini consumes the queue in seconds. Storage is
+  shared (`freyfamassistant8a4f`), so app + mini hit one queue.
+- **Mini daemon reconciler RETIRED in tandem.** `heartbeat.js` gates
+  `maybeReconcileInboundEmail` behind `COS_EMAIL_RECONCILE_ENABLED` (commit 08ba9df on
+  main); the mini's `.env` sets it `=false`. Running BOTH reconcilers double-enqueues
+  (disjoint dedup: cloud `cosinboundseen` table vs mini local `reconciled-emails.json`).
+  **Cutover artifact:** when the webhook went live it replayed Graph's backlog of
+  notifications for that morning's still-UNREAD mail → ~20 min of duplicate replies to
+  Nic + Shelli (16:48–17:10), self-limited once those were marked read. LESSON: before
+  flipping a webhook on over a polling daemon, mark the inbox read / pre-seed the shared
+  dedup store so the backlog doesn't replay.
+- **Mini nightly git-sync (was kickstart-only).** `com.freyfam.cos.restart` now runs
+  `/Users/lloyd/cos-ops/restart-from-main.sh` (fetch + `reset --hard origin/main` +
+  `npm install` + `node --check` with rollback + kickstart). The mini auto-pulls latest
+  `main` every 4am. Its checkout is now clean on main (was 3 ahead / 5 behind; the
+  ahead-only browser macOS fix was pushed to main as 659255e first).
+- **MacBook retired as Lloyd / SSH access set up.** Mini (`lloyd@lloyd.local`, user
+  `lloyd`, `/Users/lloyd/freyfam-cos`, launchd uid 501) confirmed sole live Lloyd; the
+  MacBook's launchd plists were archived so it can't revive as a duplicate. See the
+  `realtime-email-front-door` and `mini-ssh-and-deploy` memories.
+
 **Recently shipped (2026-06-28 → 06-29), not mapped to a letter:**
 - **Digest follow-up / action-clearing loop.** The digest was status-GUESSING (dropping
   a finished tour with no follow-up; calling an ongoing resale "trace" over). Fix: a
@@ -50,7 +78,10 @@ suite (~300 tests).
   `print_document`/`list_printers`, audited. Plus the finance `checking-balance` store
   moved onto the collection store (last raw-file holdout; all finance stores now
   Table-ready). Both 2026-06-29.
-- **Email intake moved onto the daemon (self-healing).** Root cause of "Lloyd can't
+- **Email intake moved onto the daemon (self-healing).** [SUPERSEDED 2026-06-29 by the
+  real-time webhook above — this 15-min reconcile is now gated OFF on the mini via
+  `COS_EMAIL_RECONCILE_ENABLED=false`; kept only as the in-repo default for non-webhook
+  deployments.] Root cause of "Lloyd can't
   reach Patrick": the legacy Azure front door's Graph webhook was silently dropping
   family email, so questions never reached Lloyd. New `src/email-reconcile.js`
   (heartbeat `maybeReconcileInboundEmail`) reads the cos mailbox each tick and
