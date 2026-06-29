@@ -9,6 +9,7 @@ import { checkCostThresholds } from "./cost.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
 import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
+import { reconcileInboundEmail } from "./email-reconcile.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
@@ -240,6 +241,20 @@ async function maybeScanTransactionAlerts() {
   }
 }
 
+// Self-healing inbound EMAIL reconcile: the daemon's own safety net so email
+// intake does not depend on the legacy Azure front door (webhook drops were
+// silently losing family emails). Reads the cos mailbox each tick and enqueues
+// any not-yet-seen family email in the front-door envelope. First run baselines
+// (enqueues nothing), so this never replays already-answered history. Best-effort.
+async function maybeReconcileInboundEmail() {
+  try {
+    const r = await reconcileInboundEmail({ top: 25 });
+    if (r.enqueued) log.info("inbound email reconciled to queue", r);
+  } catch (err) {
+    log.error("inbound email reconcile failed", { reason: err.message });
+  }
+}
+
 async function maybeRunFinanceIngest() {
   if (!FINANCE_REPORT.ingestEnabled) return;
   const { date, hour } = localParts(new Date(), FINANCE_REPORT.tz);
@@ -404,6 +419,7 @@ export async function tick() {
   // the off-Mac monitor can alert the family if this stops. Best-effort, never throws.
   await recordLiveness();
   await setLastSeen(); // local heartbeat stamp for boot-time outage detection
+  await maybeReconcileInboundEmail();
   await maybeCheckCosts();
   await maybeBackup();
   await maybeScanShipments();

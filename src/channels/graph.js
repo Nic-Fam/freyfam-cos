@@ -86,6 +86,30 @@ export async function recentShipmentMail({ top = 25 } = {}) {
 }
 
 /**
+ * Recent inbox messages WITH the Graph id and a plain-text preview, for the
+ * daemon-side inbound EMAIL reconcile (src/email-reconcile.js). The reconcile
+ * needs the id (dedup key + reply threading) and a clean body the chief can
+ * read, so this returns {id, from, subject, body, receivedAt, unread} using
+ * bodyPreview (plain text) rather than raw HTML.
+ */
+export async function recentInboxFull({ top = 25 } = {}) {
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/mailFolders/inbox/messages`)
+    .top(top)
+    .select("id,from,subject,bodyPreview,receivedDateTime,isRead")
+    .orderby("receivedDateTime desc")
+    .get();
+  return (res.value || []).map((m) => ({
+    id: m.id,
+    from: m.from?.emailAddress?.address,
+    subject: m.subject || "",
+    body: (m.bodyPreview || "").replace(/\s*Sent from my iPhone\s*$/i, "").trim(),
+    receivedAt: m.receivedDateTime,
+    unread: !m.isRead,
+  }));
+}
+
+/**
  * Fetch file attachments for one message (workstream L: document intake). The
  * front door passes the `graphMessageId`; the daemon pulls the bytes via the
  * app-only Mail.Read it already has (no new consent). Returns materialized
