@@ -21,6 +21,7 @@ import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
 import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations, monthlyConsumption, formatConsumption } from "../obligations.js";
 import { transferOutlook } from "../transfer-outlook.js";
+import { readTrrReturns, reconcileTrrReturns } from "../resale-returns.js";
 import { setCheckingAnchor } from "../checking-balance.js";
 import { setStatement } from "../credit-statement.js";
 import { addCategoryRule } from "../categorize.js";
@@ -52,8 +53,8 @@ export const AGENT_ALLOWLIST = {
   finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
             "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement",
-            "add_category_rule", "monthly_consumption", "recurring_withdrawals"],
-  resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
+            "add_category_rule", "monthly_consumption", "recurring_withdrawals", "reconcile_returns"],
+  resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches", "check_returns"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
   dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
@@ -249,6 +250,14 @@ const REGISTRY = {
         input_schema: obj({}),
       },
       {
+        name: "reconcile_returns",
+        description: "Reconcile TheRealReal returns against the card. Pass `returns` as the list of returned items Shey (resale) identified from the TRR orders page (each {item?, brand?, amount?, order?}); this matches them to TRR charges/credits in the spend log and reports charges, credits already received, expected credit from the returns, and what is still outstanding. Use when figuring out how much resale spend is coming back. Surfacing only.",
+        input_schema: obj({
+          returns: { type: "array", items: { type: "object" } },
+          sinceDays: { type: "number" },
+        }),
+      },
+      {
         name: "running_tab",
         description: "The running tab: month-to-date totals and counts for checking and credit from the logged transactions. This is the live tally the monthly statement gets reconciled against. Optional `ym` (YYYY-MM) selects a month; defaults to the current one.",
         input_schema: obj({ ym: { type: "string" } }),
@@ -295,6 +304,8 @@ const REGISTRY = {
       add_category_rule: async (input) => JSON.stringify(await addCategoryRule(input || {})),
       monthly_consumption: async () => { const c = await monthlyConsumption(); return JSON.stringify({ ...c, text: formatConsumption(c) }); },
       recurring_withdrawals: async () => { const r = await recurringCheckingWithdrawals(); return JSON.stringify({ ...r, text: formatRecurringWithdrawals(r) }); },
+      reconcile_returns: async ({ returns, sinceDays } = {}) =>
+        JSON.stringify(await reconcileTrrReturns({ returns: returns || [], sinceDays: sinceDays || 120 })),
     },
   }),
 
@@ -320,6 +331,11 @@ const REGISTRY = {
         description: "Run ALL saved searches now and report only the NEW matches since last time (past hits are tracked and not repeated). Use to check for fresh finds across the hunt list.",
         input_schema: obj({}),
       },
+      {
+        name: "check_returns",
+        description: "Read TheRealReal's account orders page (via the family's signed-in browser) and return the visible order text + order links. Use this to see which TRR items have been assigned a RETURN or refund. Read the text yourself and list the returned items (brand, item, amount if shown). Then hand that list to Patrick (finance) so he can reconcile expected credits against the card. TRR is the only resale site whose returns matter for the budget.",
+        input_schema: obj({}),
+      },
     ],
     handlers: {
       ...memoryHandlers("resale"),
@@ -329,6 +345,17 @@ const REGISTRY = {
       list_saved_searches: async () => formatSavedSearchList(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
       run_saved_searches: async () => formatSavedSearchRun(await runSavedSearches()),
+      check_returns: async () => {
+        const r = await readTrrReturns();
+        // Return the page text + order links for the specialist to interpret; cap
+        // the text so the tool result stays lean.
+        return JSON.stringify({
+          url: r.url,
+          note: r.note,
+          orderLinks: (r.orders || []).map((o) => o.href || o).slice(0, 40),
+          text: (r.text || "").slice(0, 6000),
+        });
+      },
     },
   }),
 
