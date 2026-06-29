@@ -1,14 +1,18 @@
-// Afternoon package-pickup digest (weekday 5:30pm). Texts the owner what was
-// delivered TODAY to the family's pickup location (the UPS Store on Foothill) so
-// they can grab it on the way home. Deterministic — reads the package tracker,
-// no model. Scheduling mirrors the morning digest but with minute precision
-// (5:30 is off the heartbeat's :00/:15 grid) and a weekday gate.
+// Afternoon package-pickup digest (weekday 5:30pm). Tells the family what was
+// delivered TODAY to their pickup location (the UPS Store on Foothill) so they can
+// grab it on the way home. Deterministic — reads the package tracker, no model.
+// Scheduling mirrors the morning digest but with minute precision (5:30 is off the
+// heartbeat's :00/:15 grid) and a weekday gate.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PACKAGE_DIGEST } from "./config.js";
 import { notifyOwnerImessage } from "./channels/imessage.js";
+import { sendMail } from "./channels/graph.js";
 import { listDeliveredPickups } from "./packages.js";
+import { createLogger } from "./log.js";
+
+const log = createLogger("package-digest");
 
 const cap = (s) => (s ? `${s[0].toUpperCase()}${s.slice(1)}` : s);
 
@@ -70,14 +74,42 @@ export async function composePackageDigest({ now = new Date(), tz = PACKAGE_DIGE
   return { count: todays.length, text };
 }
 
+/** Subject line for the email copy. */
+export function packageDigestSubject(count) {
+  return `Ready to pick up today (${count} package${count === 1 ? "" : "s"})`;
+}
+
 /**
- * Compose + deliver to the owner via iMessage ONLY (per request - not Twilio
- * SMS). Sends nothing when nothing was delivered today (no daily "nothing to pick
- * up" noise). Channel injectable for tests.
+ * Compose + deliver the pickup list. Sends nothing when nothing was delivered
+ * today (no daily "nothing to pick up" noise).
+ *
+ * Delivery mirrors the morning digest: independent, best-effort sends so one dead
+ * channel never blocks the others. iMessage stays the PREFERRED channel (not Twilio
+ * SMS, per request) and lights up automatically once the BlueBubbles bridge is
+ * online; email is the reliable channel today. Previously this used iMessage ONLY,
+ * so while the bridge is down the notice silently failed and never reached the
+ * family. Both channels injectable for tests.
  */
-export async function runPackageDigest({ notify = notifyOwnerImessage, now = new Date(), cfg = PACKAGE_DIGEST } = {}) {
+export async function runPackageDigest({
+  notify = notifyOwnerImessage,
+  mail = sendMail,
+  now = new Date(),
+  cfg = PACKAGE_DIGEST,
+} = {}) {
   const d = await composePackageDigest({ now, tz: cfg.tz });
-  if (!d.count) return { count: 0, sent: false };
-  await notify(d.text);
-  return { count: d.count, sent: true };
+  if (!d.count) return { count: 0, sent: false, channels: [] };
+
+  const attempts = [{ channel: "imessage", run: () => notify(d.text) }];
+  const emailTo = cfg.emailTo || [];
+  if (emailTo.length) {
+    attempts.push({ channel: "email", run: () => mail({ to: emailTo, subject: packageDigestSubject(d.count), body: d.text }) });
+  }
+
+  const results = await Promise.allSettled(attempts.map((a) => Promise.resolve().then(a.run)));
+  const channels = [];
+  results.forEach((res, i) => {
+    if (res.status === "fulfilled") channels.push(attempts[i].channel);
+    else log.warn("package digest delivery failed", { channel: attempts[i].channel, reason: String(res.reason?.message || res.reason) });
+  });
+  return { count: d.count, sent: channels.length > 0, channels };
 }

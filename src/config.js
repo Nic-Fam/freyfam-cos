@@ -253,7 +253,7 @@ export const FINANCE_REPORT = {
     .filter(Boolean),
 };
 
-// Afternoon package-pickup digest: a weekday 5:30pm SMS listing packages
+// Afternoon package-pickup digest: a weekday 5:30pm notice listing packages
 // delivered TODAY to the family's pickup location (the UPS Store on Foothill),
 // so they can grab them on the way home. Deterministic (no model). Enabled by
 // default like the morning digest; needs minute precision since 5:30 is off the
@@ -265,6 +265,13 @@ export const PACKAGE_DIGEST = {
   windowMinutes: Number(process.env.PACKAGE_DIGEST_WINDOW_MINUTES ?? 60), // catch-up after target
   weekdaysOnly: String(process.env.PACKAGE_DIGEST_WEEKDAYS_ONLY ?? "true").toLowerCase() === "true",
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  // Email recipients: the reliable channel today (iMessage is preferred but dark
+  // until the BlueBubbles bridge is up; Twilio SMS is retired). Same default as the
+  // morning digest. Comma-separated; empty disables the email copy.
+  emailTo: (process.env.PACKAGE_DIGEST_EMAIL_TO || "nic@freyfam.com,shelli@freyfam.com")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 };
 
 // Azure Maps: precise commute times with live traffic (geocode + route).

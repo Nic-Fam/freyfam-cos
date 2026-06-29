@@ -304,8 +304,9 @@ async function maybeRunTransferOutlook() {
   }
 }
 
-// Afternoon package-pickup digest: weekday 5:30pm, iMessage to the owner, listing
-// what was delivered today to the UPS Store. Persisted once-per-day guard.
+// Afternoon package-pickup digest: weekday 5:30pm, listing what was delivered
+// today to the UPS Store. Delivered to the family over the live channels (email
+// now; iMessage too once the bridge is up). Persisted once-per-day guard.
 async function maybeRunPackageDigest() {
   if (!PACKAGE_DIGEST.enabled) return;
   const last = await getLastPackageDigestDate();
@@ -314,7 +315,8 @@ async function maybeRunPackageDigest() {
   await setLastPackageDigestDate(date); // persist BEFORE running so a restart mid-window can't double-fire
   try {
     const r = await runPackageDigest();
-    if (r.sent) log.info("package pickup digest sent", { date, count: r.count });
+    if (r.sent) log.info("package pickup digest sent", { date, count: r.count, channels: r.channels });
+    else if (r.count) log.error("package pickup digest had pickups but every channel failed", { date, count: r.count });
   } catch (err) {
     log.error("package pickup digest failed", { reason: err.message });
   }

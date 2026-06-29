@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const PKGS = join(os.tmpdir(), "cos-pkg-digest-test.json");
 process.env.PACKAGES_PATH = PKGS;
-const { shouldRunPackageDigest, composePackageDigest, runPackageDigest } = await import("../src/package-digest.js");
+const { shouldRunPackageDigest, composePackageDigest, runPackageDigest, packageDigestSubject } = await import("../src/package-digest.js");
 const { addPackage, markDelivered } = await import("../src/packages.js");
 
 const TZ = "America/Los_Angeles";
@@ -57,4 +57,32 @@ test("runPackageDigest sends only when something was delivered (iMessage channel
   assert.equal(r.sent, true);
   assert.equal(sent.length, 1);
   assert.match(sent[0], /Shelli: Shoes/);
+});
+
+test("runPackageDigest still delivers by email when iMessage fails (the live-channel fallback)", async () => {
+  await addPackage({ trackingNumber: "T7", carrier: "UPS", description: "Boots", owner: "nic", pickup: true, location: "The UPS Store" });
+  await markDelivered("T7", MON, { pickup: true });
+
+  const mails = [];
+  // iMessage throws (BlueBubbles bridge down), exactly like prod today.
+  const notify = async () => { throw new Error("iMessage is not configured"); };
+  const mail = async (m) => { mails.push(m); return "msg-id"; };
+
+  const r = await runPackageDigest({
+    notify, mail, now: new Date(MON),
+    cfg: { ...cfg, emailTo: ["nic@freyfam.com"] },
+  });
+
+  // A dead iMessage channel must NOT swallow the whole notice anymore.
+  assert.equal(r.sent, true);
+  assert.deepEqual(r.channels, ["email"]);
+  assert.equal(mails.length, 1);
+  assert.deepEqual(mails[0].to, ["nic@freyfam.com"]);
+  assert.equal(mails[0].subject, packageDigestSubject(1));
+  assert.match(mails[0].body, /Nic: Boots/);
+});
+
+test("packageDigestSubject pluralizes", () => {
+  assert.equal(packageDigestSubject(1), "Ready to pick up today (1 package)");
+  assert.equal(packageDigestSubject(3), "Ready to pick up today (3 packages)");
 });
