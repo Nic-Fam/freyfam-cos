@@ -413,7 +413,7 @@ Owns: `src/queue.js`, `src/daemon.js`, `src/log.js`, `deploy/com.freyfam.cos.pli
 - Parallel-safe: mostly yes — `queue.js` and `deploy/` are isolated. Touches
   `daemon.js` lightly. Independent of E/F/G.
 
-### I. Multimodal / MMS intake  `[~]`  — daemon + front door DONE; only the remote CHEF Function redeploy remains (resale is local now, so its images already work)
+### I. Multimodal / MMS intake  `[x]`  — daemon multimodal DONE; remote CHEF Function REDEPLOYED 2026-06-29 (Carmine now gets forwarded images; function verified responding). MMS-over-Twilio retired, so photos now arrive via Slack/email/iMessage. Only the natural end-to-end check remains: the next real photo delegated to Carmine.
 
 Promoted from a buried bullet under B so it stays visible. Today the front door
 enqueues **text only**; inbound MMS images, vCards, and forwarded-voicemail audio
