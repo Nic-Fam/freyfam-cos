@@ -16,7 +16,7 @@ import { createCollection } from "./stores/collection.js";
 import { complete as defaultComplete, textOf, parseJson } from "./claude.js";
 import { MODELS } from "./config.js";
 import { logTransaction } from "./finance-log.js";
-import { categorize } from "./categorize.js";
+import { categorize, loadCategoryRules } from "./categorize.js";
 
 // --- 1. cheap detection (no model) ------------------------------------------
 // Known bank/card ALERT senders. Chase uses the same alert sender for card and
@@ -185,12 +185,13 @@ export async function buildDailyIngest({ complete = defaultComplete } = {}) {
     leftovers = recon.unparsed;
   }
 
+  const rules = await loadCategoryRules(); // family payees (e.g. Lulu -> services) + builtin Zelle
   let logged = 0;
   for (const t of parsed) {
-    // Assign a category from rules (e.g. Zelle -> services) using the merchant +
-    // the originating alert text, which is where "Zelle" actually appears.
-    const category = categorize({ merchant: t.merchant, text: `${t.alert?.subject || ""} ${t.alert?.body || ""}` });
-    await logTransaction({ amount: t.amount, date: t.date, merchant: t.merchant, card: t.card, source: t.source, direction: t.direction, balance: t.balance, at: t.alert?.at, category });
+    // Assign a category + note from rules using the merchant + the originating alert
+    // text (where "Zelle"/the payee name appears), scoped by source.
+    const cat = categorize({ merchant: t.merchant, text: `${t.alert?.subject || ""} ${t.alert?.body || ""}`, source: t.source }, rules);
+    await logTransaction({ amount: t.amount, date: t.date, merchant: t.merchant, card: t.card, source: t.source, direction: t.direction, balance: t.balance, at: t.alert?.at, category: cat?.category, note: cat?.note });
     logged++;
   }
   return { alerts: alerts.length, logged, flagged: leftovers };
