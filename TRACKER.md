@@ -36,6 +36,15 @@ Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the ful
 suite (~300 tests).
 
 **Recently shipped (2026-06-28 → 06-29), not mapped to a letter:**
+- **Browser workstreams (F/G/I) verified on real Chromium.** Ran the F/G/I checks on
+  Lloyd's mini: full suite green (363 tests) and the 51 F/G/I unit tests green, plus a
+  new live harness `scripts/verify-browser.mjs` (`npm run verify:browser`) that launches
+  the actual headless Chromium and drives `readPage`, `runOrder`, and `readListingFeed`
+  end to end (ALL GREEN). This flips G's "live verify" box and F's marketplace-feed
+  engine. Still mini-only: the `place_order`->`confirm.js` live round-trip, a real
+  external-site `browse_page` read, and per-site resale selectors. I (multimodal) needs
+  no browser — its vision intake was already verified; only the remote chef Function
+  redeploy remains there.
 - **Email intake moved onto the daemon (self-healing).** Root cause of "Lloyd can't
   reach Patrick": the legacy Azure front door's Graph webhook was silently dropping
   family email, so questions never reached Lloyd. New `src/email-reconcile.js`
@@ -286,6 +295,11 @@ RETURN text and have side-effect-light tools — no outbound, no confirmation po
       eBay selectors trusted; Poshmark/Vestiaire/1stDibs selectors are best-effort and
       need a live capture pass on the Mac. Go-live = signed-in Chrome profile (same as
       First Look). TheRealReal excluded (First Look owns it).
+      - [x] **Engine live-verified (2026-06-29):** the underlying `readListingFeed`
+            card-isolation scraper is exercised against real Chromium by
+            `npm run verify:browser` (one row per product anchor, fields scoped to each
+            card). What remains is per-site selectors + the signed-in profile, not the
+            scraping mechanism.
 - Tested across `test/finance|saved-searches|proposals|meals|security|tools.test.js`.
 
 ### G. Browser automation (Playwright)  `[~]`  — capability + tools landed 2026-06-19
@@ -312,9 +326,19 @@ Owns: new `src/channels/browser.js`, `package.json` dep.
 - [x] **Tests:** `test/browser.test.js` covers the guard (read-only domains rejected
       before launch), input validation, and the safe `closeBrowser()` no-op. Designed
       to pass with or without Playwright installed (only pre-launch paths). Suite green.
-- [ ] **REMAINING — live verify:** `npm i playwright && npx playwright install chromium`,
-      then drive a real read (`browse_page`) and a sandbox checkout through the
-      confirmation gate end-to-end. Flips this workstream to `[x]`.
+- [x] **Live verify — browser capability run on real Chromium (2026-06-29).** New
+      repeatable harness `scripts/verify-browser.mjs` (`npm run verify:browser`) launches
+      the actual headless Chromium and drives the real primitives: `readPage` (title +
+      visible text + structured price signals across JSON-LD / `og:price` / microdata),
+      `runOrder` (goto -> fill -> click -> waitFor checkout flow), and `readListingFeed`
+      (one isolated row per product anchor — the F resale grid / First Look engine).
+      ALL GREEN on Lloyd's-mini-equivalent host. Self-contained `data:` URLs so it needs
+      no live site or logins; pass a URL arg to also smoke a real page. Skips cleanly
+      when Playwright is absent (optional dep). NOTE: two pieces still need Lloyd's
+      actual mini: (a) the `place_order` -> `confirm.js` round-trip end-to-end (the gate
+      itself is unit-tested; the browser half is now live-verified), and (b) a live read
+      against a real external site (the harness's data:-URL checks are network-free; a
+      real `browse_page` fetch needs the mini's normal outbound path).
 - [ ] **REMAINING — real selectors per site.** `steps` are generic primitives today;
       per-site order flows (the resale sites) still need concrete selectors, ideally
       surfaced as the resale specialist's saved-search fetchers (overlaps F).
