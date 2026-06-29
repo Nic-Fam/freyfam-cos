@@ -5,7 +5,7 @@ Development tracker for getting the daemon from "scaffold that compiles" to
 architecture and hard constraints; this file tracks *state* and *who-can-do-what-
 in-parallel*.
 
-Last synced to code: 2026-06-19 (commit `82a6423`).
+Last synced to code: 2026-06-29 (email reconcile + TRR returns; legacy app trimmed to Alexa/inventory).
 
 ## Status legend
 
@@ -34,6 +34,40 @@ in the per-workstream sections and the topology section below.
 `_smoke.mjs` covers guards + confirm parser + memory round-trip with zero network.
 Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
 suite (~300 tests).
+
+**Recently shipped (2026-06-28 → 06-29), not mapped to a letter:**
+- **Email intake moved onto the daemon (self-healing).** Root cause of "Lloyd can't
+  reach Patrick": the legacy Azure front door's Graph webhook was silently dropping
+  family email, so questions never reached Lloyd. New `src/email-reconcile.js`
+  (heartbeat `maybeReconcileInboundEmail`) reads the cos mailbox each tick and
+  enqueues any not-yet-seen FAMILY email in the front-door envelope; first run
+  baselines so it never replays history; dedup by Graph id; alerts/self excluded.
+  Email no longer depends on any webhook. (`recentInboxFull` added to graph.js.)
+- **Legacy `freyfam-assistant` decommissioned.** Stopped, then redeployed with a
+  host.json `functions` allowlist of **alexa-skill + inventory-* ONLY** (Flex rejects
+  per-function Disabled settings). The daemon now owns email/digest/reminders; the
+  legacy app serves only the Alexa grocery skill + inventory API, **same endpoint**
+  so no Alexa-console re-pointing. SMS/Twilio fully retired; iMessage still pending
+  the BlueBubbles bridge (only live channels now: email + Slack).
+- **Finance grounded in real statements.** Verified/corrected obligations against two
+  months of the real joint checking (...1857): real due-days + amounts (rent day 1,
+  card ~day 6, car/USF ~day 1, Edison end-of-month, two student loans ~$750, etc.),
+  removed a bogus AAA monthly (it is an annual card charge), added Fidelity/Protective
+  Life/Pilates/misc-Zelle services. `transfer_outlook` recomputed: ~$22,568 once-a-
+  month (or a $5.1k + $17.4k split, both pre-Jul-6 since the card payment is the wall).
+- **Patrick reachability.** Azure finance Function was 404/aborting (delegate has no
+  silent local fallback by design). Redeployed it, then chose **in-process** anyway:
+  scale-to-zero cold start exceeds the 30s delegate timeout AND the remote Table store
+  has none of the seeded finance data. Finance runs local; remote cutover blocked on
+  data migration + warm-up (noted in memory).
+- [x] **TheRealReal returns reconcile (Shey + Patrick)** — `src/resale-returns.js` +
+      tools `resale.check_returns` (reads TRR orders page via the signed-in Chrome
+      profile) and `finance.reconcile_returns` (matches returns to card charges/credits
+      -> outstanding credit). TRR is the only resale site whose returns move the budget.
+      - [~] **DEFERRED: point the browser at the signed-in profile.** `check_returns`
+        needs `BROWSER_USER_DATA_DIR` (+ `BROWSER_CHANNEL=chrome`) set to the
+        TRR-logged-in Chrome profile, else it reads a logged-out page. Playwright is
+        installed; only the profile path is missing. Deferred by Nic 2026-06-29.
 
 **Recently shipped (2026-06-23 → 06-25), not mapped to a letter:**
 - **Inbound image intake hardened** — byte-sniffed `media_type` + iPhone **HEIC→JPEG**
