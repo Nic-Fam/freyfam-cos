@@ -170,11 +170,16 @@ Each workstream lists the files it owns so parallel sessions don't collide. The
 only one session editing it at a time, or merge changes through small, additive
 tool entries.
 
-### A. Boot & verify the loop  `[~]`  — DO FIRST, blocks B/C/D verification
+### A. Boot & verify the loop  `[x]`  — DO FIRST, blocks B/C/D verification
 
 Owns: `.env`, local run only. No code changes expected.
 
-Last verified: 2026-06-19 (this session).
+Last verified: 2026-06-19 (MacBook). **Re-verified on Lloyd's Mac mini 2026-06-29:**
+`node _smoke.mjs` all green (guards/confirm/memory round-trip); the live daemon is
+healthy (pid under launchd `com.freyfam.cos`, heartbeat scheduled, Slack socket
+connected, queue consuming). The full loop runs in production on the mini, so A is
+done there. (`npm run once` deliberately NOT run on the live mini — it would collide
+with the running daemon's iMessage port + Slack socket; the live loop already proves it.)
 
 - [x] `npm install` — clean, 0 vulnerabilities, 34 pkgs
 - [x] `.env` present and filled: all keys populated (Anthropic, Twilio, Azure
@@ -647,7 +652,14 @@ has the same property via Twilio, so it's consistent, not new.
 - Parallel-safe: the transport refactor (#2) touches `handleInbound`/`orchestrator.js`
   (coordinate); `slack.js` is otherwise a new isolated file + the `@slack/bolt` dep.
 
-### L. Document intake (PDF / .ics / .vcf) over email  `[~]`  — DAEMON HALF DONE 2026-06-20
+### L. Document intake (PDF / .ics / .vcf) over email  `[x]`  — VERIFIED ON THE MINI 2026-06-29
+
+**Verified on Lloyd's Mac mini 2026-06-29:** 34/34 document-intake unit tests pass
+(`documents`, `collect-attachments`, `fetch-document`, `media`, `routing`), and the
+REAL parsers (not the test mocks) run on the mini's `node@22` — `.ics` event parse,
+`.vcf` contact parse, and `pdf-parse` via `createRequire` extracted 2,823 chars from
+the repo's `ONESHEET.pdf`. This closes the one historically-fragile path (pdf-parse
+silently no-op'ing); it now loads and extracts on the mini.
 
 **Why email, not SMS:** MMS can't reliably carry PDFs/calendars (US carriers strip
 non-image MMS); the Graph mailbox `cos@freyfam.com` carries attachments natively.
