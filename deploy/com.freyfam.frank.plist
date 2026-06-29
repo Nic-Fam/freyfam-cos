@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Frank (security specialist) LAN server. Runs deploy/specialists/local-server.mjs
+  under launchd, restarts it if it exits, and keeps the Mac awake while it runs.
+
+  Identity (COS_AGENT=security, PORT=8787, COS_SPECIALIST_LOCAL_KEY) is read from
+  .env in the WorkingDirectory via dotenv, so the function key is NOT inlined here.
+
+  Install:
+    cp deploy/com.freyfam.frank.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.freyfam.frank.plist
+  Restart after a code pull:
+    launchctl kickstart -k gui/$(id -u)/com.freyfam.frank
+  Logs land in the WorkingDirectory as frank.out.log / frank.err.log.
+
+  For lid-CLOSED operation on power, also run once (sudo):
+    sudo pmset -c disablesleep 1           (revert: sudo pmset -c disablesleep 0)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.freyfam.frank</string>
+
+    <key>ProgramArguments</key>
+    <!-- caffeinate -is ties an idle/system-sleep assertion (on AC) to the server's
+         lifetime; KeepAlive restarts it (re-asserting) if it dies. -->
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-is</string>
+        <string>/usr/local/bin/node</string>
+        <string>/Users/frank/freyfam-cos/deploy/specialists/local-server.mjs</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/frank/freyfam-cos</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/frank/freyfam-cos/frank.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/frank/freyfam-cos/frank.err.log</string>
+</dict>
+</plist>

@@ -82,6 +82,35 @@ suite (~300 tests).
         needs `BROWSER_USER_DATA_DIR` (+ `BROWSER_CHANNEL=chrome`) set to the
         TRR-logged-in Chrome profile, else it reads a logged-out page. Playwright is
         installed; only the profile path is missing. Deferred by Nic 2026-06-29.
+- [~] **Frank (security) Mac mini provisioned 2026-06-29 — live under launchd, one
+      cred gap.** This box (`/Users/frank/freyfam-cos`, LAN `192.168.50.117` /
+      `Frank.local`) now runs the security specialist HTTP harness
+      (`deploy/specialists/local-server.mjs`) on port `8787`. Done: Node v22.23.1, deps
+      synced, `_smoke.mjs` + full `npm test` (363/363) pass, embeddings model cached.
+      `.env` sets `COS_AGENT=security` / `PORT=8787` / `COS_SPECIALIST_LOCAL_KEY`
+      (= Lloyd's `COS_SPECIALIST_KEY_SECURITY`, `c3c26d4c...`). Contract verified end to
+      end: 401 (no key), 403 (wrong-agent pin), 400 (no task), 405 (GET), and a valid
+      request passes every gate into the runner. Installed under launchd as
+      `deploy/com.freyfam.frank.plist` → `~/Library/LaunchAgents/com.freyfam.frank.plist`
+      (RunAtLoad + KeepAlive under `caffeinate -is`; KeepAlive auto-restart verified).
+      Power (AC) already correct for an always-on mini: never idle-sleeps, autorestart
+      after power failure, wake-on-network; no lid so no `disablesleep`; firewall off.
+      Setup guide: `deploy/setup/frank-mac-mini.md`. **Open actions to finish:**
+      - [ ] **Real `ANTHROPIC_API_KEY` (BLOCKER).** `.env` still holds the placeholder
+            `sk-ant-...`, so live reasoning 401s (`invalid x-api-key`) — the only thing
+            between the verified harness and a working specialist. Only Nic can paste it
+            (creds never fetched by Claude). Then `launchctl kickstart -k
+            gui/$(id -u)/com.freyfam.frank` and confirm a 200 with text.
+      - [ ] **Wire Lloyd → Frank (on Lloyd's box, not here).** Set
+            `COS_SPECIALIST_URL_SECURITY=http://192.168.50.117:8787/` (prefer the IP over
+            `Frank.local` unless a static lease is reserved) + matching
+            `COS_SPECIALIST_KEY_SECURITY` + `COS_SPECIALIST_MODE=remote`, restart Lloyd,
+            and verify a `delegate({agent:"security"})` round-trips over the LAN.
+      - [ ] **Reserve a static DHCP lease** for `192.168.50.117` on the router so Lloyd's
+            address for Frank stays stable.
+      - [ ] **Seed Frank's brain (out-of-band).** No `data/brain.json` yet, so recall is
+            empty; transfer `seed-family-domains.json` off-git and seed per
+            `frank-mac-mini.md` §4b to surface his security-scoped notes.
 
 **Recently shipped (2026-06-23 → 06-25), not mapped to a letter:**
 - **Inbound image intake hardened** — byte-sniffed `media_type` + iPhone **HEIC→JPEG**
