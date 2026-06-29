@@ -119,7 +119,7 @@ const tools = [
     name: "list_calendar",
     description:
       "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `day` field with the AUTHORITATIVE weekday + date (e.g. 'Saturday, Jun 27'): use it verbatim whenever you name a day, and NEVER compute the weekday yourself from the date (you get it wrong, e.g. calling Sat Jun 27 'Friday', which shifts availability onto the wrong day). Each event also has a `calendars` field naming whose calendar it is on and a `showAs` field. For availability, treat showAs 'busy' OR 'tentative' as UNAVAILABLE (work calendars surface as free/busy only); only open time or showAs 'free' is bookable. `days` sets how far ahead to look (default 14): pass `days: 1` for just today (the morning digest), or a larger value to see further out, e.g. `days: 30` for the next month or `days: 60` for two months. If you are checking a specific future date, set `days` to comfortably reach it.",
-    input_schema: { type: "object", properties: { top: { type: "number" }, days: { type: "number", description: "days ahead to look; default 14, up to 120" } } },
+    input_schema: { type: "object", properties: { top: { type: "number" }, days: { type: "number", description: "days ahead to look; default 14, up to 120" }, back: { type: "number", description: "also include events from this many days BEFORE today (default 0). Use back: 1 in the morning digest to review what just happened yesterday and spawn follow-ups." } } },
   },
   {
     name: "fox_today",
@@ -555,7 +555,7 @@ function toolHandlers({ images, onDelegate } = {}) {
     // The schema stays {agent, task}; `images` come from context, not the model.
     // The wrapper also mirrors the handoff + result to the transport's observability.
     delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
-    list_calendar: async ({ top, days } = {}) => JSON.stringify(await listEvents({ top, days })),
+    list_calendar: async ({ top, days, back } = {}) => JSON.stringify(await listEvents({ top, days, back })),
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),
     ingest_fox_curriculum: async ({ url }) => {

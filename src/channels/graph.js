@@ -224,16 +224,20 @@ function tzOffset(dateStr) {
 // Local [start-of-today, +days] as ISO datetimes WITH the family-tz offset, so
 // Graph anchors the window to real Pacific midnight (not UTC midnight). Uses a
 // UTC-noon anchor for the day math so DST never shifts the date. Pure/exported.
-export function familyDateWindow(days = 7, now = new Date()) {
+export function familyDateWindow(days = 7, now = new Date(), { back = 0 } = {}) {
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: FAMILY_TZ, year: "numeric", month: "2-digit", day: "2-digit",
   }).format(now); // YYYY-MM-DD in family tz
   const [y, m, d] = today.split("-").map(Number);
+  // start = today minus `back` days (back=0 keeps the old behavior: start today).
+  const startAnchor = new Date(Date.UTC(y, m - 1, d, 12));
+  startAnchor.setUTCDate(startAnchor.getUTCDate() - Math.max(0, Math.round(back)));
+  const startDate = startAnchor.toISOString().slice(0, 10);
   const endAnchor = new Date(Date.UTC(y, m - 1, d, 12));
   endAnchor.setUTCDate(endAnchor.getUTCDate() + days);
   const endDate = endAnchor.toISOString().slice(0, 10);
   return {
-    startDateTime: `${today}T00:00:00${tzOffset(today)}`,
+    startDateTime: `${startDate}T00:00:00${tzOffset(startDate)}`,
     endDateTime: `${endDate}T00:00:00${tzOffset(endDate)}`,
   };
 }
@@ -308,12 +312,13 @@ function calendarOwner(mailbox) {
  * the union of owners in `calendars`. One mailbox erroring does not sink the
  * rest. `top` caps the merged result.
  */
-export async function listEvents({ top, days = GRAPH.calendarDays } = {}) {
+export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = {}) {
   const win = Math.min(Math.max(1, Math.round(days || GRAPH.calendarDays)), 120); // clamp 1..120 days
+  const lookBack = Math.min(Math.max(0, Math.round(back)), 14); // 0..14 days of look-back (digest follow-ups)
   // Scale the cap with the window so a longer look-ahead isn't silently truncated
   // (work free/busy adds several blocks/day). Caller can still override `top`.
-  const cap = top ?? Math.min(300, Math.max(50, win * 8));
-  const window = familyDateWindow(win);
+  const cap = top ?? Math.min(300, Math.max(50, (win + lookBack) * 8));
+  const window = familyDateWindow(win, new Date(), { back: lookBack });
   const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
   const byKey = new Map();
   for (const r of per) {

@@ -50,19 +50,34 @@ Gather what you need first:
   the precise ETA and any traffic delay, and use web_search for today's weather
   at each destination. Give a one-line per-person heads-up. Skip anyone who is
   not heading out today (e.g. on a weekend, skip work commutes).
-- Open tasks: call list_tasks. Surface anything OVERDUE or due today (skip the
-  section if nothing is due or overdue).
+- Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
+  you also see what happened YESTERDAY. For any notable event that just passed and
+  needs a next step (a house tour, a meeting with a named outside person, an
+  appointment with an action afterward), check list_tasks; if no open follow-up
+  exists for it yet, create one with add_task, phrased as the ACTION and dated
+  ${date} (e.g. add_task title "Follow up: email Deborah re: Fairview tour"
+  dueDate ${date}). Then call list_tasks and surface EVERY open follow-up plus
+  anything overdue or due today. Close the section with exactly: "To clear any of
+  these, reply 'done <item>' and I'll mark it handled."
+  GROUNDING (important): never state that a task, hunt, tour, or action is "over",
+  "done", "completed", or "wrapped up" unless list_tasks shows it done or the
+  family told you. If you are not sure, treat it as still OPEN. Do not invent
+  completion.
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
   trends live in the separate weekly finance report, so keep this to anything
   time-sensitive: a bill due, an unusual charge worth flagging today.)
 - Any security flags: delegate to security (Frank).
-- Notable resale finds worth a glance: delegate to resale (Shey).
+- Notable resale finds worth a glance: delegate to resale (Shey). Her saved-search
+  "traces" are ONGOING hunts, never one-and-done: report any NEW results as the
+  action ("Dsquared trace: 2 new matches, take a look"), and never say a trace is
+  "over" or "done" -- a hunt with no new results today is simply quiet, still running.
 
 Then write it warm, short, and scannable: a one-line greeting that names ${human},
 today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
-note, any overdue/due-today tasks, meals plus any prep reminder, and any flags.
-Skip sections that have nothing. Plain punctuation, no em dashes.
+note, the follow-ups & open actions (with the "reply 'done <item>'" clear line),
+meals plus any prep reminder, and any flags. Skip sections that have nothing.
+Plain punctuation, no em dashes.
 
 Output ONLY the finished digest, wrapped exactly in <digest> and </digest> tags,
 with NOTHING before or after the tags (no preamble, no notes to yourself).`;

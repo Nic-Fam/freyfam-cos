@@ -36,6 +36,20 @@ Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the ful
 suite (~300 tests).
 
 **Recently shipped (2026-06-28 → 06-29), not mapped to a letter:**
+- **Digest follow-up / action-clearing loop.** The digest was status-GUESSING (dropping
+  a finished tour with no follow-up; calling an ongoing resale "trace" over). Fix: a
+  grounded lifecycle on the existing task store. The digest now reviews YESTERDAY
+  (`list_calendar` gained a `back` param; `familyDateWindow`/`listEvents` look back),
+  auto-creates a follow-up task for a notable just-passed event (e.g. "Follow up: email
+  Deborah re: tour"), surfaces every OPEN follow-up, and closes with "reply 'done
+  <item>'" -> `complete_task`. Hard rule added (digest + chief persona): never assert a
+  task/hunt/tour is "over/done" unless `list_tasks` says so or the family said so;
+  resale traces are ongoing (report new results, never "finished"). Covers the Deborah,
+  Elisha, Dsquared-trace, MSGM cases uniformly.
+- **Printer access** (Genet gap) — `src/channels/printer.js` local CUPS; chief tools
+  `print_document`/`list_printers`, audited. Plus the finance `checking-balance` store
+  moved onto the collection store (last raw-file holdout; all finance stores now
+  Table-ready). Both 2026-06-29.
 - **Email intake moved onto the daemon (self-healing).** Root cause of "Lloyd can't
   reach Patrick": the legacy Azure front door's Graph webhook was silently dropping
   family email, so questions never reached Lloyd. New `src/email-reconcile.js`
