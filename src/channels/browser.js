@@ -21,6 +21,9 @@
 // the REAL Chrome with its saved logins/passwords (so checkout is already signed
 // in) from the device's residential IP. Orders must run on Lloyd's local Mac, never
 // an Azure specialist, so the IP is residential (see the topology note above).
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+
 const BROWSER = {
   channel: process.env.BROWSER_CHANNEL || null,             // e.g. "chrome" (real Chrome w/ the saved creds)
   userDataDir: process.env.BROWSER_USER_DATA_DIR || null,   // persistent Chrome profile (saved logins/passwords)
@@ -35,6 +38,41 @@ const BROWSER = {
 let _browser = null;   // ephemeral Browser (no profile configured)
 let _context = null;   // persistent BrowserContext (real Chrome profile)
 let _chromium = null;
+
+// macOS: opening a real Chrome profile otherwise blocks on the Keychain
+// "Chrome wants to use confidential information" prompt — with no GUI to answer
+// it, the launch hangs forever. --password-store=basic + --use-mock-keychain keep
+// cookie/session storage self-contained in the profile. CONSEQUENCE: a profile
+// must be signed in UNDER these same flags, or its keychain-encrypted cookies
+// won't decrypt and it reads as logged-out. The rest skip first-run UI.
+const LAUNCH_ARGS = [
+  "--password-store=basic",
+  "--use-mock-keychain",
+  "--no-first-run",
+  "--no-default-browser-check",
+  // Drop the navigator.webdriver flag. Login/checkout forms on bot-protected
+  // sites (Ralphs/Kroger, TheRealReal) refuse to submit when automation is
+  // detected, even on a real click. Paired with ignoreDefaultArgs below.
+  "--disable-blink-features=AutomationControlled",
+];
+// Suppress Playwright's default automation switches (the "controlled by automated
+// test software" banner + automation fingerprint) for the same anti-bot reason.
+const IGNORE_DEFAULT_ARGS = ["--enable-automation"];
+// Fail fast instead of hanging if a profile can't be driven (e.g. a bloated
+// everyday profile). Tunable; 0 in Playwright means "no timeout", which we avoid.
+const LAUNCH_TIMEOUT_MS = Number(process.env.BROWSER_LAUNCH_TIMEOUT_MS ?? 45000) || 45000;
+
+// A persistent profile left by an unclean exit (the daemon SIGKILLs on shutdown)
+// keeps stale Singleton* handoff files; Chrome then tries to hand the launch off
+// to a now-dead instance and exits, hanging launchPersistentContext. Clear them
+// before launching (best-effort; missing files are fine).
+async function clearSingletonLocks(dir) {
+  await Promise.all(
+    ["SingletonLock", "SingletonCookie", "SingletonSocket"].map((f) =>
+      unlink(join(dir, f)).catch(() => {})
+    )
+  );
+}
 
 async function chromium() {
   if (_chromium) return _chromium;
@@ -54,16 +92,20 @@ async function newPage() {
   const c = await chromium();
   if (BROWSER.userDataDir) {
     if (!_context) {
+      await clearSingletonLocks(BROWSER.userDataDir);
       _context = await c.launchPersistentContext(BROWSER.userDataDir, {
         channel: BROWSER.channel || "chrome",
         headless: BROWSER.headless,
         slowMo: BROWSER.slowMo,
+        args: LAUNCH_ARGS,
+        ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
+        timeout: LAUNCH_TIMEOUT_MS,
       });
     }
     return _context.newPage();
   }
   if (!_browser || !_browser.isConnected()) {
-    _browser = await c.launch({ headless: BROWSER.headless, slowMo: BROWSER.slowMo, ...(BROWSER.channel ? { channel: BROWSER.channel } : {}) });
+    _browser = await c.launch({ headless: BROWSER.headless, slowMo: BROWSER.slowMo, args: LAUNCH_ARGS, ignoreDefaultArgs: IGNORE_DEFAULT_ARGS, timeout: LAUNCH_TIMEOUT_MS, ...(BROWSER.channel ? { channel: BROWSER.channel } : {}) });
   }
   return _browser.newPage();
 }
