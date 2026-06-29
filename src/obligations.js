@@ -63,17 +63,22 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *   biweekly -> anchorDate YYYY-MM-DD (a known occurrence; repeats every 14 days)
  *   once     -> date YYYY-MM-DD
  * `direction` is "out" for a bill (default) or "in" for a deposit/paycheck.
+ * `account` is "joint" (default) for flows through the joint checking the transfer
+ * floor protects, or another label (e.g. "shelli") for a household-level flow that
+ * must NOT affect the joint floor (Shelli's own income funds her transfer, it does
+ * not land in joint) but should still count in the household consumption picture.
  * variable:true marks a flow whose amount changes each cycle (e.g. the credit
  * card payment); its amount is supplied at planning time, never guessed.
  */
-export async function addObligation({ name, amount = null, cadence, dueDay, dueWeekday, anchorDate, date, direction = "out", variable = false, note = null } = {}) {
+export async function addObligation({ name, amount = null, cadence, dueDay, dueWeekday, anchorDate, intervalDays, date, direction = "out", account = "joint", variable = false, note = null } = {}) {
   if (!name || !String(name).trim()) throw new Error("name is required");
   cadence = String(cadence || "").toLowerCase();
   direction = String(direction).toLowerCase() === "in" ? "in" : "out";
-  if (!["monthly", "weekly", "biweekly", "once"].includes(cadence)) throw new Error("cadence must be monthly, weekly, biweekly, or once");
+  if (!["monthly", "weekly", "biweekly", "interval", "once"].includes(cadence)) throw new Error("cadence must be monthly, weekly, biweekly, interval, or once");
   if (cadence === "monthly" && !(dueDay >= 1 && dueDay <= 31)) throw new Error("monthly obligations need dueDay 1-31");
   if (cadence === "weekly" && !(dueWeekday >= 0 && dueWeekday <= 6)) throw new Error("weekly obligations need dueWeekday 0-6 (0=Sun)");
   if (cadence === "biweekly" && !/^\d{4}-\d{2}-\d{2}$/.test(String(anchorDate || ""))) throw new Error("biweekly obligations need anchorDate YYYY-MM-DD (a known pay date)");
+  if (cadence === "interval" && (!(intervalDays >= 1) || !/^\d{4}-\d{2}-\d{2}$/.test(String(anchorDate || "")))) throw new Error("interval obligations need intervalDays (>=1) and anchorDate YYYY-MM-DD (e.g. every 21 days for a 3-week cycle)");
   if (cadence === "once" && !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("once obligations need date YYYY-MM-DD");
   if (!variable && (amount == null || Number.isNaN(Number(amount)))) throw new Error("amount is required unless variable:true");
 
@@ -87,9 +92,11 @@ export async function addObligation({ name, amount = null, cadence, dueDay, dueW
     cadence,
     dueDay: cadence === "monthly" ? Number(dueDay) : null,
     dueWeekday: cadence === "weekly" ? Number(dueWeekday) : null,
-    anchorDate: cadence === "biweekly" ? anchorDate : null,
+    anchorDate: cadence === "biweekly" || cadence === "interval" ? anchorDate : null,
+    intervalDays: cadence === "interval" ? Number(intervalDays) : null,
     date: cadence === "once" ? date : null,
     direction,
+    account: String(account || "joint").toLowerCase().trim() || "joint",
     variable: !!variable,
     source: "checking",
     note: note ? String(note).trim() : null,
@@ -101,6 +108,50 @@ export async function addObligation({ name, amount = null, cadence, dueDay, dueW
 
 export async function listObligations() {
   return col().list();
+}
+
+// Monthly-equivalent multiplier for an obligation's cadence (52 weeks / 26 biweekly
+// periods / 365 days a year). `interval` scales by its day count (e.g. every 21 days).
+function monthlyFactor(o) {
+  switch (o.cadence) {
+    case "monthly": return 1;
+    case "weekly": return 52 / 12;
+    case "biweekly": return 26 / 12;
+    case "interval": return o.intervalDays >= 1 ? (365 / o.intervalDays) / 12 : 0;
+    default: return 0; // once
+  }
+}
+
+/**
+ * Monthly consumption from the recorded recurring flows: each obligation's amount
+ * converted to a monthly-equivalent and summed (outflow vs inflow). Variable-amount
+ * obligations (e.g. the credit card payment) have no fixed monthly figure, so they
+ * are listed separately rather than guessed. This is the "what do we spend monthly"
+ * view; the transfer floor is the dated projection. Surfacing only.
+ */
+export async function monthlyConsumption() {
+  const items = (await listObligations()).map((o) => {
+    const monthly = o.variable || o.amount == null ? null : round2(o.amount * monthlyFactor(o));
+    return { name: o.name, cadence: o.cadence, amount: o.amount, monthly, direction: o.direction || "out", variable: !!o.variable };
+  });
+  const sum = (pred) => round2(items.filter((i) => pred(i) && i.monthly != null).reduce((a, i) => a + i.monthly, 0));
+  const monthlyOutflow = sum((i) => i.direction !== "in");
+  const monthlyInflow = sum((i) => i.direction === "in");
+  return {
+    monthlyOutflow, monthlyInflow, net: round2(monthlyInflow - monthlyOutflow),
+    variableExcluded: items.filter((i) => i.variable).map((i) => i.name),
+    items,
+  };
+}
+
+export function formatConsumption(c) {
+  if (!c || !c.items.length) return "No recurring flows recorded yet.";
+  const lines = [`Recurring monthly consumption: outflow ${money(c.monthlyOutflow)}, inflow ${money(c.monthlyInflow)}, net ${signed(c.net)}.`];
+  for (const i of c.items.filter((x) => x.direction !== "in").sort((a, b) => (b.monthly || 0) - (a.monthly || 0))) {
+    lines.push(`  - ${i.name}: ${i.variable ? "(varies)" : money(i.monthly) + "/mo"} (${i.cadence})`);
+  }
+  if (c.variableExcluded.length) lines.push(`(variable, not in the total: ${c.variableExcluded.join(", ")})`);
+  return lines.join("\n");
 }
 
 /** Remove by id OR by (case-insensitive) name. */
@@ -129,10 +180,14 @@ export function projectOutflows(obligations = [], { now = new Date(), throughDat
   while (cur <= through && guard++ < 800) {
     const [y, m, d] = cur.split("-").map(Number);
     for (const o of obligations) {
+      // The transfer floor protects the JOINT checking only; a non-joint flow
+      // (e.g. Shelli's own income) never lands here, so it must not move the floor.
+      if (o.account && o.account !== "joint") continue;
       let due = false;
       if (o.cadence === "monthly") due = d === Math.min(o.dueDay, daysInMonth(y, m));
       else if (o.cadence === "weekly") due = dow(y, m, d) === o.dueWeekday;
       else if (o.cadence === "biweekly") { const gap = diffDays(cur, o.anchorDate); due = gap >= 0 && gap % 14 === 0; }
+      else if (o.cadence === "interval") { const gap = diffDays(cur, o.anchorDate); due = gap >= 0 && o.intervalDays >= 1 && gap % o.intervalDays === 0; }
       else if (o.cadence === "once") due = o.date === cur;
       if (!due) continue;
       const amt = o.variable ? amounts[o.id] ?? amounts[String(o.name).toLowerCase()] : o.amount;
@@ -243,6 +298,7 @@ export function formatObligations(items) {
     o.cadence === "monthly" ? `monthly on day ${o.dueDay}` :
     o.cadence === "weekly" ? `weekly on ${DOW[o.dueWeekday]}` :
     o.cadence === "biweekly" ? `every 2 weeks from ${o.anchorDate}` :
+    o.cadence === "interval" ? `every ${o.intervalDays} days from ${o.anchorDate}` :
     `once on ${o.date}`;
   const amt = (o) => (o.variable ? "(amount varies)" : `${o.direction === "in" ? "+" : "-"}${money(o.amount)}`);
   return "Checking flows:\n" + items

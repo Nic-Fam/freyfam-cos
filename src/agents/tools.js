@@ -15,14 +15,15 @@ import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions, detectRecurring } from "../finance.js";
-import { logTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab } from "../finance-log.js";
+import { logTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab, recurringCheckingWithdrawals, formatRecurringWithdrawals } from "../finance-log.js";
 import { reconcile, formatReconciliation } from "../reconcile.js";
 import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
-import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations } from "../obligations.js";
+import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations, monthlyConsumption, formatConsumption } from "../obligations.js";
 import { transferOutlook } from "../transfer-outlook.js";
 import { setCheckingAnchor } from "../checking-balance.js";
 import { setStatement } from "../credit-statement.js";
+import { addCategoryRule } from "../categorize.js";
 import { addProposal, listProposals } from "../proposals.js";
 import {
   getMealsInRange, saveMeal, deleteMeal, formatMealsContext,
@@ -50,7 +51,8 @@ export const AGENT_ALLOWLIST = {
   // NO search/browse/outbound — finance stays locked down. All read/log/compute only.
   finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
-            "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement"],
+            "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement",
+            "add_category_rule", "monthly_consumption", "recurring_withdrawals"],
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
@@ -198,16 +200,18 @@ const REGISTRY = {
       {
         name: "set_obligation",
         description:
-          "Record or update a recurring checking flow. cadence monthly (dueDay 1-31; use 31 for end of month), weekly (dueWeekday 0=Sun..6=Sat), biweekly (anchorDate YYYY-MM-DD, a known occurrence; repeats every 14 days, e.g. a paycheck), or once (date YYYY-MM-DD). direction 'out' for a bill (default) or 'in' for a deposit/paycheck. Set variable:true for a flow whose amount changes each cycle (e.g. the credit card payment) - supplied at planning time, not stored.",
+          "Record or update a recurring flow. cadence monthly (dueDay 1-31; use 31 for end of month), weekly (dueWeekday 0=Sun..6=Sat), biweekly (anchorDate YYYY-MM-DD; every 14 days), interval (intervalDays + anchorDate, e.g. every 21 days for a 3-week nail cycle), or once (date). direction 'out' for a bill (default) or 'in' for income. account 'joint' (default; affects the transfer floor) or another label like 'shelli' for household income that funds her transfer but does NOT land in joint (counts in consumption, not the floor). variable:true for an amount that changes each cycle (credit card). Use note for cash items (nails, trash) that only show as cash withdrawals.",
         input_schema: obj({
           name: { type: "string" },
           amount: { type: "number" },
-          cadence: { type: "string", enum: ["monthly", "weekly", "biweekly", "once"] },
+          cadence: { type: "string", enum: ["monthly", "weekly", "biweekly", "interval", "once"] },
           dueDay: { type: "number" },
           dueWeekday: { type: "number" },
           anchorDate: { type: "string" },
+          intervalDays: { type: "number" },
           date: { type: "string" },
           direction: { type: "string", enum: ["out", "in"] },
+          account: { type: "string" },
           variable: { type: "boolean" },
           note: { type: "string" },
         }, ["name", "cadence"]),
@@ -228,6 +232,21 @@ const REGISTRY = {
         name: "set_credit_statement",
         description: "Record the current credit-card STATEMENT balance due (what gets paid on the due date). This is what the transfer outlook uses for the card payment, preferred over summing charges. Use when the family tells you the statement balance or you read it off a statement. Optional card (last 4 / name), minimumDue, dueDate (YYYY-MM-DD).",
         input_schema: obj({ statementBalance: { type: "number" }, card: { type: "string" }, minimumDue: { type: "number" }, dueDate: { type: "string" } }, ["statementBalance"]),
+      },
+      {
+        name: "add_category_rule",
+        description: "Add a transaction categorization rule, e.g. tie a payee or keyword to a category. `pattern` is matched (case-insensitive) against merchant + alert text; `category` is the bucket (e.g. 'services'); optional `note` describes it; optional `source` ('checking'/'credit') limits the rule to one side. Use for recurring payees (cleaner, sitter) so their spend rolls up.",
+        input_schema: obj({ pattern: { type: "string" }, category: { type: "string" }, note: { type: "string" }, source: { type: "string", enum: ["checking", "credit"] } }, ["pattern", "category"]),
+      },
+      {
+        name: "monthly_consumption",
+        description: "Recurring monthly household consumption from the recorded obligations: each recurring flow converted to a monthly-equivalent and summed (outflow vs inflow, net). Income includes the whole household (so it frames expenses vs income), while variable items like the card payment are listed separately. Use to answer 'what do we spend/earn monthly'.",
+        input_schema: obj({}),
+      },
+      {
+        name: "recurring_withdrawals",
+        description: "Recurring WITHDRAWALS detected from the checking transaction history (the recurring radar over checking outflows), each with a monthly-equivalent cost. Use to find recurring outflows not yet recorded as obligations. Needs a few cycles of logged history to detect a cadence.",
+        input_schema: obj({}),
       },
       {
         name: "running_tab",
@@ -273,6 +292,9 @@ const REGISTRY = {
       transfer_outlook: async ({ throughDate } = {}) => JSON.stringify(await transferOutlook(throughDate ? { throughDate } : {})),
       set_checking_balance: async ({ amount, asOf } = {}) => JSON.stringify(await setCheckingAnchor({ amount, asOf })),
       set_credit_statement: async (input) => JSON.stringify(await setStatement(input || {})),
+      add_category_rule: async (input) => JSON.stringify(await addCategoryRule(input || {})),
+      monthly_consumption: async () => { const c = await monthlyConsumption(); return JSON.stringify({ ...c, text: formatConsumption(c) }); },
+      recurring_withdrawals: async () => { const r = await recurringCheckingWithdrawals(); return JSON.stringify({ ...r, text: formatRecurringWithdrawals(r) }); },
     },
   }),
 

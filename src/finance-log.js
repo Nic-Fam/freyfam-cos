@@ -91,6 +91,26 @@ export async function summarizeSpend({ sinceDays = 7, source, now = new Date() }
   return { window: sinceDays, source: source || "all", ...analysis, recurring };
 }
 
+/**
+ * Recurring WITHDRAWALS detected from the checking history: runs the recurring
+ * radar over checking-source outflows and returns each with a monthly-equivalent
+ * cost (so they can fold into the monthly-consumption picture). Needs a few cycles
+ * of logged history to detect a cadence; empty until that accumulates.
+ */
+export async function recurringCheckingWithdrawals({ now = new Date() } = {}) {
+  const txns = (await listTransactions({})).filter((t) => t.source === "checking" && t.direction !== "in");
+  const recurring = detectRecurring(txns, { now });
+  const monthlyEquivalent = round2(recurring.reduce((a, r) => a + r.lastAmount * (30 / (r.intervalDays || 30)), 0));
+  return { recurring, monthlyEquivalent, count: recurring.length };
+}
+
+export function formatRecurringWithdrawals(r) {
+  const m = (n) => "$" + round2(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!r || !r.recurring.length) return "No recurring checking withdrawals detected yet (needs a few cycles of logged history).";
+  return `Recurring checking withdrawals (~${m(r.monthlyEquivalent)}/mo equivalent):\n` +
+    r.recurring.map((x) => `  - ${x.merchant}: ${m(x.lastAmount)} ${x.cadence}, next ~${x.nextExpected}`).join("\n");
+}
+
 // Local "YYYY-MM" for the family timezone (statement month anchor).
 function localYm(now = new Date(), tz = process.env.FAMILY_TZ || "America/Los_Angeles") {
   const p = Object.fromEntries(

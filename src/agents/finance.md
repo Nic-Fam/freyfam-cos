@@ -37,7 +37,15 @@ judgmental about what the family spends on.
   or cancelled.
 - Zelle payments are categorized as "services" (the family pays cleaners, sitters, and
   contractors by Zelle). The daily ingest tags them automatically; if you log a Zelle
-  payment by hand, set category to "services" too.
+  payment by hand, set category to "services" too. Add `add_category_rule` for a new
+  payee/keyword -> category mapping.
+- Household consumption: `monthly_consumption` rolls the recorded recurring obligations
+  into a monthly-equivalent (outflow vs household income vs net); `recurring_withdrawals`
+  surfaces recurring checking outflows detected from history. Record recurring spend as
+  obligations so it counts: use cadence `interval` (intervalDays + anchorDate) for things
+  like nails every 21 days, and `note` for CASH items (nails, trash) that only show as a
+  cash withdrawal. Use account "shelli" for her income (counts in household consumption,
+  NOT the joint transfer floor, since it funds her transfer rather than landing in joint).
 - Cash-flow / "how much to transfer" questions: keep the standing bills that come out of
   joint checking in `set_obligation` (rent, car payment, weekly BrightHorizons, and the
   credit card payment as `variable:true`), then answer with `plan_checking_transfer`. It

@@ -10,6 +10,7 @@ process.env.FAMILY_TZ = "America/Los_Angeles";
 const {
   addObligation, listObligations, removeObligation,
   projectOutflows, planTransfer, planCheckingTransfer, formatTransferPlan,
+  monthlyConsumption,
 } = await import("../src/obligations.js");
 
 beforeEach(() => rm(TMP, { force: true }));
@@ -132,6 +133,37 @@ test("biweekly inflow (paycheck) is projected and offsets the transfer", async (
   // paycheck: 5401.43 - 7351.40 - 509 = -2458.97. Transfer = 1000 - (-2458.97) = 3459.
   assert.equal(plan.minDate, "2026-07-03");
   assert.equal(plan.requiredTransfer, 3459);
+});
+
+test("a non-joint account flow (Shelli's income) does NOT move the joint floor", async () => {
+  await addObligation({ name: "Rent", amount: 5951.40, cadence: "monthly", dueDay: 1 });
+  await addObligation({ name: "Shelli Disney income", amount: 2685, cadence: "weekly", dueWeekday: 5, direction: "in", account: "shelli" });
+  const { outflows, inflows } = projectOutflows(await listObligations(), { now: new Date("2026-06-28T12:00:00-07:00"), throughDate: "2026-07-31" });
+  assert.ok(outflows.some((o) => o.name === "Rent"));
+  assert.equal(inflows.length, 0, "Shelli's non-joint income is excluded from the floor projection");
+});
+
+test("monthlyConsumption sums recurring to monthly-equivalents; household income includes all accounts", async () => {
+  await addObligation({ name: "Rent", amount: 6000, cadence: "monthly", dueDay: 1 });
+  await addObligation({ name: "BrightHorizons", amount: 500, cadence: "weekly", dueWeekday: 5 }); // ~2166.67/mo
+  await addObligation({ name: "Credit card payment", cadence: "monthly", dueDay: 6, variable: true });
+  await addObligation({ name: "Nic paycheck", amount: 4000, cadence: "biweekly", anchorDate: "2026-06-12", direction: "in" }); // ~8666.67/mo
+  await addObligation({ name: "Shelli Disney income", amount: 2685, cadence: "weekly", dueWeekday: 5, direction: "in", account: "shelli" }); // ~11635/mo
+
+  const c = await monthlyConsumption();
+  assert.equal(c.monthlyOutflow, 8166.67); // 6000 + 500*52/12
+  assert.equal(c.monthlyInflow, 20301.67); // 4000*26/12 + 2685*52/12 (household, both accounts)
+  assert.deepEqual(c.variableExcluded, ["Credit card payment"]);
+});
+
+test("interval cadence (every N days) projects + counts in consumption (nails: $300/21d)", async () => {
+  await addObligation({ name: "Nails", amount: 300, cadence: "interval", intervalDays: 21, anchorDate: "2026-06-10", note: "cash, ~$200-400" });
+  // from a Jun 10 anchor every 21 days: Jul 1, Jul 22 in the window
+  const { outflows } = projectOutflows(await listObligations(), { now: new Date("2026-06-28T12:00:00-07:00"), throughDate: "2026-07-31" });
+  assert.deepEqual(outflows.filter((o) => o.name === "Nails").map((o) => o.date), ["2026-07-01", "2026-07-22"]);
+  const c = await monthlyConsumption();
+  // 365/21/12 = 1.448/mo * $300 = ~$434.52/mo
+  assert.equal(c.items.find((i) => i.name === "Nails").monthly, 434.52);
 });
 
 test("formatTransferPlan: no-transfer wording", () => {
