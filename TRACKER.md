@@ -877,7 +877,7 @@ only Steve's execution backend changes.
 - Note: this is a capability upgrade too — Claude Code gives Steve real file/bash/build
   tools (vs the current text-only runner), which is what "build a household app" needs.
 
-### R. Resilience & disaster recovery (local hardware failure / power outage)  `[~]`  — SOFTWARE DONE 2026-06-24; hardware (auto-power-on, UPS) remains at provisioning
+### R. Resilience & disaster recovery (local hardware failure / power outage)  `[x]`  — software done 2026-06-24; hardware (auto-power-on + UPS) confirmed 2026-06-29; only OPTIONAL cold-standby failover remains
 
 The system is local-first, so the Mac mini running Lloyd is a single point of failure:
 a power outage or hardware/disk failure takes down the host that owns the queue
@@ -942,14 +942,12 @@ gaps in state durability, auto-recovery, and (most urgent) independent monitorin
       auto-rolls-back to the old dir if the daemon doesn't come up). See
       `deploy/setup/restart.md` (PR #9) + the always-restart-from-main memory. Verify:
       `tail /Users/nfrey2/cos-ops/cutover.log`; `pgrep -fl cos-live/src/daemon.js`.
-- [ ] **Auto-power-on after an outage.** launchd restarts the daemon on boot, but the
-      Mac must boot itself first: set `sudo pmset -a autorestart 1` (power back →
-      Mac powers on) and confirm the firmware "start up after power failure" setting.
-      One-time host config; document in `deploy/setup/lloyd-mac-mini.md`.
-- [ ] **UPS + graceful shutdown.** A small uninterruptible power supply rides out short
-      outages and, on a long one, signals the Mac to shut down cleanly (avoids
-      mid-write corruption of the JSON state). macOS reads many UPS units natively
-      (Energy Saver → shut down on low battery). Cheap, high-value hardware mitigation.
+- [x] **Auto-power-on after an outage — CONFIRMED ON 2026-06-29 (Nic).** Macs are set to
+      power on automatically when power returns (`pmset autorestart` / firmware "start up
+      after power failure"), so launchd's RunAtLoad brings the daemon back unattended.
+- [x] **UPS + graceful shutdown — CONFIRMED 2026-06-29 (Nic).** The Macs are plugged into
+      a UPS, so short outages are ridden out and a long one can trigger a clean shutdown
+      (avoids mid-write corruption of the JSON state).
 - [x] **Outage-aware restart behavior — DONE 2026-06-24.** `src/outage.js`: the
       heartbeat stamps a local last-seen each tick; on the first tick after (re)start,
       if the gap exceeds ~30 min (`OUTAGE_THRESHOLD_MS`) Lloyd notifies the owner he was
