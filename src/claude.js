@@ -3,6 +3,15 @@ import { ANTHROPIC_API_KEY } from "./config.js";
 
 const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
+// Live model catalog (GET /v1/models). Used by model-registry.js to discover the
+// newest model per tier as Anthropic ships them. Collects the auto-paginating
+// list into a plain array. Each entry has at least { id, created_at }.
+export async function listModels() {
+  const out = [];
+  for await (const m of client.models.list()) out.push(m);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt caching. Caching references the prompt in the order: tools, system,
 // messages. We mark the STABLE prefix (tools + persona system block) with

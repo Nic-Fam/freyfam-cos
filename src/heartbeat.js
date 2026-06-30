@@ -6,6 +6,7 @@ import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/notify.js";
 import { checkCostThresholds } from "./cost.js";
+import { discoverModelTiers, changeKey } from "./model-registry.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
 import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
@@ -85,6 +86,40 @@ async function maybeCheckCosts() {
     await checkCostThresholds(new Date(), { notify: notifyOwner });
   } catch (err) {
     log.error("cost check failed", { reason: err.message });
+  }
+}
+
+// Watch the live Models API for newer models in each tier's family and tell the
+// owner when one ships (so the one-line config bump can be made deliberately).
+// Slow cadence (default weekly). DETECT + NOTIFY by default: swapping the model a
+// household runs on shifts cost/behavior, so it's a human decision. Set
+// COS_MODEL_AUTOUPDATE=true to also apply the newest tiers to THIS process at
+// runtime (until restart / config edit). In-memory notify de-dup so we ping once
+// per distinct new release, not every week.
+let lastModelCheckAt = 0;
+let notifiedModelKey = null;
+const MODEL_CHECK_INTERVAL_MS = Number(process.env.MODEL_CHECK_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000);
+async function maybeCheckModelUpdates() {
+  const now = Date.now();
+  if (now - lastModelCheckAt < MODEL_CHECK_INTERVAL_MS) return;
+  lastModelCheckAt = now;
+  try {
+    const { tiers, changes, ok } = await discoverModelTiers();
+    if (!ok || !changes.length) return;
+    if (String(process.env.COS_MODEL_AUTOUPDATE).toLowerCase() === "true") {
+      Object.assign(MODELS, tiers); // runtime-only; config.js stays the source of truth
+      log.info("model tiers auto-updated", { tiers });
+    }
+    const key = changeKey(changes);
+    if (key === notifiedModelKey) return; // already pinged for this release
+    notifiedModelKey = key;
+    const lines = changes.map((c) => `${c.tier}: ${c.from} -> ${c.to}`).join("\n");
+    const verb = String(process.env.COS_MODEL_AUTOUPDATE).toLowerCase() === "true"
+      ? "Applied for now; make it permanent in config.js"
+      : "Consider bumping the tiers in config.js";
+    await notifyOwner(`New Claude model(s) available:\n${lines}\n\n${verb}.`);
+  } catch (err) {
+    log.error("model update check failed", { reason: err.message });
   }
 }
 
@@ -431,6 +466,7 @@ export async function tick() {
   await setLastSeen(); // local heartbeat stamp for boot-time outage detection
   await maybeReconcileInboundEmail();
   await maybeCheckCosts();
+  await maybeCheckModelUpdates();
   await maybeBackup();
   await maybeScanShipments();
   await maybeSchedulePickups();
