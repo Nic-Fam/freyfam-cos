@@ -31,7 +31,7 @@ import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
-import { isWorkDomain, shouldAutoReply, isSelfAddress } from "./guards.js";
+import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
@@ -975,7 +975,11 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   //     Runs BEFORE the auto-reply suppression below, because OTP emails usually
   //     come from no-reply senders that the suppressor (rightly) drops — we still
   //     want the code. Conservative matcher (keyword + 4-8 digit), so low noise.
-  if (msg.channel === "email") {
+  //     Skip the family's OWN addresses and our mailbox: real OTPs come from
+  //     external services, never from nic@/shelli@/cos@. A keyword+number in
+  //     Nic's own mail (e.g. discussing a code) was relaying his "code" back to
+  //     him — pure false-positive noise.
+  if (msg.channel === "email" && !isFamilyAddress(msg.from) && !isSelfAddress(msg.from)) {
     const code = extractVerificationCode(msg.subject, msg.body);
     if (code) {
       const from = msg.from ? ` (from ${msg.from})` : "";
