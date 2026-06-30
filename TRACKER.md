@@ -36,6 +36,19 @@ Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the ful
 suite (~300 tests).
 
 **Recently shipped (2026-06-28 → 06-29), not mapped to a letter:**
+- **Proactive owner notifications no longer silently dropped.** `notifyOwner` was
+  Twilio SMS only; with SMS retired and iMessage awaiting BlueBubbles, every
+  proactive heartbeat notice (cost watchdog, security breach, OTP/verification relay,
+  power-outage-on-boot, reminders, transfer outlook, resale finds, First Look, price
+  drops, proactive FYIs/results) threw into a swallowed catch and reached no one. New
+  `src/owner-notify.js` is a cycle-safe fan-out registry (mirrors `confirm.js`'s
+  approval notifiers): Slack (`startSlack`) and email (`registerOwnerEmail`,
+  `OWNER_NOTICE_EMAIL_TO`) register at daemon startup, and `notifyOwner` now delivers
+  to every live channel best-effort, returning which ones landed (SMS still attempted,
+  harmless once back). heartbeat + the OTP relay repointed to it; confirmations and the
+  digests were already multi-channel and unchanged. The earlier package-digest fix was
+  the same root cause (iMessage-only) found case-by-case; this fixes the rest at the
+  source. Tests: `test/owner-notify.test.js`. Full suite 370 green.
 - **Browser workstreams (F/G/I) verified on real Chromium.** Ran the F/G/I checks on
   Lloyd's mini: full suite green (363 tests) and the 51 F/G/I unit tests green, plus a
   new live harness `scripts/verify-browser.mjs` (`npm run verify:browser`) that launches

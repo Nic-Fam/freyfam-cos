@@ -12,7 +12,8 @@ import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
-import { sendSms, notifyOwner } from "./channels/twilio.js";
+import { sendSms } from "./channels/twilio.js";
+import { notifyOwner } from "./owner-notify.js"; // OTP relay fans out to live channels (Slack/email), not SMS-only
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";

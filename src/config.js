@@ -108,6 +108,11 @@ export const GRAPH = {
   // Comma-separated; empty disables the email approval channel.
   approvalEmailTo: (process.env.APPROVAL_EMAIL_TO ?? "nic@freyfam.com")
     .split(",").map((s) => s.trim()).filter(Boolean),
+  // Where proactive owner notices (cost/breach/OTP/outage/reminders/resale) are
+  // emailed. Email is the reliable live channel while SMS + iMessage are dark.
+  // Comma-separated; empty disables the email leg of notifyOwner.
+  ownerNoticeTo: (process.env.OWNER_NOTICE_EMAIL_TO ?? "nic@freyfam.com")
+    .split(",").map((s) => s.trim()).filter(Boolean),
 };
 
 // The family's own email addresses (household + personal + work), so the

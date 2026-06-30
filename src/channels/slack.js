@@ -1,6 +1,7 @@
 import { SLACK } from "../config.js";
 import { handleInbound } from "../orchestrator.js";
 import { registerApprovalNotifier, resolveByCode } from "../confirm.js";
+import { registerOwnerNotifier } from "../owner-notify.js";
 import { createLogger } from "../log.js";
 
 // ===========================================================================
@@ -193,6 +194,12 @@ export async function startSlack() {
       .postMessage({ channel: SLACK.commandChannel, text: `Approval needed (code ${code})`, blocks: approvalBlocks(code, action) })
       .catch((e) => log.error("approval post failed", { reason: e.message }));
   });
+
+  // Proactive owner notices (cost/breach/OTP/outage/reminders/resale) post to the
+  // desk channel. Lets the post reject so notifyOwner records whether it delivered.
+  registerOwnerNotifier("slack", ({ text }) =>
+    app.client.chat.postMessage({ channel: SLACK.commandChannel, text })
+  );
 
   await app.start();
   log.info("slack socket mode connected", { commandChannel: SLACK.commandChannel });

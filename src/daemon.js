@@ -2,7 +2,7 @@ import { startQueueConsumer, stopQueueConsumer } from "./queue.js";
 import { startHeartbeat, tick } from "./heartbeat.js";
 import { startSlack } from "./channels/slack.js";
 import { startImessage, stopImessage } from "./channels/imessage-inbound.js";
-import { registerEmailApprovals } from "./channels/graph.js";
+import { registerEmailApprovals, registerOwnerEmail } from "./channels/graph.js";
 import { closeBrowser } from "./channels/browser.js";
 import { createLogger } from "./log.js";
 
@@ -20,7 +20,11 @@ async function main() {
   const hb = startHeartbeat();
   // Email approval channel: each staged action emails Approve/Deny buttons.
   registerEmailApprovals();
+  // Email as a live owner-notice channel for proactive notices (cost/breach/OTP/
+  // outage/reminders/resale) while SMS + iMessage are dark.
+  registerOwnerEmail();
   // Slack desk channel: no-op unless tokens are set. Non-fatal if it can't start.
+  // startSlack also registers Slack as a live owner-notice channel.
   await startSlack().catch((e) => log.error("slack start failed", { reason: e.message }));
   // iMessage (BlueBubbles) inbound listener: no-op unless IMESSAGE_* is set.
   const imsg = startImessage();

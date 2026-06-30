@@ -2,6 +2,7 @@ import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { GRAPH } from "../config.js";
 import { registerApprovalNotifier } from "../confirm.js";
+import { registerOwnerNotifier } from "../owner-notify.js";
 import { createLogger } from "../log.js";
 
 const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
@@ -448,4 +449,15 @@ export function registerEmailApprovals() {
       html: true,
     }).catch((e) => _glog.error("approval email failed", { reason: e.message, code }));
   });
+}
+
+/** Register email as a live owner-notice channel so proactive notices (cost,
+ *  breach, OTP, outage, reminders, resale...) reach the family while SMS + iMessage
+ *  are dark. No-op if no recipient is configured. Lets the send reject so
+ *  notifyOwner can record whether email actually delivered. */
+export function registerOwnerEmail() {
+  if (!GRAPH.ownerNoticeTo.length) return;
+  registerOwnerNotifier("email", ({ text, subject }) =>
+    sendMail({ to: GRAPH.ownerNoticeTo, subject: subject || "Lloyd", body: text })
+  );
 }
