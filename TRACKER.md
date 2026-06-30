@@ -113,8 +113,8 @@ suite (~300 tests).
         needs `BROWSER_USER_DATA_DIR` (+ `BROWSER_CHANNEL=chrome`) set to the
         TRR-logged-in Chrome profile, else it reads a logged-out page. Playwright is
         installed; only the profile path is missing. Deferred by Nic 2026-06-29.
-- [~] **Frank (security) Mac mini provisioned 2026-06-29 — live under launchd, one
-      cred gap.** This box (`/Users/frank/freyfam-cos`, LAN `192.168.50.117` /
+- [x] **Frank (security) Mac mini LIVE end-to-end 2026-06-30** (provisioned 2026-06-29;
+      cred gap resolved). This box (`/Users/frank/freyfam-cos`, LAN `192.168.50.117` /
       `Frank.local`) now runs the security specialist HTTP harness
       (`deploy/specialists/local-server.mjs`) on port `8787`. Done: Node v22.23.1, deps
       synced, `_smoke.mjs` + full `npm test` (363/363) pass, embeddings model cached.
@@ -127,11 +127,10 @@ suite (~300 tests).
       Power (AC) already correct for an always-on mini: never idle-sleeps, autorestart
       after power failure, wake-on-network; no lid so no `disablesleep`; firewall off.
       Setup guide: `deploy/setup/frank-mac-mini.md`. **Open actions to finish:**
-      - [ ] **Real `ANTHROPIC_API_KEY` (BLOCKER).** `.env` still holds the placeholder
-            `sk-ant-...`, so live reasoning 401s (`invalid x-api-key`) — the only thing
-            between the verified harness and a working specialist. Only Nic can paste it
-            (creds never fetched by Claude). Then `launchctl kickstart -k
-            gui/$(id -u)/com.freyfam.frank` and confirm a 200 with text.
+      - [x] **Real `ANTHROPIC_API_KEY` — DONE (verified 2026-06-30).** Frank's `.env`
+            holds a real key; an authed `delegate({agent:"security"})` returned real model
+            text ("READY"), so reasoning works end to end. (Earlier placeholder blocker
+            resolved.)
       - [x] **Wire Lloyd → Frank (on Lloyd's box). DONE 2026-06-30.** Lloyd's `.env`:
             `COS_SPECIALIST_URL_SECURITY=http://192.168.50.117:8787/` +
             `COS_SPECIALIST_KEY_SECURITY` (= Frank's `COS_SPECIALIST_LOCAL_KEY`,
@@ -140,6 +139,13 @@ suite (~300 tests).
             `delegate({agent:"security"})` round-tripped over the LAN with HTTP 200 and
             real text (1.3s), so Frank's `ANTHROPIC_API_KEY` is now live too (the earlier
             placeholder blocker is resolved). `resale` correctly stays local.
+            **Regression found + fixed 2026-06-30:** the mini `.env` had a DUPLICATE
+            `COS_SPECIALIST_KEY_SECURITY` whose 2nd (last-wins under `--env-file`) value
+            was an unfilled placeholder `<Frank's…>` carrying a Unicode ellipsis (U+2026).
+            That crashed the `x-functions-key` header (ByteString error), so EVERY security
+            delegate failed with "could not reach the security specialist." Removed the
+            placeholder line, restarted Lloyd, re-verified "READY". Keep `.env` keys
+            single-valued — a stray duplicate silently shadows the real one.
       - [ ] **Reserve a static DHCP lease** for `192.168.50.117` on the router so Lloyd's
             address for Frank stays stable.
       - [ ] **Seed Frank's brain (out-of-band).** No `data/brain.json` yet, so recall is
