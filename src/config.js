@@ -6,8 +6,8 @@ import "dotenv/config";
 // Confirm exact model IDs / snapshots at https://docs.claude.com/en/docs/about-claude/models
 // ---------------------------------------------------------------------------
 export const MODELS = {
-  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-4-6", // the workhorse
+  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5-20251001",   // cheap router + heartbeat gate
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-5", // the workhorse
   heavy: process.env.MODEL_HEAVY || "claude-opus-4-8",      // high-stakes / agentic only
 };
 
