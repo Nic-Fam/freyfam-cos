@@ -27,10 +27,10 @@ after(() => server.close());
 const post = (body, headers = { "x-functions-key": KEY }) =>
   fetch(base, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 
-test("happy path returns {text} for the pinned agent", async () => {
+test("happy path returns {text, requests} for the pinned agent", async () => {
   const res = await post({ agent: "dev", task: "lint the repo" });
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { text: "ran dev: lint the repo" });
+  assert.deepEqual(await res.json(), { text: "ran dev: lint the repo", requests: [] });
 });
 
 test("rejects a missing/wrong function key with 401", async () => {

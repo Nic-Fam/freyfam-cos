@@ -44,7 +44,12 @@ export async function runSpecialist(agent, task, { images } = {}) {
     formatAgentRules(rules),
     mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
-  const { tools: specTools, handlers: rawHandlers } = specialistTools(agent);
+  // Per-invocation request collector (workstream S step 2). A COO's request tools
+  // push onto this; every other agent leaves it empty. It rides back in the return
+  // so Lloyd can fulfill the requests behind his gate - requests never touch a
+  // shared store, so this stays transport-safe when a COO later runs remotely.
+  const requests = [];
+  const { tools: specTools, handlers: rawHandlers } = specialistTools(agent, { requests });
   // Trace each tool call so a runaway loop (the one that ends in "max tool turns
   // reached") is visible: we log the tool name before invoking it, and any failure.
   // Names only, never inputs/results, so nothing sensitive is logged.
@@ -74,5 +79,6 @@ export async function runSpecialist(agent, task, { images } = {}) {
     toolHandlers: specHandlers,
     maxTurns: 6,
   });
-  return text;
+  // {text, requests}: requests is [] for every agent except a COO that emitted some.
+  return { text, requests };
 }

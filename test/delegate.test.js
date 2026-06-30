@@ -39,7 +39,8 @@ after(() => server.close());
 test("invokeRemoteSpecialist posts {agent,task} + key and returns text", async () => {
   const cfg = { mode: "remote", functionKey: "secret-key", timeoutMs: 5000, endpoints: { finance: `${base}/finance` } };
   const out = await invokeRemoteSpecialist("finance", "check the power bill", { cfg });
-  assert.equal(out, "handled: check the power bill");
+  assert.equal(out.text, "handled: check the power bill");
+  assert.deepEqual(out.requests, [], "a plain specialist returns no requests");
   assert.deepEqual(lastRequest.body, { agent: "finance", task: "check the power bill" });
   assert.equal(lastRequest.key, "secret-key", "function key forwarded");
 });
@@ -57,7 +58,7 @@ test("invokeRemoteSpecialist prefers the per-agent key over the global fallback"
 test("delegate routes to remote and returns its text", async () => {
   const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { finance: `${base}/finance` } };
   const out = await delegate({ agent: "finance", task: "summarize spend" }, { cfg, localRunner: () => "LOCAL" });
-  assert.equal(out, "handled: summarize spend");
+  assert.equal(out.text, "handled: summarize spend");
 });
 
 test("delegate uses the local runner when transport is local", async () => {
@@ -88,6 +89,7 @@ test("delegate surfaces a graceful message on remote failure (no silent local fa
   const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { finance: `${base}/boom` } };
   let localCalled = false;
   const out = await delegate({ agent: "finance", task: "x" }, { cfg, localRunner: () => ((localCalled = true), "LOCAL") });
-  assert.match(out, /could not reach the finance specialist/i);
+  assert.match(out.text, /could not reach the finance specialist/i);
+  assert.deepEqual(out.requests, []);
   assert.equal(localCalled, false, "must NOT fall back to local (would break isolation)");
 });

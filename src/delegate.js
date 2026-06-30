@@ -49,11 +49,15 @@ export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, f
     });
     if (!res.ok) throw new Error(`specialist "${agent}" returned HTTP ${res.status}`);
     const ct = res.headers?.get?.("content-type") || "";
+    // Contract is {text, requests} (workstream S step 2). Tolerate a bare string /
+    // plain-text body for back-compat, defaulting requests to []. requests carries
+    // a COO's emitted requests back to Lloyd; a plain specialist returns [].
     if (ct.includes("application/json")) {
       const data = await res.json();
-      return typeof data === "string" ? data : data.text ?? "";
+      if (typeof data === "string") return { text: data, requests: [] };
+      return { text: data.text ?? "", requests: Array.isArray(data.requests) ? data.requests : [] };
     }
-    return await res.text();
+    return { text: await res.text(), requests: [] };
   } finally {
     clearTimeout(timer);
   }
@@ -71,7 +75,7 @@ export async function delegate({ agent, task, images }, { cfg = SPECIALISTS, fet
       return await invokeRemoteSpecialist(agent, task, { cfg, fetchImpl, images });
     } catch (err) {
       log.error("remote specialist failed", { agent, error: String(err?.message || err) });
-      return `I could not reach the ${agent} specialist just now. Try again shortly.`;
+      return { text: `I could not reach the ${agent} specialist just now. Try again shortly.`, requests: [] };
     }
   }
   return localRunner(agent, task, { images });
