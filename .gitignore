@@ -9,5 +9,6 @@ data/*
 !data/ralphs-selectors.json
 !data/house-rules.example.json
 !data/companies.json
+!data/seed-coo-sasshey.mjs
 *.log
 .DS_Store
