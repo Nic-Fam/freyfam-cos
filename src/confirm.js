@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { notifyOwner } from "./channels/notify.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
@@ -100,11 +99,11 @@ export async function requestConfirmation(actionDescription, kind, params, { now
   // Suppress the ping (only) once this recipient+kind is clearly piling up.
   const throttled = Boolean(to) && sameTarget >= NOTIFY_CAP;
   if (!throttled) {
-    // SMS is best-effort (the code is also returned in-thread). Defer + catch so a
-    // Twilio misconfig — sync OR async — can never break staging.
-    Promise.resolve()
-      .then(() => notifyOwner(`Approval needed:\n${actionDescription}\n\nReply "YES ${code}" to approve or "NO ${code}" to cancel.`))
-      .catch(() => {});
+    // Approvals reach the owner through the registered notifiers ONLY: Slack
+    // Approve/Deny buttons (slack.js) + the email approval with mailto buttons
+    // (graph.js). We do NOT also call notifyOwner here — notifyOwner now emails
+    // (channels/notify.js), and the email-approval notifier already emails, so
+    // doing both double-sent every approval. The notifiers are the one path.
     for (const n of notifiers) {
       try { n({ code, action: actionDescription }); } catch { /* a broken notifier must never block */ }
     }
