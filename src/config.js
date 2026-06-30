@@ -247,6 +247,23 @@ export const COST = {
 };
 
 // ---------------------------------------------------------------------------
+// Autonomous COO review (TRACKER workstream S, step 4). On a daily cadence Lloyd
+// runs each COO's "review the company" pass; the COO surfaces a short status and
+// emits any gated requests (mirrors heartbeat -> triage -> escalate). Ships DARK
+// (disabled) by default: it spends proactive tokens per COO per day, so it is
+// opt-in once a company is real. An over-budget company is skipped (the per-COO
+// budget bounds runaway spend); notify=true also sends the owner the review text
+// (off by default to avoid daily noise; gated requests still ping via confirm.js).
+// ---------------------------------------------------------------------------
+export const COO_REVIEW = {
+  enabled: String(process.env.COO_REVIEW_ENABLED ?? "false").toLowerCase() === "true",
+  hour: Number(process.env.COO_REVIEW_HOUR ?? 8),               // local hour to run
+  windowHours: Number(process.env.COO_REVIEW_WINDOW_HOURS ?? 3), // catch-up window after `hour`
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  notify: String(process.env.COO_REVIEW_NOTIFY ?? "false").toLowerCase() === "true",
+};
+
+// ---------------------------------------------------------------------------
 // Slack (the "desk" channel, workstream K). Socket Mode = the Mac opens an
 // OUTBOUND websocket; no public endpoint, same pull-only property as the SMS
 // queue. Needs an app-level token (xapp-, connections:write) + a bot token

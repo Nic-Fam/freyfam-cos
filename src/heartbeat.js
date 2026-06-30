@@ -1,4 +1,4 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, COO_REVIEW } from "./config.js";
 import { triageHeartbeat } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
@@ -16,6 +16,9 @@ import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, set
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate } from "./delegate.js";
+import { cooRoster } from "./companies.js";
+import { runCooReview, shouldRunReview, getReviewState, setReviewRan } from "./coo-review.js";
+import { budgetState } from "./cost-ledger.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
@@ -413,6 +416,33 @@ async function maybeRunGroceryOrder() {
   }
 }
 
+// Autonomous COO tick (workstream S step 4): once per local day, run each COO's
+// "review the company" pass and let it escalate actionable output as gated
+// requests (fulfilled behind the confirmation gate via runCooReview). Ships dark
+// (COO_REVIEW.enabled). Per-COO once-per-day guard is persisted so a restart in the
+// window can't double-fire; an over-budget company is skipped inside runCooReview.
+async function maybeRunCooReviews() {
+  if (!COO_REVIEW.enabled) return;
+  let state;
+  try {
+    state = await getReviewState();
+  } catch (err) {
+    log.error("coo review state read failed", { reason: err.message });
+    return;
+  }
+  for (const coo of cooRoster()) {
+    const { run, date } = shouldRunReview(new Date(), state[coo.key] || null, COO_REVIEW);
+    if (!run) continue;
+    await setReviewRan(coo.key, date); // persist BEFORE running so a restart mid-run can't double-fire
+    try {
+      const r = await runCooReview(coo, { delegate, requestConfirmation, budgetState });
+      log.info("coo review", { coo: coo.key, ...r });
+    } catch (err) {
+      log.error("coo review failed", { coo: coo.key, reason: err.message });
+    }
+  }
+}
+
 let bootChecked = false;
 export async function tick() {
   // On the FIRST tick after (re)start, detect whether Lloyd was offline for a real
@@ -441,6 +471,7 @@ export async function tick() {
   await maybeFireReminders();
   await maybeRunResale();
   await maybeRunGroceryOrder();
+  await maybeRunCooReviews();
 
   const signals = await gatherSignals();
   const verdict = await triageHeartbeat(signals);
