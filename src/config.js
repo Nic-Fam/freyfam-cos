@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { isCoo, isCompanyAgent } from "./companies.js";
 
 // ---------------------------------------------------------------------------
 // Model tiers. These are the cost dial. Triage routes DOWN by default; only
@@ -39,8 +40,26 @@ export const SPECIALIST_TIERS = {
   security: process.env.MODEL_SPECIALIST_SECURITY || MODELS.standard,
 };
 
+// COO tier (workstream S) applies the SAME cost lever, by ROLE rather than by key
+// (the company roster is data-driven, so it has a variable agent count). A COO is a
+// MANAGER -- planning, prioritizing, deciding what to delegate -- which is judgment
+// work, so it stays on Sonnet like finance/dev/security. A company specialist
+// SURFACES operational data + recommendations, the pattern-matching shape that puts
+// resale/chef on Haiku, so it drops to Haiku too. Both env-overridable.
+export const COO_TIERS = {
+  coo:        process.env.MODEL_COO                || MODELS.standard,
+  specialist: process.env.MODEL_COMPANY_SPECIALIST || MODELS.triage,
+};
+
+// Resolve the model for any agent. Family specialists tier by key (SPECIALIST_TIERS);
+// COO-tier agents tier by role (COO_TIERS); everything else falls back to `standard`,
+// preserving prior behavior. Prompt caching of the persona/tools prefix is handled
+// separately in claude.js and applies to every agent that runs through agentLoop.
 export function modelForAgent(agent) {
-  return SPECIALIST_TIERS[agent] || MODELS.standard;
+  if (SPECIALIST_TIERS[agent]) return SPECIALIST_TIERS[agent];
+  if (isCoo(agent)) return COO_TIERS.coo;
+  if (isCompanyAgent(agent)) return COO_TIERS.specialist;
+  return MODELS.standard;
 }
 
 export const HEARTBEAT_INTERVAL_MS = Number(
