@@ -16,7 +16,8 @@ import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLast
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
-import { delegate } from "./delegate.js";
+import { delegate, chooseTransport } from "./delegate.js";
+import { runSavedSearches, fetchHuntsViaDelegate, formatSavedSearchRun } from "./saved-searches.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
@@ -411,7 +412,24 @@ async function maybeRunResale() {
         // flag any drops / target hits. Done here on Lloyd, not the remote resale.
         const flagged = await checkWatched();
         if (flagged.length) await notifyOwner(`Price drop:\n${formatWatchFlags(flagged)}`);
-        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew });
+        // Browser-only saved-search sites (Poshmark/Depop/Grailed/TheRealReal):
+        // the REMOTE (Azure) resale specialist has no browser, so its
+        // run_saved_searches above only covered eBay + Brave. Pull the hunt list
+        // back over the delegate seam and run the browser-only sites here on
+        // Lloyd. Skipped when resale is LOCAL (the in-process specialist already
+        // ran every site, so this would just duplicate it).
+        let browserNew = 0;
+        if (chooseTransport("resale") === "remote") {
+          try {
+            const hunts = await fetchHuntsViaDelegate(delegate);
+            const browserRun = await runSavedSearches({ scope: "local", searches: hunts });
+            browserNew = browserRun.reduce((n, r) => n + r.newHits.length, 0);
+            if (browserNew) await notifyOwner(`New resale finds (browser sites):\n${formatSavedSearchRun(browserRun)}`);
+          } catch (e) {
+            log.error("local browser saved-search run failed", { reason: e.message });
+          }
+        }
+        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew, browserNew });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }

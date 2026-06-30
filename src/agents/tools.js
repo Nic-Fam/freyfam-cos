@@ -54,7 +54,7 @@ export const AGENT_ALLOWLIST = {
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
             "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement",
             "add_category_rule", "monthly_consumption", "recurring_withdrawals", "reconcile_returns"],
-  resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches", "check_returns"],
+  resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches", "export_saved_searches", "check_returns"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
   dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
@@ -332,6 +332,11 @@ const REGISTRY = {
         input_schema: obj({}),
       },
       {
+        name: "export_saved_searches",
+        description: "Return the raw saved-search registry as a JSON array ({id,num,query,maxPrice,sites}). This feeds Lloyd's local-browser bridge so he can run browser-only sites (Poshmark/Depop/Grailed/TheRealReal) you cannot reach from here. When asked, reply with the JSON only, nothing else.",
+        input_schema: obj({}),
+      },
+      {
         name: "check_returns",
         description: "Read TheRealReal's account orders page (via the family's signed-in browser) and return the visible order text + order links. Use this to see which TRR items have been assigned a RETURN or refund. Read the text yourself and list the returned items (brand, item, amount if shown). Then hand that list to Patrick (finance) so he can reconcile expected credits against the card. TRR is the only resale site whose returns matter for the budget.",
         input_schema: obj({}),
@@ -345,6 +350,7 @@ const REGISTRY = {
       list_saved_searches: async () => formatSavedSearchList(await listSavedSearches()),
       remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
       run_saved_searches: async () => formatSavedSearchRun(await runSavedSearches()),
+      export_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       check_returns: async () => {
         const r = await readTrrReturns();
         // Return the page text + order links for the specialist to interpret; cap

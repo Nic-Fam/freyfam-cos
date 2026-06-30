@@ -33,6 +33,16 @@ export function normalizeSiteKey(site) {
 }
 
 /**
+ * True when a site can ONLY be served by the local signed-in browser (Lloyd),
+ * i.e. it has no API and no Brave-only path. These must run on Lloyd's host, not
+ * the remote (Azure) resale specialist, which has no browser. eBay (API) and the
+ * Brave-fallback sites (Vestiaire/Mytheresa/unknown) are NOT local-only.
+ */
+export function isLocalSite(site) {
+  return isBrowserSite(normalizeSiteKey(site));
+}
+
+/**
  * Run ONE site for a query. Dependencies (ebay/browser/braveSearch) injectable
  * for tests. maxPrice is a structured cap for eBay/browser; for Brave (no price
  * filter) it is folded into the query text, same as the legacy behavior.

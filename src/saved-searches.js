@@ -10,7 +10,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
 import { webSearch } from "./search.js";
-import { runSiteSearch } from "./resale-sources.js";
+import { runSiteSearch, isLocalSite } from "./resale-sources.js";
 
 // Storage is pluggable (src/stores/collection.js): local JSON by default, or the
 // resale specialist's own managed-identity Azure Table when COS_TABLE_* is set
@@ -104,26 +104,42 @@ const hits = () =>
 const hitId = (searchId, url) => createHash("sha1").update(`${searchId}|${url}`).digest("hex").slice(0, 12);
 
 /**
- * Run every saved search and report NEW matches (deduped against past hits).
- * Each hunt is routed by its `sites` (see resale-sources.js): eBay -> free API,
+ * Run saved searches and report NEW matches (deduped against past hits). Each
+ * hunt is routed by its `sites` (see resale-sources.js): eBay -> free API,
  * therealreal/poshmark/depop/grailed -> local browser, the rest -> Brave. A hunt
  * with NO sites keeps the original behavior: one Brave query with the price cap
- * folded into the text. `search` (Brave) and `runSites` injectable for tests.
+ * folded into the text.
+ *
+ * `scope` selects which sources run, so browser-only sites stay on Lloyd:
+ *   "all"    (default) every source — used in LOCAL mode / tests.
+ *   "remote" only API/Brave sources — what the REMOTE (Azure) specialist runs;
+ *            it has no browser, so browser-only sites are skipped cleanly.
+ *   "local"  only browser-only sites — what Lloyd runs on the remote specialist's
+ *            behalf (see heartbeat maybeRunResale + the hunt bridge below).
+ * `searches` overrides the registry read (Lloyd passes hunts pulled from the
+ * remote specialist over the delegate seam). `search`/`runSites` injectable.
  * Returns [{ id, label, maxPrice, newHits:[{title,url,snippet,price?}], totalFound }].
  */
-export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch } = {}) {
-  const searches = await listSavedSearches();
-  if (!searches.length) return [];
+export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch, scope = "all", searches = null } = {}) {
+  const list = searches || (await listSavedSearches());
+  if (!list.length) return [];
   const seen = new Set((await hits().list()).map((h) => h.id));
   const out = [];
-  for (const s of searches) {
+  for (const s of list) {
+    const sites = Array.isArray(s.sites) ? s.sites : [];
     let results = [];
     try {
-      if (s.sites && s.sites.length) {
-        // Site-aware: structured price cap, per-site source, merged + deduped.
-        results = await runSites(s.query, { sites: s.sites, maxPrice: s.maxPrice, count, braveSearch: search });
+      if (sites.length) {
+        // Restrict to the sources allowed in this scope (browser-only vs not).
+        const scoped =
+          scope === "all" ? sites :
+          scope === "local" ? sites.filter(isLocalSite) :
+          sites.filter((x) => !isLocalSite(x)); // remote
+        if (!scoped.length) continue; // this hunt has nothing to run in this scope
+        results = await runSites(s.query, { sites: scoped, maxPrice: s.maxPrice, count, braveSearch: search });
       } else {
-        // No site named: original Brave path, price cap folded into the query.
+        // No site named: a Brave hunt. Not a browser-only hunt, so skip in "local".
+        if (scope === "local") continue;
         const query = `${s.query}${s.maxPrice ? ` under $${s.maxPrice}` : ""}`;
         results = await search(query, count ? { count } : {});
       }
@@ -142,6 +158,38 @@ export async function runSavedSearches({ search = webSearch, count, runSites = r
     out.push({ id: s.id, num: s.num, label: s.label, maxPrice: s.maxPrice, newHits, totalFound: results.length });
   }
   return out;
+}
+
+// --- hunt bridge (remote specialist -> Lloyd's local browser) --------------
+// When resale runs REMOTE (Azure), the saved-search registry lives in resale's
+// own store and the local browser is not there. To run the browser-only sites,
+// Lloyd pulls the hunt list back over the EXISTING delegate seam (resale returns
+// it as text), then runs those sites locally. No reverse channel, no Lloyd
+// reading resale's store directly: the specialist still just RETURNS text.
+
+const EXPORT_TASK =
+  "Call export_saved_searches and reply with ONLY its raw JSON output (a JSON array), no prose, no code fences.";
+
+/**
+ * Extract the JSON array of hunts from a (possibly chatty) specialist reply.
+ * Tolerant: grabs the first [...] block, returns [] on anything unparseable so a
+ * bad reply degrades to "no browser hunts this run" instead of throwing. Pure.
+ */
+export function parseHuntsJson(text) {
+  const m = String(text || "").match(/\[[\s\S]*\]/);
+  if (!m) return [];
+  try {
+    const arr = JSON.parse(m[0]);
+    return Array.isArray(arr) ? arr.filter((h) => h && h.query) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Ask the resale specialist (over delegate) for its hunt list as JSON. `delegate` injected. */
+export async function fetchHuntsViaDelegate(delegate, { task = EXPORT_TASK } = {}) {
+  const text = await delegate({ agent: "resale", task });
+  return parseHuntsJson(text);
 }
 
 /** Human summary of a run: new finds per saved search. */

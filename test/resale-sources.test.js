@@ -1,11 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { normalizeSiteKey, searchSite, runSiteSearch } from "../src/resale-sources.js";
+import { normalizeSiteKey, searchSite, runSiteSearch, isLocalSite } from "../src/resale-sources.js";
 
 test("normalizeSiteKey canonicalizes user-entered labels", () => {
   assert.equal(normalizeSiteKey("eBay"), "ebay");
   assert.equal(normalizeSiteKey("www.Poshmark.com"), "poshmark");
   assert.equal(normalizeSiteKey(" Grailed "), "grailed");
+});
+
+test("isLocalSite flags browser-only sites that must run on Lloyd", () => {
+  assert.equal(isLocalSite("poshmark"), true);
+  assert.equal(isLocalSite("TheRealReal.com"), true);
+  assert.equal(isLocalSite("grailed"), true);
+  assert.equal(isLocalSite("ebay"), false, "eBay is the API source, not browser-only");
+  assert.equal(isLocalSite("vestiaire"), false, "Brave fallback, not browser-only");
 });
 
 test("searchSite routes eBay to the API source with a structured maxPrice", async () => {

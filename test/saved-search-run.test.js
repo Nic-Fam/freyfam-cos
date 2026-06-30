@@ -48,6 +48,51 @@ test("a hunt WITH sites routes through runSites (not the Brave query path)", asy
   assert.equal(run[0].newHits[0].price, 320);
 });
 
+test("scope 'local' runs only browser-only sites (Lloyd), skipping eBay/Brave hunts", async () => {
+  await ss.addSavedSearch({ query: "Tabi", sites: ["ebay", "poshmark"] }); // mixed -> poshmark only
+  await ss.addSavedSearch({ query: "Chanel", sites: ["ebay"] });            // remote-only -> skipped
+  await ss.addSavedSearch({ query: "Margiela" });                          // no sites (Brave) -> skipped
+  const seenSites = [];
+  await ss.runSavedSearches({
+    scope: "local",
+    runSites: async (q, opts) => { seenSites.push(opts.sites); return []; },
+    search: async () => { throw new Error("Brave must not run in local scope"); },
+  });
+  assert.deepEqual(seenSites, [["poshmark"]], "only the browser-only site of the mixed hunt runs locally");
+});
+
+test("scope 'remote' runs API/Brave sites + bare-Brave hunts, skipping browser-only sites", async () => {
+  await ss.addSavedSearch({ query: "Tabi", sites: ["ebay", "poshmark"] }); // -> ebay only
+  await ss.addSavedSearch({ query: "OnlyPosh", sites: ["poshmark"] });      // browser-only -> skipped
+  await ss.addSavedSearch({ query: "Bare", maxPrice: 100 });               // no sites -> Brave
+  const seenSites = [];
+  let braveQ = null;
+  await ss.runSavedSearches({
+    scope: "remote",
+    runSites: async (q, opts) => { seenSites.push(opts.sites); return []; },
+    search: async (q) => { braveQ = q; return []; },
+  });
+  assert.deepEqual(seenSites, [["ebay"]], "browser site filtered out of the mixed hunt; browser-only hunt skipped");
+  assert.match(braveQ, /Bare under \$100/, "bare hunt still runs on Brave with price folded in");
+});
+
+test("parseHuntsJson extracts the array from a chatty reply and tolerates junk", () => {
+  assert.deepEqual(ss.parseHuntsJson('Sure: [{"query":"Tabi","sites":["poshmark"]}] done'), [{ query: "Tabi", sites: ["poshmark"] }]);
+  assert.deepEqual(ss.parseHuntsJson("no json at all"), []);
+  assert.deepEqual(ss.parseHuntsJson('[{"sites":["x"]}]'), [], "entries without a query are dropped");
+});
+
+test("fetchHuntsViaDelegate pulls hunts from resale over the delegate seam", async () => {
+  const delegate = async ({ agent, task }) => {
+    assert.equal(agent, "resale");
+    assert.match(task, /export_saved_searches/);
+    return 'ok: [{"query":"Margiela Tabi","maxPrice":350,"sites":["poshmark","grailed"]}]';
+  };
+  const hunts = await ss.fetchHuntsViaDelegate(delegate);
+  assert.equal(hunts.length, 1);
+  assert.deepEqual(hunts[0].sites, ["poshmark", "grailed"]);
+});
+
 test("a brand-new listing shows up as new on a later run", async () => {
   await ss.addSavedSearch({ query: "Chanel flap" });
   await ss.runSavedSearches({ search: async () => [{ title: "A", url: "https://x/1" }] });
