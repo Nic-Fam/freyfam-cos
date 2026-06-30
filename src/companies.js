@@ -158,6 +158,10 @@ export function companyAgentKeys() { return [...loadRoster().byAgent.keys()]; }
 export function companyAgent(agentKey) { return loadRoster().byAgent.get(agentKey) || null; }
 export function isCompanyAgent(agentKey) { return loadRoster().byAgent.has(agentKey); }
 export function isCoo(agentKey) { return companyAgent(agentKey)?.type === "coo"; }
+/** The normalized company record (key, budgetUsd, cycle, ...) by company key. */
+export function companyByKey(key) { return loadRoster().companies.find((c) => c.key === key) || null; }
+/** The company key an agent rolls up to (COO or company specialist), else null. */
+export function companyKeyForAgent(agentKey) { return companyAgent(agentKey)?.companyKey || null; }
 
 // --- Persona rendering from the two templates. --------------------------------
 

@@ -4,7 +4,16 @@ import { recall } from "../memory.js";
 import { persona } from "../persona.js";
 import { specialistTools } from "../agents/tools.js";
 import { getAgentRules, formatAgentRules } from "../rules.js";
+import { recordUsage, budgetState } from "../cost-ledger.js";
+import { companyKeyForAgent } from "../companies.js";
 import { createLogger } from "../log.js";
+
+// Optional HARD cap (workstream S step 3). Off by default: the ledger is a soft,
+// warn-only early warning (it alerts the owner on a budget crossing but keeps
+// running). Set COS_COO_BUDGET_HARDCAP=true to make an over-budget company REFUSE
+// further COO-tier runs until the cycle resets, saving spend at the cost of
+// pausing the company. Either way, family specialists and the chief are unaffected.
+const HARD_CAP = String(process.env.COS_COO_BUDGET_HARDCAP ?? "false").toLowerCase() === "true";
 
 const log = createLogger("specialist");
 
@@ -34,6 +43,18 @@ function nowLocal(now = new Date()) {
 // ===========================================================================
 
 export async function runSpecialist(agent, task, { images } = {}) {
+  // Optional hard cap: if this agent's company is already over budget for the cycle
+  // and the hard cap is on, refuse the run before spending a single token. Soft
+  // (default) keeps running and relies on the one-time alert in recordUsage.
+  if (HARD_CAP) {
+    try {
+      const companyKey = companyKeyForAgent(agent);
+      const b = companyKey ? await budgetState(companyKey) : null;
+      if (b?.over) {
+        return { text: `${agent} is paused: ${b.company} is over its ${b.cycle} budget ($${b.budgetUsd}). It resumes next cycle, or raise the budget.`, requests: [] };
+      }
+    } catch { /* metering must never block a run */ }
+  }
   const p = await persona(agent);
   const mems = await recall(task, 4, { agent });
   // Always-on, scoped policy beats the recall lottery (same argument as the
@@ -69,16 +90,20 @@ export async function runSpecialist(agent, task, { images } = {}) {
   // blocks so the specialist sees the actual picture (Shey an item, Carmine a
   // receipt), not just Lloyd's description. Plain text task otherwise.
   const content = images?.length ? [{ type: "text", text: task }, ...images] : task;
-  const { text } = await agentLoop({
-    // Per-agent tier (cost lever): low-stakes specialists (resale, chef) run on
-    // Haiku; finance/dev/security stay on Sonnet. See config.SPECIALIST_TIERS.
-    model: modelForAgent(agent),
+  // Per-agent tier (cost lever): low-stakes specialists (resale, chef) run on
+  // Haiku; finance/dev/security stay on Sonnet. See config.SPECIALIST_TIERS.
+  const model = modelForAgent(agent);
+  const { text, usage } = await agentLoop({
+    model,
     system: systemBlocks(p, ctx),
     messages: [{ role: "user", content }],
     tools: specTools,
     toolHandlers: specHandlers,
     maxTurns: 6,
   });
+  // Attribute this run's token usage to the agent's company budget (no-op for a
+  // family specialist / the chief). Best-effort: metering must never break a run.
+  recordUsage({ agent, model, usage }).catch((e) => log.warn("usage record failed", { agent, error: String(e?.message || e) }));
   // {text, requests}: requests is [] for every agent except a COO that emitted some.
   return { text, requests };
 }
