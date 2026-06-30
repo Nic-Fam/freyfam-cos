@@ -132,11 +132,14 @@ suite (~300 tests).
             between the verified harness and a working specialist. Only Nic can paste it
             (creds never fetched by Claude). Then `launchctl kickstart -k
             gui/$(id -u)/com.freyfam.frank` and confirm a 200 with text.
-      - [ ] **Wire Lloyd → Frank (on Lloyd's box, not here).** Set
-            `COS_SPECIALIST_URL_SECURITY=http://192.168.50.117:8787/` (prefer the IP over
-            `Frank.local` unless a static lease is reserved) + matching
-            `COS_SPECIALIST_KEY_SECURITY` + `COS_SPECIALIST_MODE=remote`, restart Lloyd,
-            and verify a `delegate({agent:"security"})` round-trips over the LAN.
+      - [x] **Wire Lloyd → Frank (on Lloyd's box). DONE 2026-06-30.** Lloyd's `.env`:
+            `COS_SPECIALIST_URL_SECURITY=http://192.168.50.117:8787/` +
+            `COS_SPECIALIST_KEY_SECURITY` (= Frank's `COS_SPECIALIST_LOCAL_KEY`,
+            `c3c26d4c...`); `COS_SPECIALIST_MODE=remote` already set. Lloyd restarted.
+            Verified: `chooseTransport("security")` → `remote`; an authed
+            `delegate({agent:"security"})` round-tripped over the LAN with HTTP 200 and
+            real text (1.3s), so Frank's `ANTHROPIC_API_KEY` is now live too (the earlier
+            placeholder blocker is resolved). `resale` correctly stays local.
       - [ ] **Reserve a static DHCP lease** for `192.168.50.117` on the router so Lloyd's
             address for Frank stays stable.
       - [ ] **Seed Frank's brain (out-of-band).** No `data/brain.json` yet, so recall is
