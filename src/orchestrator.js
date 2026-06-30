@@ -18,6 +18,8 @@ import { sendImessage } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
+import { cooRoster, companyAgent } from "./companies.js";
+import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
@@ -106,11 +108,12 @@ const tools = [
   },
   {
     name: "delegate",
-    description: "Hand a scoped task to a specialist agent and get their result. Use 'chef' for meal planning and kitchen inventory, 'security' for home + IT security.",
+    description:
+      "Hand a scoped task to a specialist OR a company COO and get their result. Specialists: 'finance', 'dev', 'resale', 'chef' (meals + kitchen), 'security' (home + IT). COOs run a company end to end (e.g. '" + (cooRoster()[0]?.key || "sasshey-coo") + "'): give one a management task and it returns its plan plus any REQUESTS (for a specialist, a heavy lift by Nic, or a gated action). I fulfill those requests for it behind the confirmation gate and fold the results into the result you get back.",
     input_schema: {
       type: "object",
       properties: {
-        agent: { type: "string", enum: ["finance", "dev", "resale", "chef", "security"] },
+        agent: { type: "string", enum: ["finance", "dev", "resale", "chef", "security", ...cooRoster().map((c) => c.key)] },
         task: { type: "string" },
       },
       required: ["agent", "task"],
@@ -474,6 +477,31 @@ registerActionHandler("grocery", async (order) => {
   await logAction("order", `Ralphs grocery order (${order?.count ?? "?"} items, ${order?.deliveryWindow || "Friday"})`);
   return r;
 });
+// COO request seam (workstream S step 2). A COO cannot act; it emits requests that
+// land here behind the gate. Both record on approval rather than driving any
+// automated effect: a heavy lift is something Nic runs himself in a Claude Code
+// session (never an agent on the subscription, per the Q reversal), and a coo_action
+// is an outbound/spend a HUMAN executes (constraint #3). We log the decision + audit
+// the approval so there is a durable record; nothing is auto-sent.
+registerActionHandler("heavy_lift", async ({ coo, company, brief, why }) => {
+  await logDecision("chief-of-staff", {
+    title: `Heavy lift accepted (${company || coo})`,
+    decision: brief,
+    rationale: why,
+    context: "Approved by Nic to run himself in a human-driven Claude Code session; not an automated agent.",
+  });
+  await logAction("heavy_lift", `Heavy lift accepted for ${company || coo}: ${brief}`);
+  return `Logged as an accepted heavy-lift task for you to run: ${brief}`;
+});
+registerActionHandler("coo_action", async ({ coo, company, action, detail }) => {
+  await logDecision("chief-of-staff", {
+    title: `Action approved (${company || coo})`,
+    decision: action,
+    context: detail,
+  });
+  await logAction("coo_action", `Approved COO action for ${company || coo}: ${action}`);
+  return `Approved and logged for a human to execute: ${action}`;
+});
 
 // --- Transports: how one turn delivers its result + mirrors its work --------
 // A transport is { reply(text), mirror(event) }. SMS and email are built in;
@@ -523,12 +551,22 @@ export function transportFor(msg, { onSms = sendSms, onMail = sendMail, onReply 
  * in-process or remote because `delegate` already abstracts transport. Exported
  * pure for testing. `images` rides along (MMS photos) so the specialist sees them.
  */
-export function wrapDelegateWithMirror(delegateFn, { onDelegate, images } = {}) {
+export function wrapDelegateWithMirror(delegateFn, { onDelegate, images, fulfill } = {}) {
   return async ({ agent, task }) => {
     await onDelegate?.({ phase: "start", from: "Lloyd", agent, task });
-    const result = await delegateFn({ agent, task, images });
-    await onDelegate?.({ phase: "result", from: "Lloyd", agent, task, result });
-    return result;
+    const res = await delegateFn({ agent, task, images });
+    // Contract is {text, requests} (workstream S step 2); tolerate a bare string.
+    const text = typeof res === "string" ? res : res?.text ?? "";
+    const requests = res && typeof res === "object" && Array.isArray(res.requests) ? res.requests : [];
+    // A COO emits requests; Lloyd fulfills them behind his gate and folds the
+    // summary into the tool result the model sees. Specialists return no requests.
+    let out = text;
+    if (requests.length && fulfill) {
+      const summary = await fulfill(agent, requests);
+      if (summary) out = text ? `${text}\n\n${summary}` : summary;
+    }
+    await onDelegate?.({ phase: "result", from: "Lloyd", agent, task, result: out });
+    return out;
   };
 }
 
@@ -567,7 +605,18 @@ function toolHandlers({ images, onDelegate } = {}) {
     list_decisions: async ({ agent } = {}) => JSON.stringify(await listDecisions(agent || "chief-of-staff")),
     // The schema stays {agent, task}; `images` come from context, not the model.
     // The wrapper also mirrors the handoff + result to the transport's observability.
-    delegate: wrapDelegateWithMirror(delegate, { onDelegate, images }),
+    // fulfill: when the target is a COO, route its emitted requests through Lloyd's
+    // gate (specialist delegations, heavy-lift asks, gated actions). Only a COO
+    // produces requests; for a plain specialist this is never called.
+    delegate: wrapDelegateWithMirror(delegate, {
+      onDelegate,
+      images,
+      fulfill: async (agent, requests) => {
+        const coo = companyAgent(agent);
+        if (coo?.type !== "coo") return "";
+        return fulfillCooRequests(coo, requests, { delegate, requestConfirmation });
+      },
+    }),
     list_calendar: async ({ top, days, back } = {}) => JSON.stringify(await listEvents({ top, days, back })),
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),

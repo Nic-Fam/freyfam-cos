@@ -33,6 +33,7 @@ import {
 import { addFinding, listFindings, SECURITY_SEVERITIES } from "../security.js";
 import { securityPosture } from "../security-monitor.js";
 import { cooRoster, companySpecialistRoster } from "../companies.js";
+import { requestToolDefs, requestHandlers, REQUEST_TOOL_NAMES } from "../coo-requests.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("agent-tools");
@@ -68,9 +69,11 @@ export const AGENT_ALLOWLIST = {
 // and reports up: baseline only for now (its role-specific tools land in step 6).
 // NEITHER may ever hold a CHIEF_ONLY_TOOLS entry - specialistTools() throws if one
 // does, the same executable guard as for the household specialists. The request seam
-// (request_specialist / request_heavy_lift / request_action) is step 2 and will be
-// added to COO_TOOLS then; until then a COO surfaces plans + decisions as text.
-const COO_TOOLS = [...COMMON_TOOLS, "search"];
+// (request_specialist / request_heavy_lift / request_action, step 2) is a COO-only
+// surface: a COO emits requests that Lloyd fulfills behind his gate. Company
+// specialists report up to their COO, so they get the baseline only (their
+// role-specific tools land in step 6). None of these are CHIEF_ONLY.
+const COO_TOOLS = [...COMMON_TOOLS, "search", ...REQUEST_TOOL_NAMES];
 const COMPANY_SPECIALIST_TOOLS = [...COMMON_TOOLS];
 for (const c of cooRoster()) AGENT_ALLOWLIST[c.key] = COO_TOOLS;
 for (const s of companySpecialistRoster()) AGENT_ALLOWLIST[s.key] = COMPANY_SPECIALIST_TOOLS;
@@ -531,9 +534,16 @@ const REGISTRY = {
 // above, so the two stay in lockstep. Memory/decision handlers are scoped to the
 // agent's own key, so one company agent can never read another's brain or log.
 for (const c of cooRoster()) {
-  REGISTRY[c.key] = () => ({
-    tools: [...memoryTools(), ...decisionTools(), searchToolDef],
-    handlers: { ...memoryHandlers(c.key), ...decisionHandlers(c.key), ...searchHandler() },
+  // ctx.requests is the per-invocation collector threaded in by runSpecialist; the
+  // request-tool handlers push onto it, and runSpecialist returns it to Lloyd.
+  REGISTRY[c.key] = (ctx = {}) => ({
+    tools: [...memoryTools(), ...decisionTools(), searchToolDef, ...requestToolDefs()],
+    handlers: {
+      ...memoryHandlers(c.key),
+      ...decisionHandlers(c.key),
+      ...searchHandler(),
+      ...requestHandlers(ctx.requests),
+    },
   });
 }
 for (const s of companySpecialistRoster()) {
@@ -565,7 +575,7 @@ export function trustedTools(agent, allow) {
   return new Set([...allow].filter((t) => enabled.has(t)));
 }
 
-export function specialistTools(agent) {
+export function specialistTools(agent, ctx = {}) {
   const make = REGISTRY[agent];
   if (!make) return { tools: [], handlers: {} };
 
@@ -581,7 +591,7 @@ export function specialistTools(agent) {
   // Progressive trust narrows (never widens) the allowlist for what's CURRENTLY enabled.
   const trusted = trustedTools(agent, allow);
 
-  const { tools, handlers } = make();
+  const { tools, handlers } = make(ctx);
   // Fail CLOSED on registry DRIFT: a tool the registry produced that isn't even in the
   // allowlist is a bug -> drop + log error (distinct from an intentional trust restriction).
   const drift = tools.map((t) => t.name).filter((n) => !allow.has(n));

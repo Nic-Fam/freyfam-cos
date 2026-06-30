@@ -51,8 +51,13 @@ export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialis
         return json(403, { error: `this server serves "${pinnedAgent}", not "${agent}"` });
       }
       try {
-        const text = await runner(agent, task, { images });
-        json(200, { text });
+        // Contract is {text, requests} (workstream S step 2). Tolerate a runner
+        // that returns a bare string (older/injected) by defaulting requests to [].
+        const result = await runner(agent, task, { images });
+        const out = typeof result === "string"
+          ? { text: result, requests: [] }
+          : { text: result?.text ?? "", requests: Array.isArray(result?.requests) ? result.requests : [] };
+        json(200, out);
       } catch (err) {
         log.error("specialist run failed", { agent, reason: err.message });
         json(500, { error: "specialist run failed" });

@@ -77,3 +77,31 @@ test("wrapDelegateWithMirror works with no onDelegate (heartbeat path)", async (
   const wrapped = wrapDelegateWithMirror(async () => "ok", {});
   assert.equal(await wrapped({ agent: "dev", task: "x" }), "ok");
 });
+
+test("wrapDelegateWithMirror folds a COO's fulfilled requests into the result", async () => {
+  // A COO returns {text, requests}; fulfill turns the requests into a summary that
+  // is appended to the text. Only called when requests are present.
+  const events = [];
+  let fulfilledWith = null;
+  const delegateFn = async () => ({ text: "Here is my plan.", requests: [{ type: "specialist", specialist: "dev", task: "wire it" }] });
+  const wrapped = wrapDelegateWithMirror(delegateFn, {
+    onDelegate: (e) => events.push(e),
+    fulfill: async (agent, requests) => { fulfilledWith = { agent, requests }; return "Requests: did the dev task."; },
+  });
+
+  const result = await wrapped({ agent: "sasshey-coo", task: "grow the company" });
+
+  assert.equal(result, "Here is my plan.\n\nRequests: did the dev task.");
+  assert.equal(fulfilledWith.agent, "sasshey-coo");
+  assert.equal(fulfilledWith.requests.length, 1);
+  assert.equal(events[1].result, result, "mirror sees the composed result");
+});
+
+test("wrapDelegateWithMirror does not call fulfill when there are no requests", async () => {
+  let called = false;
+  const wrapped = wrapDelegateWithMirror(async () => ({ text: "just text", requests: [] }), {
+    fulfill: async () => { called = true; return "x"; },
+  });
+  assert.equal(await wrapped({ agent: "finance", task: "x" }), "just text");
+  assert.equal(called, false);
+});
