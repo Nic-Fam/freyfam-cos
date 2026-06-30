@@ -6,7 +6,7 @@ import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/notify.js";
 import { checkCostThresholds } from "./cost.js";
-import { discoverModelTiers, changeKey } from "./model-registry.js";
+import { discoverModelTiers, changeKey, getModelNotifyState, setModelNotifyState } from "./model-registry.js";
 import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
 import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
@@ -95,30 +95,33 @@ async function maybeCheckCosts() {
 // Slow cadence (default weekly). DETECT + NOTIFY by default: swapping the model a
 // household runs on shifts cost/behavior, so it's a human decision. Set
 // COS_MODEL_AUTOUPDATE=true to also apply the newest tiers to THIS process at
-// runtime (until restart / config edit). In-memory notify de-dup so we ping once
-// per distinct new release, not every week.
-let lastModelCheckAt = 0;
-let notifiedModelKey = null;
+// runtime (until restart / config edit). The check timestamp AND the notify
+// de-dup key are PERSISTED (model-notify-state.json) so the same release is
+// pinged once total — not once per daemon restart (the in-memory version
+// re-emailed on every boot, which is the bug this fixes).
 const MODEL_CHECK_INTERVAL_MS = Number(process.env.MODEL_CHECK_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000);
 async function maybeCheckModelUpdates() {
   const now = Date.now();
-  if (now - lastModelCheckAt < MODEL_CHECK_INTERVAL_MS) return;
-  lastModelCheckAt = now;
+  const state = await getModelNotifyState();
+  if (now - state.lastCheckAt < MODEL_CHECK_INTERVAL_MS) return;
   try {
     const { tiers, changes, ok } = await discoverModelTiers();
-    if (!ok || !changes.length) return;
-    if (String(process.env.COS_MODEL_AUTOUPDATE).toLowerCase() === "true") {
+    if (!ok) return; // API hiccup: don't advance lastCheckAt, retry next tick
+    const autoupdate = String(process.env.COS_MODEL_AUTOUPDATE).toLowerCase() === "true";
+    if (changes.length && autoupdate) {
       Object.assign(MODELS, tiers); // runtime-only; config.js stays the source of truth
       log.info("model tiers auto-updated", { tiers });
     }
-    const key = changeKey(changes);
-    if (key === notifiedModelKey) return; // already pinged for this release
-    notifiedModelKey = key;
-    const lines = changes.map((c) => `${c.tier}: ${c.from} -> ${c.to}`).join("\n");
-    const verb = String(process.env.COS_MODEL_AUTOUPDATE).toLowerCase() === "true"
-      ? "Applied for now; make it permanent in config.js"
-      : "Consider bumping the tiers in config.js";
-    await notifyOwner(`New Claude model(s) available:\n${lines}\n\n${verb}.`);
+    const key = changes.length ? changeKey(changes) : null;
+    const next = { lastCheckAt: now, notifiedKey: key ?? state.notifiedKey };
+    if (key && key !== state.notifiedKey) {
+      const lines = changes.map((c) => `${c.tier}: ${c.from} -> ${c.to}`).join("\n");
+      const verb = autoupdate
+        ? "Applied for now; make it permanent in config.js"
+        : "Consider bumping the tiers in config.js";
+      await notifyOwner(`New Claude model(s) available:\n${lines}\n\n${verb}.`);
+    }
+    await setModelNotifyState(next);
   } catch (err) {
     log.error("model update check failed", { reason: err.message });
   }

@@ -1,3 +1,5 @@
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { MODELS } from "./config.js";
 import { listModels as defaultListModels } from "./claude.js";
 import { createLogger } from "./log.js";
@@ -64,4 +66,23 @@ export async function discoverModelTiers({ listModels = defaultListModels, fallb
 /** A short stable key for a change set, for notify de-duplication. */
 export function changeKey(changes) {
   return (changes || []).map((c) => `${c.tier}:${c.to}`).sort().join(",");
+}
+
+// Persisted across restarts so we notify ONCE per distinct new release, not once
+// per daemon boot. (The original in-memory dedup reset on every restart, so a
+// frequently-restarted daemon re-emailed the same "new model available" notice.)
+const statePath = () => process.env.MODEL_NOTIFY_STATE_PATH || "./data/model-notify-state.json";
+
+export async function getModelNotifyState() {
+  try {
+    const s = JSON.parse(await readFile(statePath(), "utf8"));
+    return { lastCheckAt: Number(s.lastCheckAt) || 0, notifiedKey: s.notifiedKey ?? null };
+  } catch {
+    return { lastCheckAt: 0, notifiedKey: null };
+  }
+}
+
+export async function setModelNotifyState({ lastCheckAt, notifiedKey }) {
+  await mkdir(dirname(statePath()), { recursive: true });
+  await writeFile(statePath(), JSON.stringify({ lastCheckAt, notifiedKey }, null, 2));
 }

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { newestInFamily, discoverModelTiers, changeKey } from "../src/model-registry.js";
+import { newestInFamily, discoverModelTiers, changeKey, getModelNotifyState, setModelNotifyState } from "../src/model-registry.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rm } from "node:fs/promises";
 
 const catalog = [
   { id: "claude-haiku-4-5", created_at: "2025-10-01T00:00:00Z" },
@@ -54,6 +57,23 @@ test("API failure keeps configured tiers and reports ok:false", async () => {
   assert.equal(ok, false);
   assert.deepEqual(tiers, FALLBACK);
   assert.deepEqual(changes, []);
+});
+
+test("notify state persists across reads (survives restart) and defaults cleanly", async () => {
+  const path = join(tmpdir(), `model-notify-${process.pid}.json`);
+  process.env.MODEL_NOTIFY_STATE_PATH = path;
+  try {
+    // No file yet -> safe defaults
+    assert.deepEqual(await getModelNotifyState(), { lastCheckAt: 0, notifiedKey: null });
+    // Persist a key, then a fresh read (simulating a restart) returns it -> no re-notify
+    await setModelNotifyState({ lastCheckAt: 1234, notifiedKey: "standard:claude-sonnet-5" });
+    const reloaded = await getModelNotifyState();
+    assert.equal(reloaded.notifiedKey, "standard:claude-sonnet-5");
+    assert.equal(reloaded.lastCheckAt, 1234);
+  } finally {
+    await rm(path, { force: true });
+    delete process.env.MODEL_NOTIFY_STATE_PATH;
+  }
 });
 
 test("changeKey is stable regardless of order", () => {
