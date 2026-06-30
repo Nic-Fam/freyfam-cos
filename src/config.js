@@ -22,8 +22,35 @@ export function modelForComplexity(complexity, highStakes = false) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-specialist model tier (cost lever). Specialists used to all run on
+// `standard` (Sonnet). Route DOWN the ones whose work is pattern-matching and
+// low-stakes -- resale (scan saved-search results, flag new matches) and chef
+// (list meals, surface expiring food) -- to Haiku, while finance, dev, and
+// security keep Sonnet because their work carries judgment / high-stakes
+// flagging. Each is independently overridable via env. modelForAgent() falls
+// back to `standard` for any unknown agent, preserving today's behavior.
+// ---------------------------------------------------------------------------
+export const SPECIALIST_TIERS = {
+  finance:  process.env.MODEL_SPECIALIST_FINANCE  || MODELS.standard,
+  dev:      process.env.MODEL_SPECIALIST_DEV      || MODELS.standard,
+  resale:   process.env.MODEL_SPECIALIST_RESALE   || MODELS.triage,
+  chef:     process.env.MODEL_SPECIALIST_CHEF     || MODELS.triage,
+  security: process.env.MODEL_SPECIALIST_SECURITY || MODELS.standard,
+};
+
+export function modelForAgent(agent) {
+  return SPECIALIST_TIERS[agent] || MODELS.standard;
+}
+
 export const HEARTBEAT_INTERVAL_MS = Number(
-  process.env.HEARTBEAT_INTERVAL_MS || 15 * 60 * 1000 // 15 min
+  process.env.HEARTBEAT_INTERVAL_MS || 30 * 60 * 1000 // 30 min
+  // Raised 15 -> 30 min as a cost lever: the per-tick Haiku triage gate is the
+  // floor of recurring spend, so halving the tick count (~2,880 -> ~1,440/mo)
+  // halves that floor with no loss of function for a low-volume household.
+  // Inbound SMS/email is event-driven via the queue, not the heartbeat, so it is
+  // unaffected; only proactive signal-scanning cadence loosens. Override with the
+  // env var if you want it tighter.
 );
 
 // ---------------------------------------------------------------------------
@@ -225,6 +252,13 @@ export const DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
   windowHours: Number(process.env.DIGEST_WINDOW_HOURS ?? 2), // catch-up window after `hour`
   enabled: String(process.env.DIGEST_ENABLED ?? "true").toLowerCase() === "true",
+  // Web search in the digest is the only metered-per-call cost in it (used for
+  // the per-destination weather line, up to ~6 searches/day). Off by default as
+  // a cost lever: the rest of the digest (schedule, commute, Fox, meals,
+  // follow-ups) comes from internal tools at no search cost. Flip to "true" to
+  // restore the weather line. When off, the prompt drops the weather ask and the
+  // chief runs without the web_search tool.
+  webSearch: String(process.env.DIGEST_WEB_SEARCH ?? "false").toLowerCase() === "true",
   // Email recipients for the digest (reliable now; SMS rides Twilio clearance).
   // Comma-separated; empty disables the email copy.
   emailTo: (process.env.DIGEST_EMAIL_TO || "nic@freyfam.com,shelli@freyfam.com")

@@ -1,5 +1,5 @@
 import { agentLoop, systemBlocks } from "../claude.js";
-import { MODELS } from "../config.js";
+import { modelForAgent } from "../config.js";
 import { recall } from "../memory.js";
 import { persona } from "../persona.js";
 import { specialistTools } from "../agents/tools.js";
@@ -65,7 +65,9 @@ export async function runSpecialist(agent, task, { images } = {}) {
   // receipt), not just Lloyd's description. Plain text task otherwise.
   const content = images?.length ? [{ type: "text", text: task }, ...images] : task;
   const { text } = await agentLoop({
-    model: MODELS.standard,
+    // Per-agent tier (cost lever): low-stakes specialists (resale, chef) run on
+    // Haiku; finance/dev/security stay on Sonnet. See config.SPECIALIST_TIERS.
+    model: modelForAgent(agent),
     system: systemBlocks(p, ctx),
     messages: [{ role: "user", content }],
     tools: specTools,

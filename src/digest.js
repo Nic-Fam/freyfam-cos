@@ -23,11 +23,26 @@ const log = createLogger("digest");
 // model was unreliable at computing the date itself (it once wrote "June 22 /
 // Monday" on Sunday the 21st and then dropped that day's events as "past"), so we
 // hand it the authoritative weekday + ISO key and tell it to anchor on them.
-export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz) {
+export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, { webSearch = DIGEST.webSearch } = {}) {
   const human = new Intl.DateTimeFormat("en-US", {
     timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric",
   }).format(now);
   const { date } = localParts(now, tz); // YYYY-MM-DD
+  // Weather needs web_search, the digest's only metered-per-call cost. When it
+  // is off (DIGEST.webSearch=false) we drop the weather ask entirely so the
+  // chief never reaches for a tool it does not have.
+  const commuteLine = webSearch
+    ? `- Commute + weather: the house rules list home plus each person's destination
+  and that Shelli keeps her own schedule. For each route (home to Nic's work,
+  home to Shelli's work, home to Fox's Glendale drop-off) call commute_time for
+  the precise ETA and any traffic delay, and use web_search for today's weather
+  at each destination. Give a one-line per-person heads-up. Skip anyone who is
+  not heading out today (e.g. on a weekend, skip work commutes).`
+    : `- Commute: the house rules list home plus each person's destination and that
+  Shelli keeps her own schedule. For each route (home to Nic's work, home to
+  Shelli's work, home to Fox's Glendale drop-off) call commute_time for the
+  precise ETA and any traffic delay. Give a one-line per-person heads-up. Skip
+  anyone who is not heading out today (e.g. on a weekend, skip work commutes).`;
   return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
 
 Compose a brief MORNING DIGEST for the family.
@@ -44,12 +59,7 @@ Gather what you need first:
 - Fox's day at Bright Horizons: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
-- Commute + weather: the house rules list home plus each person's destination
-  and that Shelli keeps her own schedule. For each route (home to Nic's work,
-  home to Shelli's work, home to Fox's Glendale drop-off) call commute_time for
-  the precise ETA and any traffic delay, and use web_search for today's weather
-  at each destination. Give a one-line per-person heads-up. Skip anyone who is
-  not heading out today (e.g. on a weekend, skip work commutes).
+${commuteLine}
 - Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
   needs a next step (a house tour, a meeting with a named outside person, an
@@ -74,7 +84,7 @@ Gather what you need first:
   "over" or "done" -- a hunt with no new results today is simply quiet, still running.
 
 Then write it warm, short, and scannable: a one-line greeting that names ${human},
-today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
+today's schedule, the per-person commute lines, Fox's day + wardrobe
 note, the follow-ups & open actions (with the "reply 'done <item>'" clear line),
 meals plus any prep reminder, and any flags. Skip sections that have nothing.
 Plain punctuation, no em dashes.
@@ -156,7 +166,10 @@ export function digestSubject(now = new Date()) {
  * other. Channels injectable for tests.
  */
 export async function runMorningDigest({ runner = runChief, notify = notifyOwner, mail = sendMail } = {}) {
-  const text = await runner(buildDigestPrompt(), MODELS.standard, { webSearch: true });
+  // webSearch is the digest's only metered-per-call cost; off by default (see
+  // DIGEST.webSearch). The prompt and the chief's tool set stay in lockstep:
+  // when search is off the weather ask is dropped AND the tool is withheld.
+  const text = await runner(buildDigestPrompt(undefined, undefined, { webSearch: DIGEST.webSearch }), MODELS.standard, { webSearch: DIGEST.webSearch });
   const body = extractDigest(text);
   if (!body) {
     log.warn("digest produced no text; nothing sent");
