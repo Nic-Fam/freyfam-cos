@@ -1158,7 +1158,19 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   if (forceAgent) {
     const textExtras = extraBlocks.filter((b) => b.type === "text").map((b) => b.text);
     const body = [msg.body?.trim() || "", ...textExtras].filter(Boolean).join("\n\n") || "(photo message)";
-    text = await delegate({ agent: forceAgent, task: foldThread(history, body), images });
+    // delegate returns {text, requests} (workstream S step 2). A forced channel is
+    // normally a specialist (no requests), but if it is ever a COO, fulfill its
+    // requests behind the gate just like the chief's delegate tool does.
+    const res = await delegate({ agent: forceAgent, task: foldThread(history, body), images });
+    text = typeof res === "string" ? res : res?.text ?? "";
+    const reqs = res && Array.isArray(res.requests) ? res.requests : [];
+    if (reqs.length) {
+      const coo = companyAgent(forceAgent);
+      if (coo?.type === "coo") {
+        const summary = await fulfillCooRequests(coo, reqs, { delegate, requestConfirmation });
+        if (summary) text = text ? `${text}\n\n${summary}` : summary;
+      }
+    }
   } else {
     const t = await triageInbound(triageText);
     const model = modelForComplexity(t.complexity, t.high_stakes);
