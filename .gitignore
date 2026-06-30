@@ -8,5 +8,6 @@ data/*
 !data/restore-backup.mjs
 !data/ralphs-selectors.json
 !data/house-rules.example.json
+!data/companies.json
 *.log
 .DS_Store
