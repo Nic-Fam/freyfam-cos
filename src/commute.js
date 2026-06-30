@@ -11,7 +11,9 @@ import { MAPS } from "./config.js";
 // Geocode results are stable, so cache them for the process lifetime.
 const geocodeCache = new Map();
 
-async function geocode(address, key) {
+// Exported so the weather tool can reuse the same geocoder + cache: NWS keys
+// off lat/lon, and the digest asks for weather at the very same addresses.
+export async function geocode(address, key) {
   if (geocodeCache.has(address)) return geocodeCache.get(address);
   const url = `https://atlas.microsoft.com/search/address/json?api-version=1.0&query=${encodeURIComponent(address)}&limit=1&subscription-key=${key}`;
   const res = await fetch(url);

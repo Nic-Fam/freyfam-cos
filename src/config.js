@@ -252,12 +252,10 @@ export const DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
   windowHours: Number(process.env.DIGEST_WINDOW_HOURS ?? 2), // catch-up window after `hour`
   enabled: String(process.env.DIGEST_ENABLED ?? "true").toLowerCase() === "true",
-  // Web search in the digest is the only metered-per-call cost in it (used for
-  // the per-destination weather line, up to ~6 searches/day). Off by default as
-  // a cost lever: the rest of the digest (schedule, commute, Fox, meals,
-  // follow-ups) comes from internal tools at no search cost. Flip to "true" to
-  // restore the weather line. When off, the prompt drops the weather ask and the
-  // chief runs without the web_search tool.
+  // Metered Anthropic web_search in the digest. Off by default: weather now
+  // comes from the free get_weather tool (NWS) and everything else in the digest
+  // is internal tools, so nothing here needs paid search. Left as an opt-in
+  // escape hatch for any other live lookup; flip to "true" to attach the tool.
   webSearch: String(process.env.DIGEST_WEB_SEARCH ?? "false").toLowerCase() === "true",
   // Email recipients for the digest (reliable now; SMS rides Twilio clearance).
   // Comma-separated; empty disables the email copy.
@@ -305,6 +303,15 @@ export const PACKAGE_DIGEST = {
 // Ported from the legacy assistant; powers the chief's commute_time tool.
 export const MAPS = {
   key: process.env.AZURE_MAPS_KEY || "",
+};
+
+// Weather: US National Weather Service (api.weather.gov). Free, no API key,
+// US-only. Powers the chief's get_weather tool so the morning digest gets the
+// weather line WITHOUT a metered web_search call. NWS policy requires a
+// descriptive User-Agent identifying the app and a contact; set NWS_USER_AGENT
+// to your own contact in production. Geocoding reuses Azure Maps (MAPS.key).
+export const WEATHER = {
+  userAgent: process.env.NWS_USER_AGENT || "freyfam-cos (nic@freyfam.com)",
 };
 
 // Web search (workstream N). Read-only provider wrapper behind the `search`

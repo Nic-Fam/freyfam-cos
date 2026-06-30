@@ -27,6 +27,7 @@ import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KN
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
+import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
@@ -360,6 +361,18 @@ const tools = [
         dest: { type: "string", description: "Destination address." },
       },
       required: ["origin", "dest"],
+    },
+  },
+  {
+    name: "get_weather",
+    description:
+      "Today's weather for an address, from the US National Weather Service (free, no metered search). Returns the current/next forecast period: conditions, temperature, and precip chance. Use this for the morning digest's per-destination weather instead of web search. The standing locations are in the house rules. US only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        location: { type: "string", description: "Address or place to get weather for (e.g. a work or drop-off destination)." },
+      },
+      required: ["location"],
     },
   },
   {
@@ -765,6 +778,14 @@ function toolHandlers({ images, onDelegate } = {}) {
         return `${origin} to ${dest}: ${formatCommute(r)}`;
       } catch (e) {
         return `Could not get commute time: ${e.message}`;
+      }
+    },
+    get_weather: async ({ location }) => {
+      try {
+        const w = await getWeather(location);
+        return `${location}: ${formatWeather(w)}`;
+      } catch (e) {
+        return `Could not get weather: ${e.message}`;
       }
     },
     leave_by: async ({ origin, destination, arriveBy, bufferMin, setReminder }) => {
