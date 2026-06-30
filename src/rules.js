@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { companyAgentKeys } from "./companies.js";
 
 // ===========================================================================
 // House rules = always-on operating policy, distinct from RAG memory. A fact you
@@ -68,7 +69,10 @@ export function formatAgentRules(rules) {
 // ---------------------------------------------------------------------------
 
 // Valid agentRules keys, so a typo ("chiff") can't create a dead rule no agent reads.
-export const KNOWN_AGENTS = ["chief", "finance", "dev", "resale", "chef", "security"];
+// The household roster (chief + family specialists) plus every data-driven COO-tier
+// agent (workstream S), so the family can set standing rules for a COO or a company
+// specialist the same way they do for chef/finance.
+export const KNOWN_AGENTS = ["chief", "finance", "dev", "resale", "chef", "security", ...companyAgentKeys()];
 
 async function loadRaw() {
   try {

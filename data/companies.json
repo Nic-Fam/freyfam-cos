@@ -1,0 +1,55 @@
+{
+  "_comment": "Roster for the COO tier (TRACKER workstream S; org shape in ORG_STRUCTURE.md). Each company gets a COO (agent key <key>-coo) plus its own company specialists (agent key <key>-<role slug>). Adding a company is an entry here + nothing else: personas render from agents/coo.template.md and agents/company-specialist.template.md. allowedSpecialists are the SHARED family specialists this company's COO may request through Lloyd. budgetUsd/cycle feed the per-COO cost ledger (step 3). No apiKey here yet (phase 2 isolation; real keys live in env, never committed).",
+  "companies": [
+    {
+      "key": "sasshey",
+      "company": "Sasshey",
+      "business": "A SaaS wardrobe-inventory tool paired with a consignment marketplace. Revenue comes from memberships and from brokering consignment/resale sales.",
+      "goal": "Become the default way style-conscious sellers catalog their wardrobe and move pieces, turning idle closets into a managed, monetized inventory.",
+      "budgetUsd": 80,
+      "cycle": "monthly",
+      "allowedSpecialists": ["finance", "dev", "resale"],
+      "specialists": [
+        { "role": "Inventory", "focus": "Catalog accuracy, item lifecycle (listed/sold/returned), and the wardrobe-inventory data model the product is built on." },
+        { "role": "Marketing", "focus": "Member acquisition and retention, brand voice, content, and campaign planning (drafts only; Lloyd sends)." },
+        { "role": "Buyer behavior analyst", "focus": "What buyers browse, save, and purchase; pricing and demand signals; what to surface to inventory and sales." },
+        { "role": "Sales", "focus": "Consignment pipeline, conversion of listings to sales, and brokering performance." }
+      ]
+    },
+    {
+      "key": "dariviant",
+      "company": "Dariviant",
+      "business": "Aftermarket parts supply for Rivian and other electric pickups, Rivian-first. The parts business funds the long-term goal.",
+      "goal": "A range-extended overland camper built on the Rivian R1T platform. The parts business funds it; until then this is a parts company. Compliance/certification stays bundled under supply chain.",
+      "budgetUsd": 80,
+      "cycle": "monthly",
+      "allowedSpecialists": ["finance", "dev", "resale"],
+      "specialists": [
+        { "role": "Supply chain", "focus": "Sourcing, supplier relationships, lead times, and (for now) compliance/certification for parts." },
+        { "role": "Inventory", "focus": "Parts stock levels, SKUs, fitment data, and reorder points." },
+        { "role": "Orders", "focus": "Order intake, fulfillment status, and post-sale issues." },
+        { "role": "Community intelligence", "focus": "Rivian and Slate owner forums, Reddit, and EV-pickup communities: demand signals, fitment gaps, and product ideas." },
+        { "role": "Manufacturing engineering", "focus": "Producibility, GD&T, and manufacturing standards for parts (inherits the shared family mfg-eng baseline)." },
+        { "role": "Sales", "focus": "B2C parts sales pipeline and conversion." },
+        { "role": "Marketing", "focus": "Brand, content, and campaign planning for the parts line (drafts only; Lloyd sends)." }
+      ]
+    },
+    {
+      "key": "pontable",
+      "company": "Pontable",
+      "business": "Recreational water sports. The primary product is a floating picnic table for lounging in lakes and streams. B2C plus B2B hospitality (hotels and resorts).",
+      "goal": "Establish the floating picnic table as a category product across direct consumer sales and hospitality (hotel/resort) accounts.",
+      "budgetUsd": 80,
+      "cycle": "monthly",
+      "allowedSpecialists": ["finance", "dev", "resale"],
+      "specialists": [
+        { "role": "Supply chain", "focus": "Sourcing, manufacturing partners, and lead times for the product line." },
+        { "role": "Inventory", "focus": "Finished-goods stock, SKUs, and reorder points." },
+        { "role": "Orders", "focus": "Order intake, fulfillment, and B2B hospitality account orders." },
+        { "role": "Sales", "focus": "B2C and B2B hospitality pipeline and conversion." },
+        { "role": "Marketing", "focus": "Brand, content, and campaign planning (drafts only; Lloyd sends)." },
+        { "role": "Manufacturing engineering", "focus": "Producibility, GD&T, and manufacturing standards (inherits the shared family mfg-eng baseline)." }
+      ]
+    }
+  ]
+}

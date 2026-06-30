@@ -32,6 +32,7 @@ import {
 } from "../meals.js";
 import { addFinding, listFindings, SECURITY_SEVERITIES } from "../security.js";
 import { securityPosture } from "../security-monitor.js";
+import { cooRoster, companySpecialistRoster } from "../companies.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("agent-tools");
@@ -59,6 +60,20 @@ export const AGENT_ALLOWLIST = {
   security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "security_posture"],
   dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
 };
+
+// === COO tier (workstream S). Company agents are data-driven (data/companies.json),
+// so their allowlists are registered here from the roster rather than hardcoded. A
+// COO manages a company: it gets the memory/decision baseline plus read-only web
+// search for market/community research. A company specialist owns operational data
+// and reports up: baseline only for now (its role-specific tools land in step 6).
+// NEITHER may ever hold a CHIEF_ONLY_TOOLS entry - specialistTools() throws if one
+// does, the same executable guard as for the household specialists. The request seam
+// (request_specialist / request_heavy_lift / request_action) is step 2 and will be
+// added to COO_TOOLS then; until then a COO surfaces plans + decisions as text.
+const COO_TOOLS = [...COMMON_TOOLS, "search"];
+const COMPANY_SPECIALIST_TOOLS = [...COMMON_TOOLS];
+for (const c of cooRoster()) AGENT_ALLOWLIST[c.key] = COO_TOOLS;
+for (const s of companySpecialistRoster()) AGENT_ALLOWLIST[s.key] = COMPANY_SPECIALIST_TOOLS;
 
 // Tools that act on the family's behalf or move the world. These live ONLY on the
 // chief (Lloyd), behind the confirmation gate. A specialist may NEVER hold one,
@@ -509,6 +524,24 @@ const REGISTRY = {
     },
   }),
 };
+
+// COO-tier registry factories, built from the data-driven roster (workstream S).
+// A COO gets the memory/decision baseline + read-only search; a company specialist
+// gets the baseline only. specialistTools() filters these against AGENT_ALLOWLIST
+// above, so the two stay in lockstep. Memory/decision handlers are scoped to the
+// agent's own key, so one company agent can never read another's brain or log.
+for (const c of cooRoster()) {
+  REGISTRY[c.key] = () => ({
+    tools: [...memoryTools(), ...decisionTools(), searchToolDef],
+    handlers: { ...memoryHandlers(c.key), ...decisionHandlers(c.key), ...searchHandler() },
+  });
+}
+for (const s of companySpecialistRoster()) {
+  REGISTRY[s.key] = () => ({
+    tools: [...memoryTools(), ...decisionTools()],
+    handlers: { ...memoryHandlers(s.key), ...decisionHandlers(s.key) },
+  });
+}
 
 /**
  * Return { tools, handlers } for a specialist, ENFORCED against the agent's
