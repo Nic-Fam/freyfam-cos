@@ -6,7 +6,7 @@ import { delegate as realDelegate } from "./delegate.js";
 import { requestConfirmation as realRequestConfirmation } from "./confirm.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { budgetState as realBudgetState } from "./cost-ledger.js";
-import { notifyOwner } from "./channels/twilio.js";
+import { notifyOwner } from "./channels/notify.js"; // live owner channel (email + Slack); twilio SMS is retired
 import { createLogger } from "./log.js";
 
 const log = createLogger("coo-review");
