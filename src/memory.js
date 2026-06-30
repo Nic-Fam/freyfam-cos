@@ -1,5 +1,6 @@
 import { embed, cosine, isEnabled, MODEL_ID } from "./embeddings.js";
 import { createCollection } from "./stores/collection.js";
+import { isCompanyAgent } from "./companies.js";
 
 // ===========================================================================
 // The shared "brain" lives LOCALLY on the MacBook (no Azure AI Search needed
@@ -124,15 +125,26 @@ const SEMANTIC_WEIGHT = 0.6;
 
 /**
  * Return the top-k most relevant memories for a query string.
- * Pass { agent } to scope recall to one specialist's memories plus unscoped
- * (shared) facts, so finance memories don't surface for resale and vice versa.
- * Omitting it (the chief of staff) searches everything.
+ * Pass { agent } to scope recall. A FAMILY specialist sees its own memories plus
+ * unscoped (shared household) facts, so finance memories don't surface for resale
+ * yet shared family context still helps. A COMPANY-tier agent (a COO or company
+ * specialist) is WALLED OFF from the household brain: it sees ONLY its own
+ * memories, no unscoped bleed — a business agent should never surface personal/
+ * household facts (matches the per-company isolation model). Omitting { agent }
+ * (the chief of staff) searches everything.
  */
+// Pure scoping rule (exported for tests). The chief (no agent) sees everything.
+// A family specialist sees its own memories + unscoped household facts. A company
+// agent (COO / company specialist) is walled off: its own memories only.
+export function memoryPoolFor(items, agent) {
+  if (!agent) return items;
+  const walled = isCompanyAgent(agent);
+  return items.filter((it) => it.meta?.agent === agent || (!it.meta?.agent && !walled));
+}
+
 export async function recall(query, k = 5, { agent } = {}) {
   const db = await load();
-  const pool = agent
-    ? db.items.filter((it) => !it.meta?.agent || it.meta.agent === agent)
-    : db.items;
+  const pool = memoryPoolFor(db.items, agent);
   if (pool.length === 0) return [];
 
   const lex = lexicalScores(pool, query);
