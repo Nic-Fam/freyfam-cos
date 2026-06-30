@@ -124,12 +124,20 @@ test("a COO gets memory + decisions + read-only search, never an outbound tool",
   for (const n of names) assert.ok(!CHIEF_ONLY_TOOLS.has(n), `COO must not hold chief-only ${n}`);
 });
 
-test("a company specialist gets the memory/decision baseline only (no search yet)", () => {
-  const { tools, handlers } = specialistTools("pontable-supply-chain");
+test("step6: an internal-data company specialist gets the baseline only", () => {
+  const { tools, handlers } = specialistTools("pontable-inventory");
   const names = tools.map((t) => t.name);
   assert.deepEqual(names.sort(), ["list_decisions", "log_decision", "recall_memory", "remember"]);
   assert.deepEqual(names.sort(), Object.keys(handlers).sort(), "tools <-> handlers 1:1");
   assert.ok(!names.includes("search"));
+});
+
+test("step6: a research company specialist also gets read-only search (never outbound)", () => {
+  const { tools, handlers } = specialistTools("pontable-supply-chain");
+  const names = tools.map((t) => t.name);
+  assert.ok(names.includes("search"), "supply chain researches sourcing");
+  assert.deepEqual(names.sort(), Object.keys(handlers).sort(), "tools <-> handlers 1:1");
+  for (const n of names) assert.ok(!CHIEF_ONLY_TOOLS.has(n), `must not hold chief-only ${n}`);
 });
 
 test("COO-tier model routing reuses the per-agent cost lever (COO=Sonnet, specialist=Haiku)", () => {

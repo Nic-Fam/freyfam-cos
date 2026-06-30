@@ -8,6 +8,7 @@
       "goal": "Become the default way style-conscious sellers catalog their wardrobe and move pieces, turning idle closets into a managed, monetized inventory.",
       "budgetUsd": 80,
       "cycle": "monthly",
+      "reviewEnabled": true,
       "allowedSpecialists": ["finance", "dev", "resale"],
       "specialists": [
         { "role": "Inventory", "focus": "Catalog accuracy, item lifecycle (listed/sold/returned), and the wardrobe-inventory data model the product is built on." },

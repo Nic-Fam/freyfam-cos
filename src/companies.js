@@ -80,6 +80,11 @@ export function normalizeCompanies(raw) {
     const budgetUsd = Number(entry?.budgetUsd);
     if (!(budgetUsd > 0)) throw new Error(`companies.json: company "${key}" needs a positive budgetUsd`);
     const cycle = String(entry?.cycle || "monthly").trim().toLowerCase();
+    // Step 5: per-company autonomous-review opt-in. Default OFF; a company is only
+    // reviewed on the heartbeat tick once it's marked ready (the COO_REVIEW.enabled
+    // global is the master switch on top of this). Lets the first real COO go live
+    // alone while the rest stay dark.
+    const reviewEnabled = entry?.reviewEnabled === true;
 
     const allowedSpecialists = Array.isArray(entry?.allowedSpecialists) ? entry.allowedSpecialists.map((s) => String(s).trim().toLowerCase()) : [];
     for (const s of allowedSpecialists) {
@@ -110,9 +115,9 @@ export function normalizeCompanies(raw) {
       byAgent.set(sKey, { type: "specialist", ...specialist });
     }
 
-    const normalized = { key, company, business, goal: String(entry?.goal || "").trim(), budgetUsd, cycle, allowedSpecialists, cooKey, specialists };
+    const normalized = { key, company, business, goal: String(entry?.goal || "").trim(), budgetUsd, cycle, reviewEnabled, allowedSpecialists, cooKey, specialists };
     companies.push(normalized);
-    byAgent.set(cooKey, { type: "coo", key: cooKey, companyKey: key, company, business, goal: normalized.goal, budgetUsd, cycle, allowedSpecialists, specialists });
+    byAgent.set(cooKey, { type: "coo", key: cooKey, companyKey: key, company, business, goal: normalized.goal, budgetUsd, cycle, reviewEnabled, allowedSpecialists, specialists });
   }
 
   const coos = companies.map((c) => byAgent.get(c.cooKey));

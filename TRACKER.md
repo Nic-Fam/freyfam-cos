@@ -1069,7 +1069,7 @@ writes to the cloud must not carry family content (just liveness signals).
 
 ---
 
-### S. COO agents — one "first employee" per company  `[~]`  — STEPS 1-4 ON MAIN (2026-06-30); 5-6 IN PROGRESS
+### S. COO agents — one "first employee" per company  `[x]`  — BUILT + DEPLOYED DARK (2026-06-30); autonomous reviews gated on COO_REVIEW_ENABLED
 
 **Build state (reconciled 2026-06-30).** Shipped as a stacked-PR chain, then
 consolidated onto `main`:
@@ -1084,8 +1084,19 @@ consolidated onto `main`:
 - **Step 4 (PR #33):** autonomous per-COO review tick `src/coo-review.js` wired into
   `heartbeat.js`, ships dark (`COO_REVIEW.enabled`). **On main 2026-06-30** (cherry-picked;
   23/23 COO tests pass).
-- **Step 5:** first real COO end-to-end as the reference impl — IN PROGRESS.
-- **Step 6:** role-specific company-specialist tools — IN PROGRESS.
+- **Step 5 (DONE 2026-06-30):** first real COO end-to-end — **Sasshey** is the
+  reference. Added per-company `reviewEnabled` (in `companies.json` + normalized onto
+  the COO roster entry; the heartbeat review loop skips any COO without it). Sasshey
+  is `reviewEnabled: true`; the others stay dark. Seeded the `sasshey-coo` brain with
+  grounding facts (`data/seed-coo-sasshey.mjs`, idempotent). The global
+  `COO_REVIEW_ENABLED` master switch stays OFF, so nothing auto-runs until Nic flips
+  it — then ONLY Sasshey reviews. Validated end-to-end on the mini (live review →
+  plan + gated requests).
+- **Step 6 (DONE 2026-06-30):** role-specific company-specialist tools. Data-driven
+  by role slug (`agents/tools.js`): research / outward-facing roles (marketing, sales,
+  supply chain, community intelligence, buyer-behavior, mfg-eng) get read-only web
+  `search`; internal-data roles (inventory, orders) stay baseline until those backends
+  exist. Never a CHIEF_ONLY tool (enforced by `specialistTools`). 444/444 tests pass.
 
 PRs #30-33 are now superseded (their content is on `main`); close them. The original
 design notes follow.

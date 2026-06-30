@@ -74,9 +74,27 @@ export const AGENT_ALLOWLIST = {
 // specialists report up to their COO, so they get the baseline only (their
 // role-specific tools land in step 6). None of these are CHIEF_ONLY.
 const COO_TOOLS = [...COMMON_TOOLS, "search", ...REQUEST_TOOL_NAMES];
-const COMPANY_SPECIALIST_TOOLS = [...COMMON_TOOLS];
 for (const c of cooRoster()) AGENT_ALLOWLIST[c.key] = COO_TOOLS;
-for (const s of companySpecialistRoster()) AGENT_ALLOWLIST[s.key] = COMPANY_SPECIALIST_TOOLS;
+
+// Step 6: role-specific company-specialist tools. These are early-stage companies
+// with no internal operational backends yet, so the one genuinely useful role tool
+// that EXISTS today is read-only web `search`. Grant it to the research / outward-
+// facing roles (they live or die on external signal: market, forums, suppliers,
+// standards) and withhold it from the purely-internal data roles (inventory,
+// orders) until those data backends exist. Keyed by role SLUG so it's data-driven;
+// add a role's tools here as real backends land. Still baseline + (maybe) search,
+// never a CHIEF_ONLY tool — specialistTools() enforces that for these too.
+const COMPANY_SPECIALIST_SEARCH_ROLES = new Set([
+  "marketing", "sales", "supply-chain", "community-intelligence",
+  "buyer-behavior-analyst", "manufacturing-engineering",
+]);
+export function companySpecialistGrantsSearch(slug) {
+  return COMPANY_SPECIALIST_SEARCH_ROLES.has(String(slug || ""));
+}
+export function companySpecialistAllowlist(slug) {
+  return companySpecialistGrantsSearch(slug) ? [...COMMON_TOOLS, "search"] : [...COMMON_TOOLS];
+}
+for (const s of companySpecialistRoster()) AGENT_ALLOWLIST[s.key] = companySpecialistAllowlist(s.slug);
 
 // Tools that act on the family's behalf or move the world. These live ONLY on the
 // chief (Lloyd), behind the confirmation gate. A specialist may NEVER hold one,
@@ -553,9 +571,13 @@ for (const c of cooRoster()) {
   });
 }
 for (const s of companySpecialistRoster()) {
+  // Step 6: research/outward-facing roles also get read-only web search; internal
+  // data roles stay baseline. specialistTools() filters against the matching
+  // AGENT_ALLOWLIST entry above, so the registry and allowlist stay in lockstep.
+  const grantsSearch = companySpecialistGrantsSearch(s.slug);
   REGISTRY[s.key] = () => ({
-    tools: [...memoryTools(), ...decisionTools()],
-    handlers: { ...memoryHandlers(s.key), ...decisionHandlers(s.key) },
+    tools: [...memoryTools(), ...decisionTools(), ...(grantsSearch ? [searchToolDef] : [])],
+    handlers: { ...memoryHandlers(s.key), ...decisionHandlers(s.key), ...(grantsSearch ? searchHandler() : {}) },
   });
 }
 

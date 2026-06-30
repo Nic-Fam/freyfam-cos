@@ -492,6 +492,7 @@ async function maybeRunCooReviews() {
     return;
   }
   for (const coo of cooRoster()) {
+    if (!coo.reviewEnabled) continue; // step 5: per-company opt-in; only ready COOs run
     const { run, date } = shouldRunReview(new Date(), state[coo.key] || null, COO_REVIEW);
     if (!run) continue;
     await setReviewRan(coo.key, date); // persist BEFORE running so a restart mid-run can't double-fire
