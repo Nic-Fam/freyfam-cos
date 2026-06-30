@@ -127,12 +127,25 @@ export async function agentLoop({
   maxTurns = 8,
 }) {
   const convo = [...messages];
+  // Aggregate token usage across EVERY turn of the loop (each complete() bills
+  // separately), so callers can attribute the full run's cost - not just the last
+  // turn's - to an agent (the per-COO cost ledger, workstream S step 3). Additive:
+  // existing callers that destructure {text} ignore this.
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const addUsage = (u) => {
+    if (!u) return;
+    usage.input_tokens += u.input_tokens || 0;
+    usage.output_tokens += u.output_tokens || 0;
+    usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+    usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
+  };
   for (let turn = 0; turn < maxTurns; turn++) {
     // cacheConversation: read prior turns/history from cache instead of
     // reprocessing them at full price on every turn of the loop.
     const resp = await complete({ model, system, messages: convo, tools, maxTokens, cacheConversation: true });
+    addUsage(resp.usage);
     const uses = toolUses(resp);
-    if (uses.length === 0) return { text: textOf(resp), resp, convo };
+    if (uses.length === 0) return { text: textOf(resp), resp, convo, usage };
 
     convo.push({ role: "assistant", content: resp.content });
     const results = [];
@@ -154,7 +167,7 @@ export async function agentLoop({
     }
     convo.push({ role: "user", content: results });
   }
-  return { text: "(stopped: max tool turns reached)", convo };
+  return { text: "(stopped: max tool turns reached)", convo, usage };
 }
 
 // Parse a JSON-only model reply, tolerating accidental code fences.
