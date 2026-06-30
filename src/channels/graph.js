@@ -272,7 +272,7 @@ async function calendarViewFor(mailbox, window) {
         .api(`/users/${mailbox}/calendars/${cal.id}/calendarView`)
         .query({ startDateTime: window.startDateTime, endDateTime: window.endDateTime })
         .header("Prefer", `outlook.timezone="${FAMILY_TZ}"`)
-        .select("subject,start,end,location,showAs,attendees")
+        .select("id,subject,start,end,location,showAs,attendees")
         .top(50)
         .orderby("start/dateTime")
         .get()
@@ -295,6 +295,9 @@ async function calendarViewFor(mailbox, window) {
         showAs: e.showAs,
         attendees: (e.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean),
         calendars: [owner],
+        // Stable handle(s) for delete_calendar_event: which mailbox + Graph event id.
+        // An event invited to both calendars dedups below into one entry with both refs.
+        refs: e.id ? [{ calendar: mailbox, id: e.id }] : [],
       });
     }
   }
@@ -326,8 +329,11 @@ export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = 
     for (const e of r.value) {
       const key = `${e.subject}|${e.start}`;
       const existing = byKey.get(key);
-      if (existing) existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
-      else byKey.set(key, e);
+      if (existing) {
+        existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
+        const seen = new Set(existing.refs.map((r) => r.id));
+        existing.refs = [...existing.refs, ...e.refs.filter((r) => !seen.has(r.id))];
+      } else byKey.set(key, e);
     }
   }
   return [...byKey.values()]
@@ -339,6 +345,28 @@ export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = 
 export async function createEvent(input) {
   const res = await graph().api(`/users/${GRAPH.calendarWrite}/events`).post(buildEventPayload(input));
   return { id: res.id, webLink: res.webLink, subject: res.subject };
+}
+
+/**
+ * Delete (cancel) events from the family calendars. Takes the `refs` array a
+ * list_calendar event carries ([{calendar, id}], one per calendar it's on), so a
+ * single event invited to both calendars is removed from both. Irreversible and
+ * notifies attendees: confirm upstream. Returns {deleted, errors}.
+ */
+export async function deleteEvent({ refs } = {}) {
+  const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);
+  if (!list.length) throw new Error("deleteEvent requires refs: [{ calendar, id }]");
+  const deleted = [];
+  const errors = [];
+  for (const r of list) {
+    try {
+      await graph().api(`/users/${r.calendar}/events/${r.id}`).delete();
+      deleted.push(r);
+    } catch (err) {
+      errors.push({ ref: r, reason: err.message });
+    }
+  }
+  return { deleted, errors };
 }
 
 /** "Re:"-prefix a subject without doubling it. */

@@ -15,7 +15,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
@@ -168,6 +168,28 @@ const tools = [
         body: { type: "string" },
       },
       required: ["subject", "start"],
+    },
+  },
+  {
+    name: "delete_calendar_event",
+    description:
+      "Delete (cancel) a calendar event. High-stakes and irreversible (removes the event and notifies any attendees): requires owner approval. First call list_calendar to find the event, then pass that event's `refs` array (its mailbox+id handle(s)) and `subject` here verbatim — do NOT invent refs. An event on both calendars carries multiple refs and is removed from both.",
+    input_schema: {
+      type: "object",
+      properties: {
+        refs: {
+          type: "array",
+          description: "The `refs` array copied from the list_calendar event to delete.",
+          items: {
+            type: "object",
+            properties: { calendar: { type: "string" }, id: { type: "string" } },
+            required: ["calendar", "id"],
+          },
+        },
+        subject: { type: "string", description: "Event title, for the approval prompt + audit log." },
+        start: { type: "string", description: "ISO start of the event, for the approval prompt (optional)." },
+      },
+      required: ["refs", "subject"],
     },
   },
   {
@@ -458,6 +480,13 @@ registerActionHandler("calendar", async (input) => {
   await logAction("calendar", `Created event "${r.subject}"${input.start ? ` at ${input.start}` : ""}`);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
 });
+registerActionHandler("calendar_delete", async ({ refs, subject, start }) => {
+  const { deleted, errors } = await deleteEvent({ refs });
+  await logAction("calendar", `Deleted event "${subject}"${start ? ` at ${start}` : ""} (${deleted.length} calendar${deleted.length === 1 ? "" : "s"})`);
+  if (errors.length && !deleted.length) throw new Error(`could not delete "${subject}": ${errors[0].reason}`);
+  const partial = errors.length ? ` (${errors.length} ref failed)` : "";
+  return `Deleted "${subject}" from ${deleted.length} calendar${deleted.length === 1 ? "" : "s"}${partial}.`;
+});
 registerActionHandler("email", async ({ to, cc, bcc, subject, body }) => {
   await sendMail({ to, cc, bcc, subject, body }); // the confirmation IS the gate (work domains flagged at stage time)
   await recordEmailContact(to); // remember we've now written them, so next time isn't "first contact"
@@ -657,6 +686,17 @@ function toolHandlers({ images, onDelegate } = {}) {
         input
       );
       return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
+    },
+    delete_calendar_event: async ({ refs, subject, start }) => {
+      const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);
+      if (!list.length) return `I couldn't delete that — I need the event's refs from list_calendar. Let me look it up first.`;
+      const when = start ? ` (${start})` : "";
+      const { instruction } = await requestConfirmation(
+        `Delete event: ${subject}${when}\nRemoves it from ${list.length} calendar${list.length === 1 ? "" : "s"} and notifies any attendees.`,
+        "calendar_delete",
+        { refs: list, subject, start }
+      );
+      return `Ready to delete "${subject}"${when}. ${instruction}`;
     },
     send_email: async ({ to, cc, subject, body, bcc }) => {
       // Flag if ANY recipient (to/cc/bcc) is on a work domain. Split first so a

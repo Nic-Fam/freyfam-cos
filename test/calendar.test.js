@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildEventPayload, familyDateWindow, reSubject, localDayLabel, buildMailMessage } from "../src/channels/graph.js";
+import { buildEventPayload, familyDateWindow, reSubject, localDayLabel, buildMailMessage, deleteEvent } from "../src/channels/graph.js";
+
+test("deleteEvent refuses to call Graph without valid refs (guards a no-op DELETE)", async () => {
+  await assert.rejects(() => deleteEvent({}), /requires refs/);
+  await assert.rejects(() => deleteEvent({ refs: [] }), /requires refs/);
+  await assert.rejects(() => deleteEvent({ refs: [{ calendar: "", id: "" }] }), /requires refs/);
+});
 
 test("buildMailMessage puts cc/bcc on real Graph recipient fields (the loop-Nic-in fix)", () => {
   const m = buildMailMessage({
