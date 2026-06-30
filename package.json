@@ -14,6 +14,7 @@
     "reembed": "node data/reembed.mjs",
     "restore": "node --env-file=.env data/restore-backup.mjs",
     "specialist": "node deploy/specialists/local-server.mjs",
+    "capture:resale": "node tools/capture-resale-selectors.mjs",
     "test": "EMBEDDINGS_PROVIDER=none node --test"
   },
   "dependencies": {

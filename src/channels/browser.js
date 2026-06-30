@@ -118,6 +118,22 @@ function humanPauseMs(min = BROWSER.orderStepMinMs, max = BROWSER.orderStepMaxMs
   return lo + Math.floor(Math.random() * (hi - lo + 1));
 }
 
+/**
+ * Open a page on the right surface (signed-in profile when configured, else
+ * ephemeral), hand the raw Playwright page to `fn`, and ALWAYS close it. For
+ * read-only one-off diagnostics/tooling that need lower-level page access than
+ * readPage/readListingFeed (e.g. tools/capture-resale-selectors.mjs). The
+ * daemon's normal paths never use this; they go through the helpers above.
+ */
+export async function withPage(fn) {
+  const page = await newPage();
+  try {
+    return await fn(page);
+  } finally {
+    await page.close();
+  }
+}
+
 /** Close the shared browser/context if one is open. Safe when nothing launched. */
 export async function closeBrowser() {
   for (const closeable of [_context, _browser]) {
