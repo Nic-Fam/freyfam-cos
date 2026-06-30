@@ -1,14 +1,16 @@
 // Saved-search registry for the resale specialist. This is the LOCAL data half of
 // the resale capability: the agent can record, list, and remove the designer
-// pieces the family is hunting. The heartbeat's "resale saved-search hits" TODO
-// will later poll these against Poshmark/eBay/Vestiaire/RealReal/1stDibs; that
-// fetch step needs live network access and is deliberately not done here.
+// pieces the family is hunting. runSavedSearches() polls them against each hunt's
+// target sites via the source router (resale-sources.js): eBay's free API,
+// the local signed-in browser for TheRealReal/Poshmark/Depop/Grailed, and Brave
+// for the rest. The fetch needs live network/browser access and lives there.
 //
 // Stored as a small JSON file so it survives restarts with zero extra services.
 
 import { randomUUID, createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
 import { webSearch } from "./search.js";
+import { runSiteSearch } from "./resale-sources.js";
 
 // Storage is pluggable (src/stores/collection.js): local JSON by default, or the
 // resale specialist's own managed-identity Azure Table when COS_TABLE_* is set
@@ -103,19 +105,28 @@ const hitId = (searchId, url) => createHash("sha1").update(`${searchId}|${url}`)
 
 /**
  * Run every saved search and report NEW matches (deduped against past hits).
- * `search` is injectable for tests. Returns
- * [{ id, label, maxPrice, newHits:[{title,url,snippet}], totalFound }].
+ * Each hunt is routed by its `sites` (see resale-sources.js): eBay -> free API,
+ * therealreal/poshmark/depop/grailed -> local browser, the rest -> Brave. A hunt
+ * with NO sites keeps the original behavior: one Brave query with the price cap
+ * folded into the text. `search` (Brave) and `runSites` injectable for tests.
+ * Returns [{ id, label, maxPrice, newHits:[{title,url,snippet,price?}], totalFound }].
  */
-export async function runSavedSearches({ search = webSearch, count } = {}) {
+export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch } = {}) {
   const searches = await listSavedSearches();
   if (!searches.length) return [];
   const seen = new Set((await hits().list()).map((h) => h.id));
   const out = [];
   for (const s of searches) {
-    const query = `${s.query}${s.maxPrice ? ` under $${s.maxPrice}` : ""}`;
     let results = [];
     try {
-      results = await search(query, count ? { count } : {});
+      if (s.sites && s.sites.length) {
+        // Site-aware: structured price cap, per-site source, merged + deduped.
+        results = await runSites(s.query, { sites: s.sites, maxPrice: s.maxPrice, count, braveSearch: search });
+      } else {
+        // No site named: original Brave path, price cap folded into the query.
+        const query = `${s.query}${s.maxPrice ? ` under $${s.maxPrice}` : ""}`;
+        results = await search(query, count ? { count } : {});
+      }
     } catch {
       results = []; // a provider hiccup on one search must not sink the rest
     }
@@ -126,7 +137,7 @@ export async function runSavedSearches({ search = webSearch, count } = {}) {
       if (seen.has(id)) continue;
       seen.add(id);
       newHits.push(r);
-      await hits().add({ id, searchId: s.id, url: r.url, title: r.title, firstSeenAt: new Date().toISOString() });
+      await hits().add({ id, searchId: s.id, url: r.url, title: r.title, price: r.price ?? null, firstSeenAt: new Date().toISOString() });
     }
     out.push({ id: s.id, num: s.num, label: s.label, maxPrice: s.maxPrice, newHits, totalFound: results.length });
   }
@@ -140,6 +151,6 @@ export function formatSavedSearchRun(runResults) {
   if (!withNew.length) return "Ran the saved searches; no new matches since last time.";
   return withNew
     .map((r) => `${r.num ? `#${r.num} ` : ""}${r.label}${r.maxPrice ? ` (under $${r.maxPrice})` : ""}: ${r.newHits.length} new\n` +
-      r.newHits.map((h) => `  - ${h.title}\n    ${h.url}`).join("\n"))
+      r.newHits.map((h) => `  - ${h.title}${h.price != null ? ` ($${h.price})` : ""}\n    ${h.url}`).join("\n"))
     .join("\n");
 }

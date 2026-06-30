@@ -322,6 +322,19 @@ export const SEARCH = {
   count: Number(process.env.SEARCH_RESULT_COUNT ?? 5),
 };
 
+// eBay Browse API: a FREE official API for resale saved-searches, replacing
+// metered Brave web search for the one site that offers a real API. Needs an
+// eBay developer App ID (client id) + Cert ID (client secret); client-credentials
+// OAuth, server-side price filtering. Degrades gracefully (ebaySearch returns [])
+// when creds are unset, so the source router just falls back to Brave. base is
+// overridable for tests / the eBay sandbox.
+export const EBAY = {
+  clientId: process.env.EBAY_CLIENT_ID || "",
+  clientSecret: process.env.EBAY_CLIENT_SECRET || "",
+  base: process.env.EBAY_API_BASE || "https://api.ebay.com",
+  marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_US",
+};
+
 // Local semantic embeddings (workstream E). provider "local" runs a small
 // sentence-transformer on the Mac via transformers.js; "none" keeps the
 // dependency-free lexical recall. Model caches under cacheDir (downloaded once).
