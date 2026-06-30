@@ -1,6 +1,7 @@
 import { SLACK } from "../config.js";
 import { handleInbound } from "../orchestrator.js";
 import { registerApprovalNotifier, resolveByCode } from "../confirm.js";
+import { registerOwnerSlackNotifier } from "./notify.js";
 import { createLogger } from "../log.js";
 
 // ===========================================================================
@@ -187,12 +188,20 @@ export async function startSlack() {
     }
   });
 
-  // Approvals also fan out to Slack as Approve/Deny buttons (SMS path still active).
+  // Approvals also fan out to Slack as Approve/Deny buttons.
   registerApprovalNotifier(({ code, action }) => {
     app.client.chat
       .postMessage({ channel: SLACK.commandChannel, text: `Approval needed (code ${code})`, blocks: approvalBlocks(code, action) })
       .catch((e) => log.error("approval post failed", { reason: e.message }));
   });
+
+  // Owner notifications (notifyOwner) post to #command. This replaces the retired
+  // Twilio SMS path; email is the parallel channel (see channels/notify.js).
+  registerOwnerSlackNotifier((text) =>
+    app.client.chat
+      .postMessage({ channel: SLACK.commandChannel, text: String(text ?? "") })
+      .catch((e) => log.error("owner notify post failed", { reason: e.message }))
+  );
 
   await app.start();
   log.info("slack socket mode connected", { commandChannel: SLACK.commandChannel });

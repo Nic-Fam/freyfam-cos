@@ -8,7 +8,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { FINANCE_REPORT } from "./config.js";
-import { notifyOwner } from "./channels/twilio.js";
+import { notifyOwner } from "./channels/notify.js";
 import { sendMail } from "./channels/graph.js";
 import { localParts } from "./digest.js";
 import { listTransactions, summarizeSpend } from "./finance-log.js";

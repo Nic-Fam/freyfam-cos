@@ -12,7 +12,7 @@ import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
-import { sendSms, notifyOwner } from "./channels/twilio.js";
+import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
@@ -492,13 +492,15 @@ export function replySubject(subject) {
 }
 
 // deps injectable for tests; default to the real channel functions.
-export function transportFor(msg, { onSms = sendSms, onMail = sendMail, onReply = replyToMessage, onImessage = sendImessage } = {}) {
+export function transportFor(msg, { onSms = sendImessage, onMail = sendMail, onReply = replyToMessage, onImessage = sendImessage } = {}) {
   if (msg.channel === "imessage") {
     // replyTo carries the BlueBubbles chatGuid so the reply lands in the exact
     // existing thread (incl. group chats); fall back to the raw handle for a 1:1.
     return { reply: (text) => onImessage(msg.replyTo || msg.from, text), mirror: noop };
   }
   if (msg.channel === "sms") {
+    // Twilio is retired; any legacy sms-channel reply goes out over iMessage to
+    // the same handle (the number is the same). No Twilio dependency remains.
     return { reply: (text) => onSms(msg.replyTo || msg.from, text), mirror: noop };
   }
   if (msg.channel === "email") {

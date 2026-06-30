@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MODELS, DIGEST } from "./config.js";
 import { runChief } from "./orchestrator.js";
-import { notifyOwner } from "./channels/twilio.js";
+import { notifyOwner } from "./channels/notify.js";
 import { sendMail } from "./channels/graph.js";
 import { createLogger } from "./log.js";
 

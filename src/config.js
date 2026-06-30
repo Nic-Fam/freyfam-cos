@@ -75,6 +75,10 @@ export const TWILIO = {
   owner: process.env.OWNER_PHONE,                      // Nic's number for confirmations
 };
 
+// Where owner notifications land (Twilio-free; see channels/notify.js). Slack
+// #command + this email address are the live channels; iMessage joins later.
+export const OWNER_EMAIL = process.env.OWNER_EMAIL || "nic@freyfam.com";
+
 // ---------------------------------------------------------------------------
 // iMessage via a self-hosted BlueBubbles server on the always-on Mac (Lloyd's
 // Mac mini). Outbound = POST to the BlueBubbles REST send API; inbound = a
