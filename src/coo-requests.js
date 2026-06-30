@@ -33,9 +33,9 @@ export function requestToolDefs() {
     {
       name: "request_specialist",
       description:
-        "Ask Lloyd to put a shared family specialist on a scoped task for your company (e.g. Steve for a dev push, Patrick for a finance read). Routine help. You can only request specialists your company is allowed to use. The specialist surfaces a result; it does not act on the world.",
+        "Put a specialist on a scoped task for your company. Two kinds: (1) one of YOUR OWN company specialists by role (e.g. \"sales\", \"inventory\", \"marketing\") to pull an operational read from your team, or (2) a shared family specialist your company is allowed to use (e.g. \"dev\" for Steve, \"finance\" for Patrick, \"resale\" for Shey). The specialist surfaces a result; it does not act on the world.",
       input_schema: obj(
-        { specialist: { type: "string", description: "the family specialist key, e.g. dev, finance, resale" }, task: { type: "string", description: "the scoped task for them" } },
+        { specialist: { type: "string", description: "your own specialist's role (e.g. sales, inventory, marketing) OR an allowed family specialist key (dev, finance, resale)" }, task: { type: "string", description: "the scoped task for them" } },
         ["specialist", "task"]
       ),
     },
@@ -90,22 +90,42 @@ export function requestHandlers(requests = []) {
  * Lloyd fulfills a COO's emitted requests and returns a human-readable summary to
  * fold into the delegate tool result. Pure of transport: `delegate` and
  * `requestConfirmation` are injected (the real ones in the orchestrator, mocks in
- * tests). `coo` is the roster entry (carries company + allowedSpecialists).
+ * tests). `coo` is the roster entry (carries company + allowedSpecialists +
+ * specialists).
  */
+// Resolve a COO's `request_specialist` target to a concrete agent key. A COO may
+// request EITHER one of its OWN company specialists by role (slug or role name,
+// e.g. "sales" -> sasshey-sales) OR a shared family specialist on its
+// allowedSpecialists list (finance/dev/resale). Returns {agentKey, label} or null
+// (unresolvable). Pure + exported for tests.
+export function resolveRequestedSpecialist(coo, specialist) {
+  const spec = String(specialist || "").trim().toLowerCase();
+  if (!spec) return null;
+  if (new Set(coo.allowedSpecialists || []).has(spec)) return { agentKey: spec, label: spec };
+  const specSlug = spec.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const own = (coo.specialists || []).find(
+    (s) => s.slug === spec || s.slug === specSlug || String(s.role || "").toLowerCase() === spec
+  );
+  if (own) return { agentKey: own.key, label: `${own.role} (${coo.company} specialist)` };
+  return null;
+}
+
 export async function fulfillCooRequests(coo, requests, { delegate, requestConfirmation } = {}) {
   if (!Array.isArray(requests) || !requests.length) return "";
   const allowed = new Set(coo.allowedSpecialists || []);
+  const ownRoles = (coo.specialists || []).map((s) => s.slug).join(", ");
   const lines = [];
 
   for (const r of requests) {
     if (r?.type === "specialist") {
-      if (!allowed.has(r.specialist)) {
-        lines.push(`- "${r.specialist}" is not on ${coo.company}'s allowed specialists (${[...allowed].join(", ") || "none"}); skipped.`);
+      const resolved = resolveRequestedSpecialist(coo, r.specialist);
+      if (!resolved) {
+        lines.push(`- "${r.specialist}" is neither a ${coo.company} specialist (${ownRoles || "none"}) nor an allowed family specialist (${[...allowed].join(", ") || "none"}); skipped.`);
         continue;
       }
-      const res = await delegate({ agent: r.specialist, task: r.task });
+      const res = await delegate({ agent: resolved.agentKey, task: r.task });
       const text = typeof res === "string" ? res : res?.text ?? "";
-      lines.push(`- ${r.specialist}: ${text}`);
+      lines.push(`- ${resolved.label}: ${text}`);
     } else if (r?.type === "heavy_lift") {
       const { instruction } = await requestConfirmation(
         `Heavy lift requested by the ${coo.company} COO (you would run this yourself in a Claude Code session):\n${r.brief}${r.why ? `\nWhy: ${r.why}` : ""}`,

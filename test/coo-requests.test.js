@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { requestHandlers, requestToolDefs, REQUEST_TOOL_NAMES, fulfillCooRequests } from "../src/coo-requests.js";
+import { requestHandlers, requestToolDefs, REQUEST_TOOL_NAMES, fulfillCooRequests, resolveRequestedSpecialist } from "../src/coo-requests.js";
 import { specialistTools } from "../src/agents/tools.js";
 import { companyAgent } from "../src/companies.js";
 
@@ -61,8 +61,35 @@ test("request_specialist delegates only to an allowed family specialist", async 
   );
   assert.deepEqual(delegated, [{ agent: "dev", task: "wire the cart" }], "only the allowed specialist is delegated");
   assert.match(summary, /did:wire the cart/);
-  assert.match(summary, /"security" is not on Sasshey's allowed specialists/);
+  assert.match(summary, /"security" is neither a Sasshey specialist/);
   assert.equal(staged.length, 0, "specialist requests are not gated");
+});
+
+test("request_specialist can reach the COO's OWN company specialists by role", async () => {
+  const coo = companyAgent("sasshey-coo");
+  const { delegated, staged, delegate, requestConfirmation } = harness();
+  const summary = await fulfillCooRequests(
+    coo,
+    [
+      { type: "specialist", specialist: "sales", task: "pipeline snapshot" },        // own, by slug
+      { type: "specialist", specialist: "buyer behavior analyst", task: "demand" },  // own, by role name -> slug
+    ],
+    { delegate, requestConfirmation }
+  );
+  assert.deepEqual(delegated, [
+    { agent: "sasshey-sales", task: "pipeline snapshot" },
+    { agent: "sasshey-buyer-behavior-analyst", task: "demand" },
+  ], "own specialists resolve to their company-agent keys");
+  assert.match(summary, /Sales \(Sasshey specialist\)/);
+  assert.equal(staged.length, 0, "consulting your own team is not gated");
+});
+
+test("resolveRequestedSpecialist maps family, own-by-slug, own-by-role, and unknown", () => {
+  const coo = companyAgent("sasshey-coo");
+  assert.deepEqual(resolveRequestedSpecialist(coo, "dev"), { agentKey: "dev", label: "dev" });
+  assert.equal(resolveRequestedSpecialist(coo, "inventory").agentKey, "sasshey-inventory");
+  assert.equal(resolveRequestedSpecialist(coo, "Sales").agentKey, "sasshey-sales");
+  assert.equal(resolveRequestedSpecialist(coo, "nope"), null);
 });
 
 test("request_heavy_lift and request_action stage gated approvals (never auto-run)", async () => {
