@@ -1515,10 +1515,13 @@ first, verify locally, then provision**.
       daemon restarted; `chooseTransport` = remote for finance/resale/chef + Frank, local
       for dev. Function keys persist across deploys (existing `pTLk…` still valid; the
       script's key-fetch printed empty due to a perms gap, non-blocking).
-      **TODO (separate, needs explicit OK):** finance + chef are the same stale vintage —
-      redeploy them too (`AGENTS="finance chef" bash deploy/publish-specialists.sh`) to
-      clear the class. Not done yet: the auto-mode classifier blocked it as scope beyond
-      the resale authorization.
+      **finance + chef ALSO redeployed 2026-06-30** (Nic gave explicit OK after the
+      classifier blocked the unscoped attempt): `AGENTS="finance chef" bash
+      deploy/publish-specialists.sh` succeeded for both; verified keyed pong round-trips
+      (finance 200/5.3s, chef 200/1.9s). All three Azure specialists now on current main.
+      Also added model auto-update (`src/model-registry.js` + heartbeat weekly check):
+      resolves newest model per tier from the live Models API and notifies on a new
+      release (Opus stays the heavy family; Fable/Mythos excluded as premium).
 
 ## The Genet bar (concrete target)
 
