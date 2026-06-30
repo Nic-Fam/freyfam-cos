@@ -146,11 +146,14 @@ suite (~300 tests).
             delegate failed with "could not reach the security specialist." Removed the
             placeholder line, restarted Lloyd, re-verified "READY". Keep `.env` keys
             single-valued — a stray duplicate silently shadows the real one.
-      - [ ] **Reserve a static DHCP lease** for `192.168.50.117` on the router so Lloyd's
-            address for Frank stays stable.
-      - [ ] **Seed Frank's brain (out-of-band).** No `data/brain.json` yet, so recall is
-            empty; transfer `seed-family-domains.json` off-git and seed per
-            `frank-mac-mini.md` §4b to surface his security-scoped notes.
+      - [x] **Reserve a static DHCP lease** for `192.168.50.117` — DONE (Nic, 2026-06-30).
+      - [x] **Seed Frank's brain** — DONE (Nic, 2026-06-30).
+      - [x] **Nightly git-sync for Frank — DONE 2026-06-30.** `com.freyfam.frank.restart`
+            (4am) runs `/Users/frank/cos-ops/restart-from-main.sh` (fetch + reset --hard
+            origin/main + npm install + `node --check` of the harness with rollback +
+            kickstart `com.freyfam.frank`). Test-run synced Frank to latest main and the
+            `delegate({agent:"security"})` round-trip still returns text. Mirrors Lloyd's
+            mini job. **Frank fully live + self-updating.**
 
 **Recently shipped (2026-06-23 → 06-25), not mapped to a letter:**
 - **Inbound image intake hardened** — byte-sniffed `media_type` + iPhone **HEIC→JPEG**
@@ -1066,7 +1069,26 @@ writes to the cloud must not carry family content (just liveness signals).
 
 ---
 
-### S. COO agents — one "first employee" per company  `[ ]`  — DESIGN ONLY (groundwork 2026-06-25; roster + thresholds confirmed 2026-06-26)
+### S. COO agents — one "first employee" per company  `[~]`  — STEPS 1-4 ON MAIN (2026-06-30); 5-6 IN PROGRESS
+
+**Build state (reconciled 2026-06-30).** Shipped as a stacked-PR chain, then
+consolidated onto `main`:
+- **Step 1 (PR #30):** roster `data/companies.json` + `src/companies.js` loader +
+  COO/company-specialist persona templates + cost tiering (COOs Sonnet, company
+  specialists Haiku). **On main.**
+- **Step 2 (PR #31):** request seam `src/coo-requests.js` (`request_specialist` /
+  `request_heavy_lift` / `request_action`) + the `{text, requests}` delegate/runSpecialist
+  contract change. **On main.**
+- **Step 3 (PR #32):** per-COO cost ledger `src/cost-ledger.js` (soft budget warn).
+  **On main.**
+- **Step 4 (PR #33):** autonomous per-COO review tick `src/coo-review.js` wired into
+  `heartbeat.js`, ships dark (`COO_REVIEW.enabled`). **On main 2026-06-30** (cherry-picked;
+  23/23 COO tests pass).
+- **Step 5:** first real COO end-to-end as the reference impl — IN PROGRESS.
+- **Step 6:** role-specific company-specialist tools — IN PROGRESS.
+
+PRs #30-33 are now superseded (their content is on `main`); close them. The original
+design notes follow.
 
 **Companion doc:** `ORG_STRUCTURE.md` (repo root) holds the business shape — the concrete
 org chart, the company roster, the per-company specialist tier, the Azure resource-group
