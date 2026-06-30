@@ -391,11 +391,13 @@ async function maybeRunResale() {
     for (const slot of due) {
       await setSlotRan(slot.label, date); // record before running so a slow run can't double-fire
       try {
-        const res = await delegate({
+        // delegate returns {text, requests} (workstream S step 2); a specialist
+        // like resale emits no requests, so read its text.
+        const { text: resText } = await delegate({
           agent: "resale",
           task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
         });
-        if (res && !/^\s*NONE\s*\.?\s*$/i.test(res)) await notifyOwner(`New resale finds:\n${res}`);
+        if (resText && !/^\s*NONE\s*\.?\s*$/i.test(resText)) await notifyOwner(`New resale finds:\n${resText}`);
         // TheRealReal First Look feed: read the early-access new-arrivals grid via
         // the LOCAL signed-in browser (Shelli's profile) and surface NEW items.
         // Generic web search can't see member-only early access, so this is its
