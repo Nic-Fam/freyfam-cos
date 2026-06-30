@@ -1501,19 +1501,24 @@ first, verify locally, then provision**.
       (carried into this repo's `.env`). Provision a dedicated Maps account for the
       COS and swap `AZURE_MAPS_KEY` so rotating/deleting the old resource doesn't
       take commute data down in both apps. Code needs no change — just the key.
-- [ ] **Move resale (Shey) back to Azure (remote) — reverted to LOCAL 2026-06-24 for
-      debugging; intended topology is remote.** `COS_SPECIALIST_URL_RESALE` is
-      commented out in the live `.env`, so resale runs in-process on Lloyd (current
-      code + tool-call tracing, no cold-start timeouts). Decision (2026-06-24): keep it
-      local for a few days to confirm stability, THEN restore remote. The earlier
-      remote failures were NOT Shey — the loop was the chief's turn cap (fixed,
-      8→12) — but the remote Function still runs STALE code and was throwing
-      `"This operation was aborted"` (delegate timeout on cold start + multi-turn work).
-      To move back cleanly: (1) `bash deploy/publish-specialists.sh` to redeploy resale
-      with current code (allowlist enforcement + the new tool-call tracing); (2) bump
-      `COS_SPECIALIST_TIMEOUT_MS` (30s → ~60s) to absorb cold starts; (3) uncomment
-      `COS_SPECIALIST_URL_RESALE` in `.env` + restart the daemon; (4) verify a real
-      resale `delegate` round-trips without aborting and that traces show up.
+- [x] **Move resale (Shey) back to Azure (remote). DONE 2026-06-30 — redeployed +
+      verified.** Confirmed the stale-code theory live: the old Azure Function lacked
+      the `run_saved_searches` tool, so heartbeat sweeps returned "I don't have that
+      tool" text that notifyOwner emailed to Nic as a bogus "find." Fix done properly:
+      installed `az` 2.87 + `func` 4.12.1 on Lloyd's mini (Homebrew; had to
+      `brew trust azure/functions`), `az login` (sub "SassaShey Dev"), then
+      `AGENTS=resale bash deploy/publish-specialists.sh` (source-only, remote Linux
+      build) — "deployment was successful," host Running on current main (incl. commit
+      902f0cd eBay-API/local-browser). Verified: a keyed `delegate({agent:"resale"})`
+      asking it to run saved searches returned `NONE` correctly (HTTP 200, 4.8s) — tool
+      present, no abort. `COS_SPECIALIST_URL_RESALE` uncommented, `COS_SPECIALIST_TIMEOUT_MS=60000`,
+      daemon restarted; `chooseTransport` = remote for finance/resale/chef + Frank, local
+      for dev. Function keys persist across deploys (existing `pTLk…` still valid; the
+      script's key-fetch printed empty due to a perms gap, non-blocking).
+      **TODO (separate, needs explicit OK):** finance + chef are the same stale vintage —
+      redeploy them too (`AGENTS="finance chef" bash deploy/publish-specialists.sh`) to
+      clear the class. Not done yet: the auto-mode classifier blocked it as scope beyond
+      the resale authorization.
 
 ## The Genet bar (concrete target)
 
