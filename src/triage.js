@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { complete, systemBlocks, textOf, parseJson } from "./claude.js";
 import { MODELS } from "./config.js";
 
@@ -75,6 +76,32 @@ compromise or phishing. Many emails from a family member is normal, not a breach
 
 Be conservative: routine newsletters, receipts already filed, the family's own mail, and
 noise are NOT actionable.`;
+
+/**
+ * Stable, order-independent fingerprint of a heartbeat signal set. The tick uses
+ * it as a cheap LOCAL gate: if the signals are byte-for-byte the same as the
+ * previous tick, nothing changed and we skip the Haiku triage call entirely
+ * (the common case -- the recent-mail window and expiring-food list rarely move
+ * between 30-min ticks). This is the same idea as the empty-signal short-circuit
+ * below, extended to "unchanged" so we stop re-paying Haiku to re-conclude
+ * "nothing new", and as a bonus never re-escalate an unchanged signal.
+ *
+ * Keys off each signal's IDENTITY, not derived/volatile fields: mail by
+ * sender+subject+receivedAt, kitchen by item+expiry (NOT daysUntil, which ticks
+ * down daily for the same item and would defeat the gate). Returns "empty" for
+ * no signals so an all-quiet tick has a stable fingerprint too.
+ */
+export function signalsFingerprint(signals = []) {
+  if (!signals || signals.length === 0) return "empty";
+  const keys = signals.map((s) => {
+    if (s.id) return `id:${s.id}`;
+    if (s.source === "kitchen") return `kitchen:${s.item}|${s.expiresAt}`;
+    if (s.from || s.subject) return `mail:${s.from || ""}|${s.subject || ""}|${s.receivedAt || ""}`;
+    return `json:${JSON.stringify(s)}`;
+  });
+  keys.sort(); // order-independent: a reshuffled-but-identical set is "unchanged"
+  return createHash("sha1").update(keys.join("\n")).digest("hex");
+}
 
 /**
  * @param {Array} signals  Cheap, pre-fetched deltas (no model needed to gather).

@@ -1,5 +1,5 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST } from "./config.js";
-import { triageHeartbeat } from "./triage.js";
+import { triageHeartbeat, signalsFingerprint } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
@@ -67,6 +67,11 @@ async function gatherSignals() {
   // shipments are recorded by maybeScanShipments; resale runs on its own schedule.)
   return signals;
 }
+
+// Fingerprint of the last tick's signal set, for the change-detection gate in
+// tick(). null until the first triage runs, so the first non-empty tick always
+// triages. In-memory only: a restart re-triages once, which is harmless.
+let lastSignalsFingerprint = null;
 
 // Cost meters bill per cycle, not per minute, so we check them on their own
 // slower cadence (default hourly) rather than every heartbeat tick.
@@ -441,7 +446,18 @@ export async function tick() {
   await maybeRunGroceryOrder();
 
   const signals = await gatherSignals();
+  // Local gate: skip the Haiku triage call when the signal set is unchanged from
+  // the last tick (the common case). Saves the program's most frequent model
+  // call on quiet ticks and prevents re-escalating an unchanged signal. The
+  // fingerprint is recorded only AFTER a successful triage, so a transient
+  // triage failure still retries on the next identical tick.
+  const fingerprint = signalsFingerprint(signals);
+  if (fingerprint === lastSignalsFingerprint) {
+    log.debug("heartbeat signals unchanged; skipped triage", { signals: signals.length });
+    return;
+  }
   const verdict = await triageHeartbeat(signals);
+  lastSignalsFingerprint = fingerprint;
   if (!verdict.actionable) return;
 
   for (const item of verdict.items) {
