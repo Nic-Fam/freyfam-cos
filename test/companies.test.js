@@ -14,6 +14,7 @@ import {
 import { persona } from "../src/persona.js";
 import { specialistTools, AGENT_ALLOWLIST, CHIEF_ONLY_TOOLS } from "../src/agents/tools.js";
 import { KNOWN_AGENTS } from "../src/rules.js";
+import { modelForAgent, MODELS } from "../src/config.js";
 
 // A minimal valid roster for the pure-function tests (no file I/O).
 const ROSTER = {
@@ -129,6 +130,17 @@ test("a company specialist gets the memory/decision baseline only (no search yet
   assert.deepEqual(names.sort(), ["list_decisions", "log_decision", "recall_memory", "remember"]);
   assert.deepEqual(names.sort(), Object.keys(handlers).sort(), "tools <-> handlers 1:1");
   assert.ok(!names.includes("search"));
+});
+
+test("COO-tier model routing reuses the per-agent cost lever (COO=Sonnet, specialist=Haiku)", () => {
+  // A COO does manager judgment -> standard (Sonnet), like finance/dev.
+  assert.equal(modelForAgent("sasshey-coo"), MODELS.standard);
+  // A company specialist surfaces data -> triage (Haiku), like resale/chef.
+  assert.equal(modelForAgent("pontable-supply-chain"), MODELS.triage);
+  // Family + unknown agents are unchanged by the COO tiering.
+  assert.equal(modelForAgent("finance"), MODELS.standard);
+  assert.equal(modelForAgent("resale"), MODELS.triage);
+  assert.equal(modelForAgent("nobody"), MODELS.standard);
 });
 
 test("every company agent is registered in the allowlist with no chief-only tool", () => {
