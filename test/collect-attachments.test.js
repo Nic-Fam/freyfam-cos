@@ -18,7 +18,7 @@ test("splitAttachmentsByKind routes images to vision and docs to extraction", ()
 });
 
 test("splitAttachmentsByKind tolerates empty / missing inputs", () => {
-  assert.deepEqual(splitAttachmentsByKind(), { imageAtts: [], docAtts: [] });
+  assert.deepEqual(splitAttachmentsByKind(), { imageAtts: [], audioAtts: [], docAtts: [] });
   assert.deepEqual(splitAttachmentsByKind([{ name: "x" }]).docAtts.length, 1);
 });
 

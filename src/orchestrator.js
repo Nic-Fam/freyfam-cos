@@ -24,6 +24,7 @@ import { readPage, runOrder } from "./channels/browser.js";
 import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
+import { extractAudio, isAudioAttachment } from "./audio.js";
 import { isTransactionAlert, queueAlert } from "./finance-ingest.js";
 import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KNOWN_AGENTS } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
@@ -1040,7 +1041,12 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
  */
 export function splitAttachmentsByKind(attachments = []) {
   const isImg = (a) => String(a?.contentType || "").toLowerCase().startsWith("image/");
-  return { imageAtts: attachments.filter(isImg), docAtts: attachments.filter((a) => !isImg(a)) };
+  // AUDIO (voice notes / voicemails) goes to transcription, not document extraction
+  // (an m4a would otherwise land in extractDocuments and be dropped as unsupported).
+  const imageAtts = attachments.filter(isImg);
+  const audioAtts = attachments.filter((a) => !isImg(a) && isAudioAttachment(a));
+  const docAtts = attachments.filter((a) => !isImg(a) && !isAudioAttachment(a));
+  return { imageAtts, audioAtts, docAtts };
 }
 
 export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
@@ -1165,7 +1171,7 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   // handed to extractDocuments, which only keeps PDF/.ics/.vcf and dropped images as
   // "unsupported type" — so a photo emailed to Lloyd never reached Shey/Carmine.
   const attachments = await collectAttachments(msg);
-  const { imageAtts, docAtts } = splitAttachmentsByKind(attachments);
+  const { imageAtts, audioAtts, docAtts } = splitAttachmentsByKind(attachments);
 
   // MMS/Slack media (msg.media) + emailed/iMessage image attachments share ONE vision
   // pass. fetchInboundMedia sniffs the real bytes (and transcodes HEIC), so a
@@ -1197,6 +1203,22 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     const { blocks, summaries } = await extractDocuments(docAtts);
     extraBlocks.push(...blocks);
     triageNotes.push(...summaries);
+  }
+
+  // Voice notes / voicemails (email, Slack, iMessage) -> transcript blocks so the
+  // chief reads them like any message. Best-effort; a note that can't be transcribed
+  // is surfaced (not silently dropped) so Lloyd can flag it to the sender.
+  if (audioAtts.length) {
+    const { blocks, summaries, skipped } = await extractAudio(audioAtts);
+    extraBlocks.push(...blocks);
+    triageNotes.push(...summaries);
+    if (skipped.length && !blocks.length) {
+      extraBlocks.push({
+        type: "text",
+        text: `[Note: ${skipped.length} voice note(s) could not be transcribed: ${skipped[0].reason}. Acknowledge to the sender and, if needed, ask them to resend or type it out.]`,
+      });
+      triageNotes.push(`${skipped.length} untranscribed voice note(s)`);
+    }
   }
 
   // Advisory routing hints (receipt->finance, shipping->track, invite->schedule) so
