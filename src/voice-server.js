@@ -87,6 +87,28 @@ async function serveFiller(res, url) {
 const WAKE_RE = /\b(?:hey|hi|ok|okay|yo)?\s*(?:lloyd|loyd|lloyds|floyd|lord)\b[\s,.:!?-]*/i;
 function stripWake(text) { return String(text).replace(WAKE_RE, " ").replace(/\s+/g, " ").trim(); }
 
+// Recent completed turns, kept in memory so an answer computed while the tile was
+// backgrounded (iOS suspends the page) is waiting as text when it returns to the
+// foreground and calls GET /history. Text only + capped; not durable across a
+// daemon restart (fine for a "what did I miss" catch-up).
+const HISTORY_MAX = 50;
+const _history = []; // { ts, transcript, reply }
+function recordTurn(transcript, reply) {
+  const r = String(reply || "").trim();
+  if (!r) return 0;
+  const ts = Date.now();
+  _history.push({ ts, transcript: String(transcript || ""), reply: r });
+  while (_history.length > HISTORY_MAX) _history.shift();
+  return ts;
+}
+function serveHistory(req, res, url) {
+  if (!authed(req, url)) { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
+  const since = Number(url.searchParams.get("since")) || 0;
+  const turns = _history.filter((t) => t.ts > since);
+  res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+  res.end(JSON.stringify({ now: Date.now(), turns }));
+}
+
 async function handleVoice(req, res, url) {
   if (!authed(req, url)) { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
   const contentType = req.headers["content-type"] || "audio/mp4";
@@ -169,9 +191,12 @@ async function handleVoice(req, res, url) {
     reply = reply || "Something went wrong on my end. Try again in a moment.";
   }
   const audio = speak ? await synthesizeSpeech(reply) : null;
+  // Persist BEFORE responding so the answer survives even if the tile was
+  // backgrounded and never receives this response (it fetches /history on return).
+  const ts = recordTurn(transcript, reply);
   log.info("voice turn", { chars: transcript.length, replyChars: reply.length, mode: contentType.includes("application/json") ? "text" : "voice", spoke: !!audio });
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ transcript, reply, audio: audio ? audio.bytes.toString("base64") : null, audioType: audio?.contentType || null }));
+  res.end(JSON.stringify({ ts, transcript, reply, audio: audio ? audio.bytes.toString("base64") : null, audioType: audio?.contentType || null }));
 }
 
 let _server = null;
@@ -187,6 +212,10 @@ export function startVoiceServer() {
     }
     if (req.method === "GET" && url.pathname === "/filler") {
       serveFiller(res, url).catch(() => { try { res.writeHead(500).end(); } catch {} });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/history") {
+      try { serveHistory(req, res, url); } catch { try { res.writeHead(500).end(); } catch {} }
       return;
     }
     if (req.method === "GET") {

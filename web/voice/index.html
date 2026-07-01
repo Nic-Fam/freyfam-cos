@@ -70,6 +70,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </form>
+    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-d</div>
   </footer>
 <script>
 (function(){
@@ -84,6 +85,20 @@
   var wakeOn=(function(){try{return localStorage.getItem('wakeWord')!=='0';}catch(e){return true;}})(); // default on
   function listenLabel(){ return session ? (wakeOn?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
   function setThinking(on){ wrap.classList.toggle('think',!!on); if(on) status.innerHTML='Thinking<span class="dots"><span></span><span></span><span></span></span>'; }
+  // Answers computed while the tile was backgrounded are waiting server-side; pull
+  // them when we return to the foreground. Times are the SERVER's (lastTs from the
+  // server), so client/server clock skew never matters.
+  var lastTs=(function(){try{return Number(localStorage.getItem('voiceLastTs'))||0;}catch(e){return 0;}})();
+  var shownTs={};
+  function saveLastTs(){ try{localStorage.setItem('voiceLastTs',String(lastTs));}catch(e){} }
+  function markSeen(ts){ if(ts){ shownTs[ts]=1; if(ts>lastTs){ lastTs=ts; saveLastTs(); } } }
+  async function syncHistory(initial){ try{
+    var r=await fetch('/history?k='+encodeURIComponent(token)+'&since='+lastTs); if(!r.ok)return;
+    var d=await r.json(); if(!d)return;
+    if(initial && !lastTs){ lastTs=d.now||0; saveLastTs(); return; } // first open: don't dump old history
+    (d.turns||[]).forEach(function(t){ if(!t||t.ts<=lastTs||shownTs[t.ts])return; shownTs[t.ts]=1; if(t.transcript)bubble(t.transcript,'you'); bubble(t.reply,'ll'); if(t.ts>lastTs)lastTs=t.ts; });
+    saveLastTs();
+  }catch(e){} }
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
   var fillerBufs=[];
   async function loadFiller(){ if(fillerBufs.length||!actx)return; try{
@@ -191,6 +206,7 @@
       var d2=await r2.json();
       if(ac.signal.aborted) return;
       setThinking(false);
+      markSeen(d2.ts); // shown live — don't re-render it from /history on the next resume
       var lb=bubble('','ll');
       if(d2.audio){ status.textContent='Speaking…'; await playB64(d2.audio,d2.audioType,{el:lb,text:d2.reply||''}); }
       else { lb.textContent=d2.reply||''; if(d2.reply) status.textContent='(no audio — check silent switch)'; }
@@ -215,9 +231,14 @@
       if(res.status===401){ fail('Not authorized — check the link'); return; }
       var data=await res.json();
       if(data.reply)bubble(data.reply,'ll');
+      markSeen(data.ts);
     }catch(err){ bubble('(connection problem — try again)','ll'); }
     status.textContent = listenLabel();
   });
+  // Pull any answers finished while we were away, on open and whenever we return.
+  syncHistory(true);
+  document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible') syncHistory(); });
+  window.addEventListener('pageshow',function(){ syncHistory(); });
 })();
 </script>
 </body>
