@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.freyfam.frank.netscan</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/Users/frank/freyfam-cos/deploy/security/netscan.mjs</string>
+    <string>--record-findings</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/frank/freyfam-cos</string>
+  <!-- Every 30 min. Detects new devices vs data/network-baseline.json and logs a
+       finding to Frank's local store (surfaced to Lloyd on the next posture check). -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/frank/freyfam-cos/netscan.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/frank/freyfam-cos/netscan.log</string>
+</dict>
+</plist>

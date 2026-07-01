@@ -240,6 +240,36 @@ async function maybeSecurityScan() {
   }
 }
 
+// Frank's network monitor (PULL). Frank's own launchd scan (deploy/security/
+// netscan.mjs) writes new-device findings to HIS local store; this asks him for
+// them over the LAN delegate and alerts the owner. Detection stays on Frank,
+// outbound stays on Lloyd (hard constraint 2) - Frank only RETURNS text.
+// notifyOwner (not the confirmation gate), same as maybeSecurityScan: this informs
+// the owner, it does not act on the family's behalf. Inert unless security is wired
+// remote (no COS_SPECIALIST_URL_SECURITY => runs in-process, no netscan findings).
+let lastNetScanAt = 0;
+const NET_SCAN_INTERVAL_MS = Number(process.env.NETWORK_SCAN_INTERVAL_MS || 60 * 60 * 1000);
+const netAlerted = new Set(); // per-line dedup so a lingering device isn't re-alerted each tick
+async function maybeNetworkScan() {
+  if (chooseTransport("security") !== "remote") return; // only when Frank runs remote
+  const now = Date.now();
+  if (now - lastNetScanAt < NET_SCAN_INTERVAL_MS) return;
+  lastNetScanAt = now;
+  try {
+    const text = await delegate({ agent: "security", task:
+      "List ONLY your OPEN findings whose title starts with 'New device on LAN', " +
+      "one per line (hostname, IP, MAC). If none, reply exactly 'NONE'." });
+    if (!text || /^\s*none\s*\.?\s*$/i.test(text)) return;
+    const fresh = text.split("\n").map((s) => s.trim()).filter(Boolean).filter((l) => !netAlerted.has(l));
+    if (!fresh.length) return;
+    fresh.forEach((l) => netAlerted.add(l));
+    await notifyOwner(`Frank flagged new device(s) on the network:\n${fresh.join("\n")}\nReview and confirm they're expected.`);
+    log.info("network scan surfaced", { newDevices: fresh.length });
+  } catch (err) {
+    log.error("network scan surface failed", { reason: err.message });
+  }
+}
+
 // Morning digest: fire once per local day in the morning window. Lloyd composes
 // it by delegating to the specialists (see digest.js). The once-per-day guard is
 // PERSISTED (digest-state.json) so frequent daemon restarts inside the window
@@ -544,6 +574,7 @@ export async function tick() {
   await maybeScanShipments();
   await maybeSchedulePickups();
   await maybeSecurityScan();
+  await maybeNetworkScan();
   await maybeRunDigest();
   await maybeScanTransactionAlerts();
   await maybeRunFinanceIngest();
