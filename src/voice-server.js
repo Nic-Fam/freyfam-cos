@@ -87,6 +87,29 @@ async function serveFiller(res, url) {
 const WAKE_RE = /\b(?:hey|hi|ok|okay|yo)?\s*(?:lloyd|loyd|lloyds|floyd|lord)\b[\s,.:!?-]*/i;
 function stripWake(text) { return String(text).replace(WAKE_RE, " ").replace(/\s+/g, " ").trim(); }
 
+// "Are they mid-thought?" — a segment that trails off on a filler/conjunction/article
+// (or a trailing comma/dash/ellipsis) means more is coming, so the tile keeps listening
+// and appends the next segment instead of answering a fragment. Generous on purpose: a
+// false "keep going" is caught by the tile's finalize timer, but a false "done" chops
+// the sentence. Do NOT hang on a natural ending ("...on Saturday.").
+const CONT_WORDS = new Set(
+  ("uh um uhh umm er erm hmm ah eh mm and so but or nor because cause then plus also with " +
+   "for to of in on at by as that which than the a an my your our their its this these those " +
+   "some any like well just i we you it im lets need want going gonna wanna maybe actually " +
+   "basically really very about into onto up if when while where how what " +
+   // linking / auxiliary / modal verbs — very common trail-off points ("...we will be", "...it is")
+   "be been being is are am was were will would could should can may might must do does did " +
+   "have has had").split(" ")
+);
+function endsHanging(text) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  if (/[,\-…]$/.test(t) || /\.\.\.$/.test(t)) return true; // trailing comma / dash / ellipsis
+  if (/[.!?]$/.test(t)) return false;                          // a clean terminal ending = done
+  const last = (t.toLowerCase().match(/[a-z']+/g) || []).pop();
+  return last ? CONT_WORDS.has(last) : false;
+}
+
 // Recent completed turns, kept in memory so an answer computed while the tile was
 // backgrounded (iOS suspends the page) is waiting as text when it returns to the
 // foreground and calls GET /history. Text only + capped; not durable across a
@@ -158,7 +181,7 @@ async function handleVoice(req, res, url) {
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ transcript, accepted: true, command }));
+    res.end(JSON.stringify({ transcript, accepted: true, command, continuation: endsHanging(command) }));
     return;
   }
 
