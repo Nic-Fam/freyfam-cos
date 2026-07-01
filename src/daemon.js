@@ -3,6 +3,7 @@ import { startHeartbeat, tick } from "./heartbeat.js";
 import { startSlack } from "./channels/slack.js";
 import { startImessage, stopImessage } from "./channels/imessage-inbound.js";
 import { registerEmailApprovals } from "./channels/graph.js";
+import { startVoiceServer, stopVoiceServer } from "./voice-server.js";
 import { closeBrowser } from "./channels/browser.js";
 import { createLogger } from "./log.js";
 
@@ -24,18 +25,21 @@ async function main() {
   await startSlack().catch((e) => log.error("slack start failed", { reason: e.message }));
   // iMessage (BlueBubbles) inbound listener: no-op unless IMESSAGE_* is set.
   const imsg = startImessage();
+  // Voice tile server: no-op unless COS_VOICE_SERVER=true + VOICE_TOKEN set.
+  const voice = startVoiceServer();
 
-  process.on("SIGINT", () => shutdown(hb, imsg));
-  process.on("SIGTERM", () => shutdown(hb, imsg));
+  process.on("SIGINT", () => shutdown(hb, imsg, voice));
+  process.on("SIGTERM", () => shutdown(hb, imsg, voice));
 
   await startQueueConsumer(); // blocks until stopped
 }
 
-function shutdown(hb, imsg) {
+function shutdown(hb, imsg, voice) {
   log.info("shutting down");
   clearInterval(hb);
   stopQueueConsumer();
   stopImessage(imsg); // close the iMessage listener if it was started (no-op otherwise)
+  stopVoiceServer(voice); // close the voice tile server (no-op if it wasn't started)
   closeBrowser(); // release the headless browser if one was launched (no-op otherwise)
   // Give in-flight work 500ms to drain, then SIGKILL rather than exit(0).
   // onnxruntime-node (pulled in by the local embeddings brain) aborts in its

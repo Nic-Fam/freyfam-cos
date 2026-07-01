@@ -415,3 +415,14 @@ export const EMBEDDINGS = {
   model: process.env.EMBEDDINGS_MODEL || "Xenova/all-MiniLM-L6-v2",
   cacheDir: process.env.EMBEDDINGS_CACHE_DIR || "./data/models",
 };
+
+// Voice tile (P1): a small HTTP server the daemon runs on localhost, exposed
+// publicly via Tailscale Funnel. It serves the PWA + a token-gated /voice endpoint
+// (mic audio -> STT -> Lloyd -> TTS -> spoken reply). No-op unless COS_VOICE_SERVER
+// is true AND VOICE_TOKEN is set (an unauthed voice line to Lloyd would be unsafe).
+export const VOICE = {
+  enabled: String(process.env.COS_VOICE_SERVER ?? "false").toLowerCase() === "true",
+  port: Number(process.env.VOICE_PORT || 8790),
+  token: process.env.VOICE_TOKEN || "",
+  from: process.env.VOICE_FROM || "nic@freyfam.com", // who the turn is attributed to
+};

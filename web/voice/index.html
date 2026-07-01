@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Lloyd" />
+<meta name="theme-color" content="#0b0b0c" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<title>Lloyd</title>
+<style>
+  :root{ --bg:#0b0b0c;--card:#151517;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);
+    --text:#f5f5f7;--muted:#a1a1aa;--hint:#6b6b73;--accent:#3b82f6;--accent-bg:rgba(59,130,246,.16);
+    --you-bg:#1e3a5f;--you-text:#cfe0f5;--ll-bg:#1c1c1f;--ok:#37c48f;--err:#e2504a; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{display:flex;flex-direction:column;height:100dvh}
+  header{padding:calc(16px + env(safe-area-inset-top)) 20px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:.5px solid var(--line)}
+  .title{font-size:20px;font-weight:600}.sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .pill{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .log{flex:1;padding:16px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+  .hint{color:var(--hint);font-size:14px;text-align:center;margin-top:12px;padding:0 20px}
+  .bubble{max-width:82%;padding:10px 13px;border-radius:16px;font-size:15px;line-height:1.45;white-space:pre-wrap}
+  .you{align-self:flex-end;background:var(--you-bg);color:var(--you-text)}
+  .ll{align-self:flex-start;background:var(--ll-bg)}
+  footer{padding:16px 20px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:12px;border-top:.5px solid var(--line)}
+  .status{font-size:14px;color:var(--muted);min-height:20px}
+  .micwrap{position:relative;width:88px;height:88px}
+  .ring{position:absolute;inset:0;border-radius:50%;background:var(--accent-bg);opacity:0}
+  .mic{position:absolute;inset:0;border-radius:50%;border:.5px solid var(--line2);background:var(--card);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);padding:0}
+  .mic svg{width:36px;height:36px}
+  .rec .mic{background:var(--accent-bg);color:var(--accent);border-color:transparent}
+  .rec .ring{animation:pulse 1.5s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(1);opacity:.6}70%{transform:scale(1.9);opacity:0}100%{opacity:0}}
+</style>
+</head>
+<body>
+  <header>
+    <div><div class="title">Lloyd</div><div class="sub">Chief of staff</div></div>
+    <div class="pill"><span class="dot" id="dot"></span><span id="conn">ready</span></div>
+  </header>
+  <div class="log" id="log"><div class="hint">Tap the mic, say what you need, tap again to send. Lloyd answers out loud.</div></div>
+  <footer>
+    <div class="status" id="status">Tap to talk</div>
+    <div class="micwrap" id="wrap">
+      <div class="ring"></div>
+      <button class="mic" id="mic" aria-label="Talk to Lloyd">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>
+        </svg>
+      </button>
+    </div>
+  </footer>
+<script>
+(function(){
+  var mic=document.getElementById('mic'),wrap=document.getElementById('wrap'),status=document.getElementById('status'),
+      log=document.getElementById('log'),conn=document.getElementById('conn'),dot=document.getElementById('dot');
+  var qk=new URLSearchParams(location.search).get('k');
+  if(qk){try{localStorage.setItem('voiceToken',qk);}catch(e){}}
+  var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
+  var rec=null,chunks=[],recording=false,busy=false;
+  function hintGone(){var h=log.querySelector('.hint');if(h)h.remove();}
+  function bubble(t,who){hintGone();var b=document.createElement('div');b.className='bubble '+(who==='you'?'you':'ll');b.textContent=t;log.appendChild(b);log.scrollTop=log.scrollHeight;return b;}
+  function setRec(on){wrap.classList.toggle('rec',on);}
+  function fail(msg){conn.textContent='error';dot.style.background='var(--err)';status.textContent=msg;}
+  async function start(){
+    try{
+      var stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      chunks=[];rec=new MediaRecorder(stream);
+      rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};
+      rec.onstop=function(){stream.getTracks().forEach(function(t){t.stop();});send(new Blob(chunks,{type:rec.mimeType||'audio/mp4'}));};
+      rec.start();recording=true;setRec(true);status.textContent='Listening… tap to send';
+    }catch(e){fail('Mic blocked — allow microphone access');}
+  }
+  function stop(){if(rec&&recording){recording=false;setRec(false);status.textContent='Thinking…';try{rec.stop();}catch(e){}}}
+  async function send(blob){
+    busy=true;
+    try{
+      var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob});
+      if(res.status===401){fail('Not authorized — check the link');busy=false;return;}
+      var data=await res.json();
+      if(data.transcript)bubble(data.transcript,'you');
+      if(data.reply)bubble(data.reply,'ll');
+      status.textContent='Tap to talk';
+      if(data.audio){var a=new Audio('data:'+(data.audioType||'audio/mpeg')+';base64,'+data.audio);setRec(true);status.textContent='Speaking…';a.onended=function(){setRec(false);status.textContent='Tap to talk';};a.play().catch(function(){setRec(false);});}
+    }catch(e){fail('Connection problem — try again');}
+    busy=false;
+  }
+  mic.addEventListener('click',function(){if(busy)return;if(!recording)start();else stop();});
+})();
+</script>
+</body>
+</html>
