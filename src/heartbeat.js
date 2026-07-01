@@ -1,4 +1,4 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, COO_REVIEW } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, COO_REVIEW } from "./config.js";
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
@@ -14,6 +14,7 @@ import { reconcileInboundEmail } from "./email-reconcile.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
+import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLastAmazonDigestDate } from "./amazon-digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate, chooseTransport } from "./delegate.js";
@@ -372,6 +373,21 @@ async function maybeRunPackageDigest() {
   }
 }
 
+async function maybeRunAmazonDigest() {
+  if (!AMAZON_DIGEST.enabled) return;
+  const last = await getLastAmazonDigestDate();
+  const { run, date } = shouldRunAmazonDigest(new Date(), last, AMAZON_DIGEST);
+  if (!run) return;
+  await setLastAmazonDigestDate(date); // persist BEFORE running so a restart mid-window can't double-fire
+  try {
+    const r = await runAmazonDigest();
+    if (r.sent) log.info("amazon spend digest sent", { date, count: r.count });
+    else log.info("amazon spend digest skipped", { date, signedIn: r.signedIn, count: r.count ?? 0 });
+  } catch (err) {
+    log.error("amazon spend digest failed", { reason: err.message });
+  }
+}
+
 // Fire any reminders that have come due: notify the owner, then re-arm recurring
 // ones / mark one-shots done. Persisted, so a restart never drops one.
 async function maybeFireReminders() {
@@ -531,6 +547,7 @@ export async function tick() {
   await maybeRunFinanceReport();
   await maybeRunTransferOutlook();
   await maybeRunPackageDigest();
+  await maybeRunAmazonDigest();
   await maybeFireReminders();
   await maybeRunResale();
   await maybeRunGroceryOrder();

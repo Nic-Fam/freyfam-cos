@@ -339,6 +339,20 @@ export const PACKAGE_DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
 };
 
+// Weekly Amazon spend digest (Patrick's beat): Sunday evening, a deterministic
+// spend + status summary from the local Amazon order-history crawl. Stays quiet
+// when Amazon isn't signed in on the profile or when nothing was ordered this
+// week, so it never nags. Enabled by default (silent until it has data).
+export const AMAZON_DIGEST = {
+  enabled: String(process.env.AMAZON_DIGEST_ENABLED ?? "true").toLowerCase() === "true",
+  weekday: Number(process.env.AMAZON_DIGEST_WEEKDAY ?? 0), // 0 = Sunday
+  hour: Number(process.env.AMAZON_DIGEST_HOUR ?? 19),      // local hour (evening)
+  windowHours: Number(process.env.AMAZON_DIGEST_WINDOW_HOURS ?? 3),
+  pages: Number(process.env.AMAZON_DIGEST_PAGES ?? 2),      // order-history pages to crawl
+  sinceDays: Number(process.env.AMAZON_DIGEST_SINCE_DAYS ?? 7),
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+};
+
 // Azure Maps: precise commute times with live traffic (geocode + route).
 // Ported from the legacy assistant; powers the chief's commute_time tool.
 export const MAPS = {
