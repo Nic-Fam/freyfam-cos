@@ -22,6 +22,7 @@ import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
+import { fetchAmazonOrders } from "./amazon-orders.js";
 import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
@@ -235,6 +236,18 @@ const tools = [
       type: "object",
       properties: { url: { type: "string" }, maxChars: { type: "number" } },
       required: ["url"],
+    },
+  },
+  {
+    name: "amazon_orders",
+    description:
+      "Read the family's recent Amazon order history (status + spend) in the local signed-in browser. Read-only, slow crawl — never buys. Returns { signedIn, orders:[{orderId, placedDate, total, status, deliveryLine, items:[{title, consumable}]}] }; status is delivered/arriving/shipped/ordered/cancelled/returned. Use it for 'what did we order / where is it / how much on Amazon', then delegate the analysis: send the orders to finance (Patrick) for spend breakdown and to chef (Carmine) for consumable/pantry restock + delivery timing (the browser only runs here on Lloyd, so specialists can't crawl it themselves). If signedIn is false, relay the `note`. `pages` = how far back (default 2, ~10 orders/page, max 6).",
+    input_schema: {
+      type: "object",
+      properties: {
+        pages: { type: "number", description: "history pages to crawl, ~10 orders each (default 2, max 6)" },
+        maxOrders: { type: "number" },
+      },
     },
   },
   {
@@ -789,6 +802,13 @@ function toolHandlers({ images, onDelegate } = {}) {
         return JSON.stringify(await readPage(url, { maxChars }));
       } catch (e) {
         return `Could not read page: ${e.message}`;
+      }
+    },
+    amazon_orders: async ({ pages, maxOrders } = {}) => {
+      try {
+        return JSON.stringify(await fetchAmazonOrders({ pages, maxOrders }));
+      } catch (e) {
+        return `Could not read Amazon orders: ${e.message}`;
       }
     },
     track_shipment: async ({ subject, body, description }) => {
