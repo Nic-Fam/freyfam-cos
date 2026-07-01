@@ -71,11 +71,15 @@
   var qk=new URLSearchParams(location.search).get('k');
   if(qk){try{localStorage.setItem('voiceToken',qk);}catch(e){}}
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
-  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,threshold=0.02,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
+  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,noiseFloor=0.03,utterStart=0,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
+  var MAXUTTER=12000; // failsafe: even in steady road noise, close+send an utterance after this
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
-  var fillerBuf=null;
-  async function loadFiller(){ if(fillerBuf||!actx)return; try{ var r=await fetch('/filler'); if(!r.ok)return; var ab=await r.arrayBuffer(); actx.decodeAudioData(ab,function(b){fillerBuf=b;},function(){}); }catch(e){} }
-  function playFiller(){ try{ if(fillerBuf&&actx){ var s=actx.createBufferSource(); s.buffer=fillerBuf; s.connect(actx.destination); s.start(0); } }catch(e){} }
+  var fillerBufs=[];
+  async function loadFiller(){ if(fillerBufs.length||!actx)return; try{
+    var m=await fetch('/filler'); if(!m.ok)return; var count=((await m.json())||{}).count||1;
+    for(var i=0;i<count;i++){ (function(idx){ fetch('/filler?i='+idx).then(function(r){return r.ok?r.arrayBuffer():null;}).then(function(ab){ if(ab&&actx)actx.decodeAudioData(ab,function(b){fillerBufs.push(b);},function(){}); }).catch(function(){}); })(i); }
+  }catch(e){} }
+  function playFiller(){ try{ if(fillerBufs.length&&actx){ var b=fillerBufs[Math.floor(Math.random()*fillerBufs.length)]; var s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(0); } }catch(e){} }
   function stopPlayback(){ try{ if(curSource){curSource.onended=null;curSource.stop();} }catch(e){} curSource=null; try{ if(curAudioEl){curAudioEl.pause();curAudioEl.src='';} }catch(e){} curAudioEl=null; }
   function playB64(b64,type){
     return new Promise(function(resolve){
@@ -109,20 +113,33 @@
     setRec(false); status.textContent='Tap to talk';
   }
   function level(){ var b=new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(b); var s=0; for(var i=0;i<b.length;i++){var v=(b[i]-128)/128;s+=v*v;} return Math.sqrt(s/b.length); }
-  function calibrate(){ var n=0,sum=0; var t=setInterval(function(){ if(!session){clearInterval(t);return;} sum+=level(); if(++n>=15){ clearInterval(t); threshold=Math.min(0.08,Math.max(0.02,(sum/n)*2.5)); } },33); }
+  function calibrate(){ var n=0,sum=0; var t=setInterval(function(){ if(!session){clearInterval(t);return;} sum+=level(); if(++n>=15){ clearInterval(t); noiseFloor=Math.max(0.02,sum/n); } },33); }
+  // Speech gate sits a margin ABOVE the running noise floor, so road noise raises the
+  // bar instead of reading as speech. Higher cap (0.35) tolerates a loud truck cabin.
+  function curThreshold(){ return Math.min(0.35, Math.max(0.045, noiseFloor*2.2 + 0.015)); }
+  function endUtterance(){ utterRec=false; speaking=true; status.textContent='Thinking…'; try{mr.stop();}catch(e){} }
   function startUtterance(){ try{ chunks=[]; mr=new MediaRecorder(stream); }catch(e){ return; }
+    utterStart=performance.now();
     mr.ondataavailable=function(e){ if(e.data&&e.data.size)chunks.push(e.data); };
     mr.onstop=function(){ var b=new Blob(chunks,{type:mr.mimeType||'audio/mp4'}); if(speechMs>350) sendUtterance(b); else resumeListen(); };
     mr.start(); utterRec=true; speechMs=0;
   }
   function vadLoop(){ if(!session)return; vadRAF=requestAnimationFrame(vadLoop); if(!analyser)return;
-    var l=level(), now=performance.now();
+    var l=level(), now=performance.now(), thr=curThreshold();
     if(speaking){ // Lloyd is thinking/talking — barge-in: sustained speech over him interrupts
-      if(l>threshold*1.6){ bargeMs+=16; if(bargeMs>180) bargeIn(); } else { bargeMs=Math.max(0,bargeMs-16); }
+      if(l>thr*1.6){ bargeMs+=16; if(bargeMs>180) bargeIn(); } else { bargeMs=Math.max(0,bargeMs-16); }
       return;
     }
-    if(l>threshold){ if(!utterRec)startUtterance(); lastVoice=now; if(utterRec)speechMs+=16; }
-    else if(utterRec && now-lastVoice>900){ utterRec=false; speaking=true; status.textContent='Thinking…'; try{mr.stop();}catch(e){} }
+    if(l>thr){ if(!utterRec)startUtterance(); lastVoice=now; if(utterRec)speechMs+=16; }
+    else {
+      // Adapt the noise floor only when quiet and not mid-utterance, so changing road
+      // noise moves the gate with it instead of being mistaken for speech.
+      if(!utterRec) noiseFloor=noiseFloor*0.9+l*0.1;
+      if(utterRec && now-lastVoice>900) endUtterance();
+    }
+    // Failsafe: never let sustained noise hold an utterance open forever (would mean
+    // the filler + reply never fire) — force close+send after MAXUTTER.
+    if(utterRec && now-utterStart>MAXUTTER) endUtterance();
   }
   function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
   async function sendUtterance(blob){

@@ -50,18 +50,33 @@ function authed(req, url) {
   return Boolean(VOICE.token) && t === VOICE.token;
 }
 
-// A short spoken "thinking" filler (Lloyd's Azure voice), synthesized once and
-// cached in memory. The tile pre-fetches it and plays it the instant you stop
-// talking, so a slow (Graph/model) turn doesn't feel like dead silence.
-let _fillerCache;
-async function serveFiller(res) {
-  if (_fillerCache === undefined) {
-    const a = await synthesizeSpeech(process.env.VOICE_FILLER_TEXT || "One moment.");
-    _fillerCache = a ? a.bytes : null;
+// Short spoken "thinking" fillers (Lloyd's Azure voice). The tile plays one the
+// instant you stop talking so a slow (Graph/model) turn isn't dead silence;
+// rotating the phrase keeps it from feeling robotic. Each is synthesized once, on
+// first request, and cached in memory. GET /filler -> { count } manifest so the
+// tile knows how many to preload; GET /filler?i=K -> the audio for phrase K.
+// VOICE_FILLER_TEXT overrides the set (pipe-separated, e.g. "One sec.|On it.").
+const FILLER_PHRASES = (process.env.VOICE_FILLER_TEXT || "")
+  .split("|").map((s) => s.trim()).filter(Boolean);
+if (!FILLER_PHRASES.length) FILLER_PHRASES.push(
+  "One moment.", "Give me a sec.", "Let me check.", "On it.", "Hang on a moment.", "Looking into that."
+);
+const _fillerCache = new Array(FILLER_PHRASES.length); // index -> bytes | null | undefined
+async function serveFiller(res, url) {
+  const raw = url.searchParams.get("i");
+  if (raw === null) {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=86400" });
+    res.end(JSON.stringify({ count: FILLER_PHRASES.length }));
+    return;
   }
-  if (!_fillerCache) { res.writeHead(204).end(); return; }
+  const i = Math.max(0, Math.min(FILLER_PHRASES.length - 1, parseInt(raw, 10) || 0));
+  if (_fillerCache[i] === undefined) {
+    const a = await synthesizeSpeech(FILLER_PHRASES[i]);
+    _fillerCache[i] = a ? a.bytes : null;
+  }
+  if (!_fillerCache[i]) { res.writeHead(204).end(); return; }
   res.writeHead(200, { "content-type": "audio/mpeg", "cache-control": "public, max-age=86400" });
-  res.end(_fillerCache);
+  res.end(_fillerCache[i]);
 }
 
 async function handleVoice(req, res, url) {
@@ -116,7 +131,7 @@ export function startVoiceServer() {
       return;
     }
     if (req.method === "GET" && url.pathname === "/filler") {
-      serveFiller(res).catch(() => { try { res.writeHead(500).end(); } catch {} });
+      serveFiller(res, url).catch(() => { try { res.writeHead(500).end(); } catch {} });
       return;
     }
     if (req.method === "GET") {
