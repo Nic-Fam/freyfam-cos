@@ -79,6 +79,12 @@ async function serveFiller(res, url) {
   res.end(_fillerCache[i]);
 }
 
+// Wake-word matcher for the tile's "only answer when addressed" mode. Matches an
+// optional lead-in ("hey/hi/ok/okay/yo") + Lloyd or a common STT mishearing, and
+// strips that address off the front so the command that follows is what runs.
+const WAKE_RE = /\b(?:hey|hi|ok|okay|yo)?\s*(?:lloyd|loyd|lloyds|floyd|lord)\b[\s,.:!?-]*/i;
+function stripWake(text) { return String(text).replace(WAKE_RE, " ").replace(/\s+/g, " ").trim(); }
+
 async function handleVoice(req, res, url) {
   if (!authed(req, url)) { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
   const contentType = req.headers["content-type"] || "audio/mp4";
@@ -102,6 +108,29 @@ async function handleVoice(req, res, url) {
       res.end(JSON.stringify({ transcript: "", reply: "Sorry, I couldn't make that out. Try again?", audio: null }));
       return;
     }
+  }
+
+  // Wake-word gate (voice only, when the tile enables it via ?wake=1). In a noisy
+  // cabin the VAD fires on radio/passengers; STT is cheap, so we gate BEFORE the
+  // expensive model turn + TTS and drop anything that doesn't actually address
+  // Lloyd. Homophones ("Loyd"/"Floyd") are accepted since STT often mishears the
+  // name. A bare "Lloyd" (no command) gets a quick spoken "Yes?" with no model call.
+  const wakeMode = url.searchParams.get("wake") === "1" && !contentType.includes("application/json");
+  if (wakeMode) {
+    if (!WAKE_RE.test(transcript)) {
+      log.info("voice turn ignored (no wake word)", { chars: transcript.length });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ignored: true, transcript }));
+      return;
+    }
+    const stripped = stripWake(transcript);
+    if (!stripped) {
+      const ack = await synthesizeSpeech("Yes?");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ transcript, reply: "Yes?", audio: ack ? ack.bytes.toString("base64") : null, audioType: ack?.contentType || null }));
+      return;
+    }
+    transcript = stripped;
   }
 
   // Run Lloyd's full pipeline with a capturing transport (no channel send).

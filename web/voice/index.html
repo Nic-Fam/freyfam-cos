@@ -47,6 +47,8 @@
   <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd answers out loud and keeps going. Talk over him to cut him off. Tap again to stop.</div></div>
   <footer>
     <div class="status" id="status">Tap to talk</div>
+    <button id="waketgl" type="button" aria-pressed="true"
+      style="align-self:center;font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px;margin-bottom:6px">Wake word: on</button>
     <div class="micwrap" id="wrap">
       <div class="ring"></div>
       <button class="mic" id="mic" aria-label="Talk to Lloyd">
@@ -73,6 +75,8 @@
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
   var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,noiseFloor=0.03,utterStart=0,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
   var MAXUTTER=12000; // failsafe: even in steady road noise, close+send an utterance after this
+  var wakeOn=(function(){try{return localStorage.getItem('wakeWord')!=='0';}catch(e){return true;}})(); // default on
+  function listenLabel(){ return session ? (wakeOn?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
   var fillerBufs=[];
   async function loadFiller(){ if(fillerBufs.length||!actx)return; try{
@@ -103,7 +107,7 @@
     try{ var src=actx.createMediaStreamSource(stream); analyser=actx.createAnalyser(); analyser.fftSize=1024; src.connect(analyser); }
     catch(e){ fail('Audio init failed — reload'); return; }
     session=true; speaking=false; utterRec=false; setRec(true);
-    status.textContent='Listening… just talk (tap to stop)';
+    status.textContent=listenLabel();
     calibrate(); vadRAF=requestAnimationFrame(vadLoop);
   }
   function stopSession(){
@@ -143,13 +147,16 @@
   }
   function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
   async function sendUtterance(blob){
-    playFiller(); // instant spoken "one moment" so the Graph/model latency isn't dead silence
+    // Open mode: play the instant filler now. Wake-word mode: don't — we don't yet
+    // know if this was meant for Lloyd, and a "one moment" on the radio is noise.
+    if(!wakeOn) playFiller();
     var ac=new AbortController(); playAbort=ac;
     try{
-      var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
+      var res=await fetch('/voice?k='+encodeURIComponent(token)+'&wake='+(wakeOn?'1':'0'),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
       if(res.status===401){ fail('Not authorized — check the link'); session=false; return; }
       var data=await res.json();
       if(ac.signal.aborted) return; // user barged in during the request
+      if(data.ignored){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // not addressed to Lloyd — keep listening, no bubbles
       if(data.transcript)bubble(data.transcript,'you');
       if(data.reply)bubble(data.reply,'ll');
       if(data.audio){ status.textContent='Speaking…'; await playB64(data.audio,data.audioType); }
@@ -158,8 +165,12 @@
     if(playAbort===ac) playAbort=null;
     resumeListen();
   }
-  function resumeListen(){ speaking=false; if(session) status.textContent='Listening… just talk (tap to stop)'; }
+  function resumeListen(){ speaking=false; if(session) status.textContent=listenLabel(); }
   mic.addEventListener('click',function(){ ensureCtx(); if(!session) startSession(); else stopSession(); });
+  var waketgl=document.getElementById('waketgl');
+  function paintWake(){ waketgl.textContent='Wake word: '+(wakeOn?'on':'off'); waketgl.setAttribute('aria-pressed',String(wakeOn)); waketgl.style.color=wakeOn?'var(--accent)':'var(--muted)'; if(session) status.textContent=listenLabel(); }
+  waketgl.addEventListener('click',function(){ wakeOn=!wakeOn; try{localStorage.setItem('wakeWord',wakeOn?'1':'0');}catch(e){} paintWake(); });
+  paintWake();
   var typein=document.getElementById('typein');
   document.getElementById('typeform').addEventListener('submit',async function(e){
     e.preventDefault();
@@ -172,7 +183,7 @@
       var data=await res.json();
       if(data.reply)bubble(data.reply,'ll');
     }catch(err){ bubble('(connection problem — try again)','ll'); }
-    status.textContent = session ? 'Listening… just talk (tap to stop)' : 'Tap to talk';
+    status.textContent = listenLabel();
   });
 })();
 </script>
