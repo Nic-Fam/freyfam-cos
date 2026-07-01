@@ -30,11 +30,24 @@ export function todayLocal(now = new Date()) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
-/** Add a task. dueDate optional (YYYY-MM-DD), owner optional. Returns the task. */
+const normTitle = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+const DEDUP_DONE_MS = Number(process.env.TASK_DEDUP_DAYS || 30) * 864e5;
+
+/** Add a task. dueDate optional (YYYY-MM-DD), owner optional. Returns the task
+ *  (tagged `deduped:true` if an equivalent one already exists). */
 export async function addTask({ title, dueDate = null, owner = null } = {}, now = Date.now()) {
   const t = String(title || "").trim();
   if (!t) throw new Error("task title is required");
   const db = await load();
+  // Idempotency: don't recreate a task that's already OPEN, or one COMPLETED
+  // recently. The morning digest re-derives follow-ups from past events every day;
+  // without this it resurrects an already-handled follow-up as a fresh (overdue)
+  // duplicate — the "closed items showing overdue" bug.
+  const dup = db.items.find((x) =>
+    normTitle(x.title) === normTitle(t) &&
+    (x.status === "open" || (x.status === "done" && x.completedAt && now - Date.parse(x.completedAt) < DEDUP_DONE_MS))
+  );
+  if (dup) return { ...dup, deduped: true };
   const task = {
     id: randomUUID().slice(0, 8),
     title: t,

@@ -862,6 +862,11 @@ function toolHandlers({ images, onDelegate } = {}) {
     add_task: async ({ title, dueDate, owner }) => {
       try {
         const t = await addTask({ title, dueDate, owner });
+        if (t.deduped) {
+          return t.status === "done"
+            ? `Already handled (marked done ${t.completedAt ? t.completedAt.slice(0, 10) : "recently"}) — not re-adding "${t.title}". Do NOT surface this as open or overdue.`
+            : `Already on the list: "${t.title}"${t.dueDate ? ` (due ${t.dueDate})` : ""} {${t.id}} — not duplicating.`;
+        }
         return `Added task: "${t.title}"${t.dueDate ? ` (due ${t.dueDate})` : ""}${t.owner ? ` for ${t.owner}` : ""} {${t.id}}`;
       } catch (e) {
         return `Could not add task: ${e.message}`;
