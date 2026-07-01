@@ -44,7 +44,7 @@
     <div><div class="title">Lloyd</div><div class="sub">Chief of staff</div></div>
     <div class="pill"><span class="dot" id="dot"></span><span id="conn">ready</span></div>
   </header>
-  <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd listens, answers out loud, and keeps the conversation going. Tap again to stop.</div></div>
+  <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd answers out loud and keeps going. Talk over him to cut him off. Tap again to stop.</div></div>
   <footer>
     <div class="status" id="status">Tap to talk</div>
     <div class="micwrap" id="wrap">
@@ -63,15 +63,16 @@
   var qk=new URLSearchParams(location.search).get('k');
   if(qk){try{localStorage.setItem('voiceToken',qk);}catch(e){}}
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
-  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,threshold=0.02;
+  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,threshold=0.02,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
+  function stopPlayback(){ try{ if(curSource){curSource.onended=null;curSource.stop();} }catch(e){} curSource=null; try{ if(curAudioEl){curAudioEl.pause();curAudioEl.src='';} }catch(e){} curAudioEl=null; }
   function playB64(b64,type){
     return new Promise(function(resolve){
-      function fallback(){try{var a=new Audio('data:'+(type||'audio/mpeg')+';base64,'+b64);a.onended=function(){resolve();};a.play().catch(function(){resolve();});}catch(e){resolve();}}
+      function fallback(){try{var a=new Audio('data:'+(type||'audio/mpeg')+';base64,'+b64);curAudioEl=a;a.onended=function(){curAudioEl=null;resolve();};a.play().catch(function(){resolve();});}catch(e){resolve();}}
       try{
         var ctx=ensureCtx(); if(!ctx){return fallback();}
         var bin=atob(b64),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
-        ctx.decodeAudioData(u.buffer,function(buf){var s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);s.onended=function(){resolve();};s.start(0);},function(){fallback();});
+        ctx.decodeAudioData(u.buffer,function(buf){var s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);curSource=s;s.onended=function(){curSource=null;resolve();};s.start(0);},function(){fallback();});
       }catch(e){fallback();}
     });
   }
@@ -81,7 +82,7 @@
   function fail(msg){conn.textContent='error';dot.style.background='var(--err)';status.textContent=msg;}
   async function startSession(){
     ensureCtx();
-    try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); }
     catch(e){ fail('Mic blocked — allow microphone access'); return; }
     try{ var src=actx.createMediaStreamSource(stream); analyser=actx.createAnalyser(); analyser.fftSize=1024; src.connect(analyser); }
     catch(e){ fail('Audio init failed — reload'); return; }
@@ -102,21 +103,29 @@
     mr.onstop=function(){ var b=new Blob(chunks,{type:mr.mimeType||'audio/mp4'}); if(speechMs>350) sendUtterance(b); else resumeListen(); };
     mr.start(); utterRec=true; speechMs=0;
   }
-  function vadLoop(){ if(!session)return; vadRAF=requestAnimationFrame(vadLoop); if(speaking||!analyser)return;
+  function vadLoop(){ if(!session)return; vadRAF=requestAnimationFrame(vadLoop); if(!analyser)return;
     var l=level(), now=performance.now();
+    if(speaking){ // Lloyd is thinking/talking — barge-in: sustained speech over him interrupts
+      if(l>threshold*1.6){ bargeMs+=16; if(bargeMs>180) bargeIn(); } else { bargeMs=Math.max(0,bargeMs-16); }
+      return;
+    }
     if(l>threshold){ if(!utterRec)startUtterance(); lastVoice=now; if(utterRec)speechMs+=16; }
     else if(utterRec && now-lastVoice>900){ utterRec=false; speaking=true; status.textContent='Thinking…'; try{mr.stop();}catch(e){} }
   }
+  function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
   async function sendUtterance(blob){
+    var ac=new AbortController(); playAbort=ac;
     try{
-      var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob});
+      var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
       if(res.status===401){ fail('Not authorized — check the link'); session=false; return; }
       var data=await res.json();
+      if(ac.signal.aborted) return; // user barged in during the request
       if(data.transcript)bubble(data.transcript,'you');
       if(data.reply)bubble(data.reply,'ll');
       if(data.audio){ status.textContent='Speaking…'; await playB64(data.audio,data.audioType); }
       else if(data.reply){ status.textContent='(no audio — check silent switch)'; }
-    }catch(e){ bubble('(connection problem — I didn’t catch that)','ll'); }
+    }catch(e){ if(e&&e.name==='AbortError'){ return; } bubble('(connection problem — I didn’t catch that)','ll'); }
+    if(playAbort===ac) playAbort=null;
     resumeListen();
   }
   function resumeListen(){ speaking=false; if(session) status.textContent='Listening… just talk (tap to stop)'; }
