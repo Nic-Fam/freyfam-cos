@@ -88,8 +88,14 @@ async function saveState(state) {
  */
 export async function anthropicMonthToDateUsd(now = new Date()) {
   if (!COST.anthropicAdminKey) return null;
+  // ending_at must be strictly after starting_at. On the FIRST day of a cycle,
+  // starting_at is today 00:00 UTC and the endpoint's default ending equals it
+  // -> 400 "ending must be after starting". Pin ending to the start of tomorrow
+  // (UTC) so the range always spans at least the current day.
+  const endExclusive = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
   const params = new URLSearchParams({
     starting_at: cycleStart(now).toISOString(),
+    ending_at: endExclusive.toISOString(),
     bucket_width: "1d",
   });
   let cents = 0;
@@ -147,6 +153,12 @@ export async function azureMonthToDateUsd() {
     }),
   });
   if (res.status === 204) return 0; // no usage yet this cycle
+  // 404 = the service principal can't see this subscription's cost (wrong sub id
+  // or missing Cost Management Reader / cross-tenant). Treat as "unavailable" and
+  // skip quietly rather than erroring hourly — Anthropic is the meter that matters
+  // (Azure Functions run on free grants). To re-enable, grant the SP that role on
+  // the subscription (or fix AZURE_SUBSCRIPTION_ID/AZURE_TENANT_ID).
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Azure cost query ${res.status}: ${await res.text()}`);
 
   const body = await res.json();
