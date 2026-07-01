@@ -73,6 +73,9 @@
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
   var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,threshold=0.02,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
+  var fillerBuf=null;
+  async function loadFiller(){ if(fillerBuf||!actx)return; try{ var r=await fetch('/filler'); if(!r.ok)return; var ab=await r.arrayBuffer(); actx.decodeAudioData(ab,function(b){fillerBuf=b;},function(){}); }catch(e){} }
+  function playFiller(){ try{ if(fillerBuf&&actx){ var s=actx.createBufferSource(); s.buffer=fillerBuf; s.connect(actx.destination); s.start(0); } }catch(e){} }
   function stopPlayback(){ try{ if(curSource){curSource.onended=null;curSource.stop();} }catch(e){} curSource=null; try{ if(curAudioEl){curAudioEl.pause();curAudioEl.src='';} }catch(e){} curAudioEl=null; }
   function playB64(b64,type){
     return new Promise(function(resolve){
@@ -90,6 +93,7 @@
   function fail(msg){conn.textContent='error';dot.style.background='var(--err)';status.textContent=msg;}
   async function startSession(){
     ensureCtx();
+    loadFiller();
     try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); }
     catch(e){ fail('Mic blocked — allow microphone access'); return; }
     try{ var src=actx.createMediaStreamSource(stream); analyser=actx.createAnalyser(); analyser.fftSize=1024; src.connect(analyser); }
@@ -122,6 +126,7 @@
   }
   function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
   async function sendUtterance(blob){
+    playFiller(); // instant spoken "one moment" so the Graph/model latency isn't dead silence
     var ac=new AbortController(); playAbort=ac;
     try{
       var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});

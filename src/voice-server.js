@@ -50,6 +50,20 @@ function authed(req, url) {
   return Boolean(VOICE.token) && t === VOICE.token;
 }
 
+// A short spoken "thinking" filler (Lloyd's Azure voice), synthesized once and
+// cached in memory. The tile pre-fetches it and plays it the instant you stop
+// talking, so a slow (Graph/model) turn doesn't feel like dead silence.
+let _fillerCache;
+async function serveFiller(res) {
+  if (_fillerCache === undefined) {
+    const a = await synthesizeSpeech(process.env.VOICE_FILLER_TEXT || "One moment.");
+    _fillerCache = a ? a.bytes : null;
+  }
+  if (!_fillerCache) { res.writeHead(204).end(); return; }
+  res.writeHead(200, { "content-type": "audio/mpeg", "cache-control": "public, max-age=86400" });
+  res.end(_fillerCache);
+}
+
 async function handleVoice(req, res, url) {
   if (!authed(req, url)) { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
   const contentType = req.headers["content-type"] || "audio/mp4";
@@ -99,6 +113,10 @@ export function startVoiceServer() {
     try { url = new URL(req.url, "http://localhost"); } catch { res.writeHead(400).end(); return; }
     if (req.method === "POST" && url.pathname === "/voice") {
       handleVoice(req, res, url).catch((e) => { log.error("voice handler error", { reason: String(e?.message || e) }); try { res.writeHead(500).end(); } catch {} });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/filler") {
+      serveFiller(res).catch(() => { try { res.writeHead(500).end(); } catch {} });
       return;
     }
     if (req.method === "GET") {
