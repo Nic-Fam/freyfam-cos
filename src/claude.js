@@ -171,7 +171,23 @@ export async function agentLoop({
 }
 
 // Parse a JSON-only model reply, tolerating accidental code fences.
+// Throw-SAFE: callers use `parseJson(x) || {}` expecting null on failure (a
+// truncated/malformed model response must not throw and abort the pipeline).
+// Salvages the largest {...} span when there's surrounding prose, and retries
+// after trimming a trailing partial element when the JSON was cut off mid-array.
 export function parseJson(text) {
-  const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  let clean = String(text ?? "").replace(/```json|```/g, "").trim();
+  const first = clean.indexOf("{");
+  const last = clean.lastIndexOf("}");
+  if (first > 0 || (last >= 0 && last < clean.length - 1)) clean = clean.slice(first, last + 1);
+  try {
+    return JSON.parse(clean);
+  } catch {
+    // Recover truncated output: cut back to the last complete element and close.
+    const cut = Math.max(clean.lastIndexOf("},"), clean.lastIndexOf("],"));
+    if (cut > 0) {
+      try { return JSON.parse(clean.slice(0, cut + 1) + "]}"); } catch { /* give up */ }
+    }
+    return null;
+  }
 }

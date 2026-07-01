@@ -49,6 +49,24 @@ test("extractTransactions maps model output to parsed rows and leftovers", async
   assert.equal(unparsed.length, 1);
 });
 
+test("extractTransactions prefers the alert's received date over the model's guess", async () => {
+  // Real Chase alerts don't state a date; the model confabulated 2026-07-01 for a
+  // June 29 alert. The received timestamp is authoritative.
+  const alerts = [{ from: "alerts@chase.com", subject: "purchase", body: "$5 coffee", at: "2026-06-29T22:00:00-07:00" }];
+  const complete = fakeComplete({ transactions: [{ i: 0, date: "2026-07-01", merchant: "Cafe", amount: 5, source: "credit" }] });
+  const { parsed } = await extractTransactions(alerts, { complete });
+  assert.equal(parsed[0].date, "2026-06-29"); // received (PT), not the model's 2026-07-01
+});
+
+test("extractTransactions chunks a large batch instead of one oversized call", async () => {
+  const alerts = Array.from({ length: 20 }, (_, k) => ({ from: "alerts@chase.com", subject: "purchase", body: `$${k + 1} item`, at: "2026-06-28T12:00:00-07:00" }));
+  let calls = 0;
+  const complete = async () => { calls++; return { content: [{ type: "text", text: JSON.stringify({ transactions: [{ i: 0, amount: 1, source: "credit" }] }) }] }; };
+  const { parsed } = await extractTransactions(alerts, { complete, chunkSize: 8 });
+  assert.equal(calls, 3);          // ceil(20 / 8) — no single giant call to overflow max_tokens
+  assert.equal(parsed.length, 3);  // one parsed row per chunk
+});
+
 test("buildDailyIngest logs parsed txns, runs a reconcile pass, and flags the rest", async () => {
   await queueAlert({ from: "alerts@chase.com", subject: "purchase", body: "$12.50 Starbucks credit" });
   await queueAlert({ from: "no.reply.alerts@chase.com", subject: "debit", body: "$99.51 Ralphs checking 1857" });

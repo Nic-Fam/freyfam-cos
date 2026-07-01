@@ -274,7 +274,10 @@ async function maybeScanTransactionAlerts() {
   if (now - lastAlertScanAt < ALERT_SCAN_INTERVAL_MS) return;
   lastAlertScanAt = now;
   try {
-    const mails = await recentShipmentMail({ top: 40 }); // generic recent inbox bodies (from, subject, body, receivedAt)
+    // Window must exceed how many inbox messages can arrive between scans, or
+    // alerts scroll past unseen on a busy mailbox (root cause of a June 2026
+    // capture gap). Default 100; raise FINANCE_ALERT_SCAN_TOP for heavier inboxes.
+    const mails = await recentShipmentMail({ top: Number(process.env.FINANCE_ALERT_SCAN_TOP || 100) });
     // Statement notices and per-transaction alerts come from the same senders;
     // route statements to balance capture and the rest to the transaction queue so
     // a statement email is not mis-ingested as a charge.

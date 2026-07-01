@@ -33,6 +33,16 @@ const ALERT_SENDERS = [
 ];
 const TXN_SUBJECT = /(transaction|purchase|charge|debit|withdraw|deposit|payment|you (made|used|spent)|card was (used|charged)|account activity)/i;
 
+// Local (family-tz) YYYY-MM-DD for an alert's received timestamp — the reliable
+// transaction date for a real-time alert (see the note at the call site).
+const FINANCE_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
+function receivedLocalYmd(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: FINANCE_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+
 export function isTransactionAlert({ from = "", subject = "", body = "" } = {}) {
   const f = String(from).toLowerCase();
   if (!ALERT_SENDERS.some((re) => re.test(f))) return false;
@@ -132,34 +142,45 @@ function renderBatch(alerts) {
  * its originating alert) and the alerts that could not be parsed.
  * `complete` is injectable for tests.
  */
-export async function extractTransactions(alerts, { complete = defaultComplete, model = MODELS.triage } = {}) {
+export async function extractTransactions(alerts, { complete = defaultComplete, model = MODELS.triage, chunkSize = 8 } = {}) {
   if (!alerts || !alerts.length) return { parsed: [], unparsed: [] };
-  const resp = await complete({
-    model,
-    system: EXTRACT_SYSTEM,
-    messages: [{ role: "user", content: renderBatch(alerts) }],
-    max_tokens: 1500,
-  });
-  const out = parseJson(textOf(resp)) || {};
-  const txns = Array.isArray(out.transactions) ? out.transactions : [];
   const parsed = [];
-  const used = new Set();
-  for (const t of txns) {
-    const alert = alerts[t.i];
-    if (!alert || typeof t.amount !== "number" || !Number.isFinite(t.amount)) continue;
-    used.add(t.i);
-    parsed.push({
-      amount: t.amount,
-      date: t.date || null,
-      merchant: t.merchant || null,
-      card: t.card || null,
-      source: t.source === "checking" ? "checking" : "credit",
-      direction: t.direction === "in" ? "in" : "out",
-      balance: typeof t.balance === "number" && Number.isFinite(t.balance) ? t.balance : null,
-      alert,
+  const unparsed = [];
+  // Extract in small chunks: a big batch overflowed max_tokens and returned
+  // truncated JSON, which stranded the whole drained batch. Each chunk's output
+  // comfortably fits, and one bad chunk only re-flags its own items.
+  for (let start = 0; start < alerts.length; start += chunkSize) {
+    const chunk = alerts.slice(start, start + chunkSize);
+    const resp = await complete({
+      model,
+      system: EXTRACT_SYSTEM,
+      messages: [{ role: "user", content: renderBatch(chunk) }], // renderBatch re-indexes from 0 per chunk
+      max_tokens: 2000,
     });
+    const out = parseJson(textOf(resp)) || {};
+    const txns = Array.isArray(out.transactions) ? out.transactions : [];
+    const used = new Set();
+    for (const t of txns) {
+      const alert = chunk[t.i];
+      if (!alert || typeof t.amount !== "number" || !Number.isFinite(t.amount)) continue;
+      used.add(t.i);
+      parsed.push({
+        amount: t.amount,
+        // Real-time bank/card alerts fire at transaction time and rarely state a
+        // date in the body, so the model tends to confabulate one (observed:
+        // dating June alerts July 1). The alert's RECEIVED date is authoritative;
+        // prefer it, falling back to the model's date only if received is missing.
+        date: receivedLocalYmd(chunk[t.i]?.at) || t.date || null,
+        merchant: t.merchant || null,
+        card: t.card || null,
+        source: t.source === "checking" ? "checking" : "credit",
+        direction: t.direction === "in" ? "in" : "out",
+        balance: typeof t.balance === "number" && Number.isFinite(t.balance) ? t.balance : null,
+        alert,
+      });
+    }
+    chunk.forEach((a, i) => { if (!used.has(i)) unparsed.push(a); });
   }
-  const unparsed = alerts.filter((_, i) => !used.has(i));
   return { parsed, unparsed };
 }
 
@@ -174,15 +195,22 @@ export async function buildDailyIngest({ complete = defaultComplete } = {}) {
   const alerts = await drainAlerts();
   if (!alerts.length) return { alerts: 0, logged: 0, flagged: [] };
 
-  const first = await extractTransactions(alerts, { complete });
-  let parsed = first.parsed;
-  let leftovers = first.unparsed;
-
-  // Reconcile pass: a second, focused extraction over just the stragglers.
-  if (leftovers.length) {
-    const recon = await extractTransactions(leftovers, { complete });
-    parsed = parsed.concat(recon.parsed);
-    leftovers = recon.unparsed;
+  // The queue is already drained; if anything below throws, re-queue the alerts
+  // so they're retried next run instead of being lost (they were, once).
+  let parsed, leftovers;
+  try {
+    const first = await extractTransactions(alerts, { complete });
+    parsed = first.parsed;
+    leftovers = first.unparsed;
+    // Reconcile pass: a second, focused extraction over just the stragglers.
+    if (leftovers.length) {
+      const recon = await extractTransactions(leftovers, { complete });
+      parsed = parsed.concat(recon.parsed);
+      leftovers = recon.unparsed;
+    }
+  } catch (err) {
+    for (const a of alerts) await queueAlert(a).catch(() => {});
+    throw err;
   }
 
   const rules = await loadCategoryRules(); // family payees (e.g. Lulu -> services) + builtin Zelle
