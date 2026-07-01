@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MODELS, DIGEST } from "./config.js";
 import { runChief } from "./orchestrator.js";
-import { notifyOwner } from "./channels/notify.js";
+import { postSlack } from "./channels/notify.js";
 import { sendMail } from "./channels/graph.js";
 import { createLogger } from "./log.js";
 
@@ -129,17 +129,36 @@ export function shouldRunDigest(now, lastRunDate, { hour = 7, tz = "America/Los_
 // restarts). The file is the source of truth across process lifetimes.
 const statePath = () => process.env.DIGEST_STATE_PATH || "./data/digest-state.json";
 
-export async function getLastDigestDate() {
+async function readState() {
   try {
-    return JSON.parse(await readFile(statePath(), "utf8")).lastRunDate || null;
+    const s = JSON.parse(await readFile(statePath(), "utf8"));
+    return s && typeof s === "object" ? s : {};
   } catch {
-    return null;
+    return {};
   }
 }
-
-export async function setLastDigestDate(date) {
+async function writeState(state) {
   await mkdir(dirname(statePath()), { recursive: true });
-  await writeFile(statePath(), JSON.stringify({ lastRunDate: date }, null, 2));
+  await writeFile(statePath(), JSON.stringify(state, null, 2));
+}
+
+export async function getLastDigestDate() {
+  return (await readState()).lastRunDate || null;
+}
+export async function setLastDigestDate(date) {
+  const s = await readState();
+  s.lastRunDate = date;
+  await writeState(s);
+}
+// Separate "already alerted the owner about a failed digest today" marker, so a
+// retrying-but-failing digest pings the owner ONCE per day, not every tick.
+export async function getDigestAlertedDate() {
+  return (await readState()).alertedDate || null;
+}
+export async function setDigestAlertedDate(date) {
+  const s = await readState();
+  s.alertedDate = date;
+  await writeState(s);
 }
 
 /** Subject line for the emailed digest, dated in the family timezone. */
@@ -159,7 +178,7 @@ export function digestSubject(now = new Date()) {
  * (reliable today). Each send is independent, so one failing never blocks the
  * other. Channels injectable for tests.
  */
-export async function runMorningDigest({ runner = runChief, notify = notifyOwner, mail = sendMail } = {}) {
+export async function runMorningDigest({ runner = runChief, notify = postSlack, mail = sendMail } = {}) {
   // Weather now comes from the free get_weather tool, so the digest no longer
   // needs the metered web_search tool. DIGEST.webSearch stays as an opt-in
   // escape hatch (default off) for any other live lookup the chief might want.
@@ -167,13 +186,19 @@ export async function runMorningDigest({ runner = runChief, notify = notifyOwner
   const body = extractDigest(text);
   if (!body) {
     log.warn("digest produced no text; nothing sent");
-    return text;
+    return { delivered: false, empty: true, body: "" };
   }
   const sends = [notify(body)];
   if (DIGEST.emailTo.length) sends.push(mail({ to: DIGEST.emailTo, subject: digestSubject(), body }));
   const results = await Promise.allSettled(sends);
   results.forEach((r, i) => {
-    if (r.status === "rejected") log.error("digest delivery failed", { channel: i === 0 ? "sms" : "email", reason: String(r.reason?.message || r.reason) });
+    if (r.status === "rejected") log.error("digest delivery failed", { channel: i === 0 ? "owner" : "email", reason: String(r.reason?.message || r.reason) });
   });
-  return text;
+  // notifyOwner returns "sent"/null (never throws); mail throws on failure. Delivered
+  // if ANY channel actually went out. `delivered:false` here means composed-but-undeliverable.
+  const notifyOk = results[0].status === "fulfilled" && results[0].value !== null;
+  const mailOk = sends.length > 1 && results[1].status === "fulfilled";
+  const delivered = notifyOk || mailOk;
+  if (!delivered) log.error("digest composed but no channel delivered");
+  return { delivered, empty: false, body };
 }

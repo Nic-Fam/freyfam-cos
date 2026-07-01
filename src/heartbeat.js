@@ -7,7 +7,7 @@ import { runChief } from "./orchestrator.js";
 import { notifyOwner } from "./channels/notify.js";
 import { checkCostThresholds } from "./cost.js";
 import { discoverModelTiers, changeKey, getModelNotifyState, setModelNotifyState } from "./model-registry.js";
-import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, localParts } from "./digest.js";
+import { runMorningDigest, shouldRunDigest, getLastDigestDate, setLastDigestDate, getDigestAlertedDate, setDigestAlertedDate, localParts } from "./digest.js";
 import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAlerts } from "./finance-ingest.js";
 import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
 import { reconcileInboundEmail } from "./email-reconcile.js";
@@ -279,12 +279,29 @@ async function maybeRunDigest() {
   const lastDigestDate = await getLastDigestDate();
   const { run, date } = shouldRunDigest(new Date(), lastDigestDate, DIGEST);
   if (!run) return;
-  await setLastDigestDate(date); // persist BEFORE running so a restart mid-run can't double-fire
+  // Claim the day ONLY after a successful delivery (not before): an empty
+  // composition or an all-channels-failed send leaves the date unset so the next
+  // tick retries within the window, instead of silently burning the day (the
+  // 2026-07-01 sonnet-5 empty-digest incident). The persisted state makes a
+  // same-tick double-fire the only (tiny) risk, far better than a silent no-digest.
+  let r;
   try {
-    await runMorningDigest();
-    log.info("morning digest sent", { date });
+    r = await runMorningDigest();
   } catch (err) {
     log.error("morning digest failed", { reason: err.message });
+    r = { delivered: false };
+  }
+  if (r.delivered) {
+    await setLastDigestDate(date);
+    log.info("morning digest sent", { date });
+    return;
+  }
+  // Not delivered: don't claim the day (retry next tick), and alert the owner ONCE
+  // per day so a persistent failure is never silent.
+  log.warn("morning digest not delivered; will retry this window", { date, empty: !!r.empty });
+  if ((await getDigestAlertedDate()) !== date) {
+    await setDigestAlertedDate(date);
+    await notifyOwner(`Heads up from Lloyd: I couldn't get this morning's digest out just now${r.empty ? " (it composed empty)" : ""}. I'll retry shortly; if it keeps failing, the standard model or a specialist may be down.`).catch(() => {});
   }
 }
 

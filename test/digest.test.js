@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest, getLastDigestDate, setLastDigestDate } from "../src/digest.js";
+import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest, getLastDigestDate, setLastDigestDate, getDigestAlertedDate, setDigestAlertedDate } from "../src/digest.js";
 
 const TZ = "America/Los_Angeles";
 const opts = { hour: 7, tz: TZ, windowHours: 2 };
@@ -67,13 +67,13 @@ test("extractDigest falls back to raw text when tags are absent", () => {
 
 test("runMorningDigest delivers over BOTH sms and email", async () => {
   const calls = { runner: 0, sms: null, mail: null };
-  const text = await runMorningDigest({
+  const r = await runMorningDigest({
     runner: async (prompt) => {
       calls.runner++;
       assert.match(prompt, /MORNING DIGEST/);
       return "Good morning. 2 events today; salmon for dinner.";
     },
-    notify: async (t) => { calls.sms = t; },
+    notify: async (t) => { calls.sms = t; return "sent"; },
     mail: async (m) => { calls.mail = m; },
   });
   assert.equal(calls.runner, 1);
@@ -81,7 +81,8 @@ test("runMorningDigest delivers over BOTH sms and email", async () => {
   assert.equal(calls.mail.body, "Good morning. 2 events today; salmon for dinner.");
   assert.ok(Array.isArray(calls.mail.to) && calls.mail.to.length, "email has recipients");
   assert.match(calls.mail.subject, /^Morning digest:/);
-  assert.equal(text, "Good morning. 2 events today; salmon for dinner.");
+  assert.equal(r.body, "Good morning. 2 events today; salmon for dinner.");
+  assert.equal(r.delivered, true);
 });
 
 test("a failing channel does not block the other", async () => {
@@ -96,6 +97,22 @@ test("a failing channel does not block the other", async () => {
 
 test("runMorningDigest sends nothing when the digest is empty", async () => {
   let sent = false;
-  await runMorningDigest({ runner: async () => "   ", notify: async () => { sent = true; }, mail: async () => { sent = true; } });
+  const r = await runMorningDigest({ runner: async () => "   ", notify: async () => { sent = true; }, mail: async () => { sent = true; } });
   assert.equal(sent, false);
+  assert.equal(r.delivered, false);
+  assert.equal(r.empty, true);
+});
+
+test("digest state keeps lastRunDate and alertedDate independently", async () => {
+  const TMP = join(os.tmpdir(), "cos-digest-state-2.json");
+  process.env.DIGEST_STATE_PATH = TMP;
+  await rm(TMP, { force: true });
+  await setLastDigestDate("2026-07-01");
+  await setDigestAlertedDate("2026-07-01");
+  assert.equal(await getLastDigestDate(), "2026-07-01");
+  assert.equal(await getDigestAlertedDate(), "2026-07-01");
+  await setLastDigestDate("2026-07-02"); // must not clobber alertedDate
+  assert.equal(await getDigestAlertedDate(), "2026-07-01");
+  await rm(TMP, { force: true });
+  delete process.env.DIGEST_STATE_PATH;
 });

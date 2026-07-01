@@ -50,5 +50,14 @@ export async function notifyOwner(body) {
   return delivered ? "sent" : null;
 }
 
+// Post ONLY to Slack (no email). For artifacts that are emailed separately to a
+// recipient list (e.g. the morning digest -> DIGEST.emailTo) so we don't ALSO
+// owner-email a duplicate copy. Best-effort: "sent" if Slack delivered, else null.
+export async function postSlack(body) {
+  if (!slackNotifier) return null;
+  try { await slackNotifier(String(body ?? "")); return "sent"; }
+  catch (e) { log.warn("slack post failed", { reason: String(e?.message || e) }); return null; }
+}
+
 // Slack approval/specialist channels live in channels/slack.js. SMS (channels/
 // twilio.js) is retired; notifyOwner no longer touches it.
