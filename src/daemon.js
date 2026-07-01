@@ -49,6 +49,17 @@ function shutdown(hb, imsg, voice) {
   setTimeout(() => process.kill(process.pid, "SIGKILL"), 500);
 }
 
+// --preflight: the deploy health gate. Reaching this line means every import
+// above resolved and evaluated -- deps present, no missing/broken imports, config
+// loaded -- which a bare `node --check` (syntax only) does NOT verify. Exit
+// cleanly WITHOUT starting the daemon (no queue consumer, servers, or timers) so
+// restart-from-main.sh can gate a deploy on real load-ability and roll back a
+// depless/broken checkout instead of kickstarting it into a crash loop.
+if (process.argv.includes("--preflight")) {
+  log.info("preflight ok: import graph + config resolved");
+  process.exit(0);
+}
+
 main().catch((err) => {
   log.error("fatal", { reason: err.message, stack: err.stack });
   process.exit(1);
