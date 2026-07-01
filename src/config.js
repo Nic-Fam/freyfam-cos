@@ -8,7 +8,13 @@ import { isCoo, isCompanyAgent } from "./companies.js";
 // ---------------------------------------------------------------------------
 export const MODELS = {
   triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5-20251001",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-5", // the workhorse
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-4-6", // the workhorse (see NOTE)
+  // NOTE 2026-07-01: reverted from "claude-sonnet-5". That model returned EMPTY on
+  // long/tool-heavy standard-tier outputs (the morning digest composed 0 chars; short
+  // replies like "OK" slipped through, masking it), so the digest silently stopped and
+  // any substantial standard-tier email/voice reply came back blank. Verified same-prompt:
+  // sonnet-4-6 -> full 3.4k digest, sonnet-5 -> 0. Re-attempt sonnet-5 only after tuning
+  // max_tokens / thinking so long outputs aren't truncated.
   heavy: process.env.MODEL_HEAVY || "claude-opus-4-8",      // high-stakes / agentic only
 };
 
