@@ -61,16 +61,25 @@ export async function addTask({ title, dueDate = null, owner = null } = {}, now 
   return task;
 }
 
-// Find a task by id (exact or prefix) or exact title; open tasks preferred.
+// Find a task by id (exact/prefix), exact title, or — for a natural "done <phrase>"
+// reply — an UNAMBIGUOUS keyword match (the phrase is contained in exactly one open
+// task's title, or vice versa). Open tasks preferred. Returns undefined if none, or
+// null if the phrase is ambiguous (matches >1 open task) so the caller can ask which.
 function find(items, match) {
   const m = String(match || "").trim();
+  const nm = normTitle(m);
   const open = items.filter((t) => t.status === "open");
-  return (
+  const exact =
     open.find((t) => t.id === m) ||
     open.find((t) => t.id.startsWith(m) && m.length >= 4) ||
-    open.find((t) => t.title.toLowerCase() === m.toLowerCase()) ||
-    items.find((t) => t.id === m)
-  );
+    open.find((t) => normTitle(t.title) === nm);
+  if (exact) return exact;
+  if (nm.length >= 4) {
+    const hits = open.filter((t) => normTitle(t.title).includes(nm) || nm.includes(normTitle(t.title)));
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) return null; // ambiguous — don't guess which to close
+  }
+  return items.find((t) => t.id === m);
 }
 
 /** Mark a task done by id/prefix/title. Returns the task or null. */

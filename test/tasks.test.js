@@ -49,6 +49,18 @@ test("addTask re-creates a task completed long ago (beyond the dedup window)", a
   assert.equal(again.status, "open");
 });
 
+test("completeTask closes by an unambiguous keyword, refuses ambiguous", async () => {
+  await t.addTask({ title: "Follow up: tour response for 906 Whitehaven Ter, Glendale" });
+  await t.addTask({ title: "Follow up: 1205 Geneva St Glendale -- await agent response" });
+  // ambiguous keyword while BOTH open -> refuse to guess
+  assert.equal(await t.completeTask("glendale"), null);
+  assert.equal((await t.listTasks()).length, 2, "nothing closed on an ambiguous match");
+  // unique keyword closes the right one
+  const done = await t.completeTask("whitehaven");
+  assert.ok(done && /Whitehaven/.test(done.title));
+  assert.equal((await t.listTasks()).length, 1);
+});
+
 test("listTasks sorts overdue first, then by due date, undated last", async () => {
   const now = new Date("2026-06-22T19:00:00Z"); // June 22 PT
   await t.addTask({ title: "no date" });

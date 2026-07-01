@@ -875,7 +875,7 @@ function toolHandlers({ images, onDelegate } = {}) {
     list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
-      return t ? `Marked done: "${t.title}"` : "No matching open task found.";
+      return t ? `Marked done: "${t.title}"` : "No single matching open task — that phrase matched none or more than one. Call list_tasks and complete by the {id}, or be more specific.";
     },
     watch_item: async ({ url, label, targetPrice }) => {
       try {
