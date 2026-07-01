@@ -15,7 +15,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
@@ -199,6 +199,23 @@ const tools = [
     input_schema: {
       type: "object",
       properties: {
+        to: { type: "string" },
+        cc: { type: "string", description: "optional CC recipients, comma-separated" },
+        bcc: { type: "string", description: "optional BCC recipients, comma-separated" },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["to", "subject", "body"],
+    },
+  },
+  {
+    name: "draft_email",
+    description:
+      "Write an email on a family member's behalf and SAVE IT AS A DRAFT in their OWN mailbox (default Nic's nic@freyfam.com). It is NEVER sent -- it lands in their Drafts folder so they can review, edit, and send it themselves. Use this whenever the family wants you to compose an email for them rather than send it, or when you'd otherwise propose sending but they'd rather send it personally. No approval needed, because nothing goes out. Use `cc`/`bcc` fields (comma-separated), not 'CC:' lines in the body.",
+    input_schema: {
+      type: "object",
+      properties: {
+        account: { type: "string", enum: ["nic", "shelli"], description: "whose Drafts folder to save into (default nic)" },
         to: { type: "string" },
         cc: { type: "string", description: "optional CC recipients, comma-separated" },
         bcc: { type: "string", description: "optional BCC recipients, comma-separated" },
@@ -697,6 +714,19 @@ function toolHandlers({ images, onDelegate } = {}) {
         { refs: list, subject, start }
       );
       return `Ready to delete "${subject}"${when}. ${instruction}`;
+    },
+    draft_email: async ({ account, to, cc, subject, body, bcc }) => {
+      // Draft-only: saved into the family member's OWN Drafts folder, NEVER sent.
+      // The human hitting send IS the gate, so no confirmation here. No Lloyd
+      // signature: this is the person's own email to send as themselves.
+      const who = String(account || "nic").toLowerCase() === "shelli" ? "shelli" : "nic";
+      try {
+        const { mailbox } = await createDraft({ account: who, to, cc, bcc, subject, body });
+        const copies = [cc ? `cc ${cc}` : "", bcc ? `bcc ${bcc}` : ""].filter(Boolean).join(", ");
+        return `Saved a draft in ${mailbox}'s Drafts folder — to ${to}${copies ? ` (${copies})` : ""}, subject "${subject}". Not sent; open your Drafts to review and send it yourself.`;
+      } catch (e) {
+        return `Couldn't save the draft: ${e.message}`;
+      }
     },
     send_email: async ({ to, cc, subject, body, bcc }) => {
       // Flag if ANY recipient (to/cc/bcc) is on a work domain. Split first so a

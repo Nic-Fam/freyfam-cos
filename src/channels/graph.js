@@ -442,6 +442,33 @@ export async function sendMail({ to, subject, body, cc, bcc, html = false }) {
     .post({ message, saveToSentItems: true });
 }
 
+// Resolve which family mailbox a draft is saved into. Default Nic. Accepts a
+// person key ("nic"/"shelli") or a full address. Pure + exported for tests.
+const DRAFT_MAILBOXES = {
+  nic: process.env.NIC_MAILBOX || "nic@freyfam.com",
+  shelli: process.env.SHELLI_MAILBOX || "shelli@freyfam.com",
+};
+export function draftMailboxFor(account) {
+  const key = String(account || "nic").trim().toLowerCase();
+  if (DRAFT_MAILBOXES[key]) return DRAFT_MAILBOXES[key];
+  return key.includes("@") ? key : DRAFT_MAILBOXES.nic;
+}
+
+/**
+ * Save an email as a DRAFT in a family member's OWN mailbox (default Nic). Lloyd
+ * writes on the family's behalf; the draft lands in that person's Drafts folder
+ * and is NEVER sent (POST /users/{mailbox}/messages creates an unsent draft,
+ * isDraft=true). The human opens it in their mail app, edits if needed, and sends
+ * it themselves. This is the SAFE alternative to sendMail: no outbound leaves the
+ * system, so it needs no confirmation gate. Returns {id, webLink, mailbox}.
+ */
+export async function createDraft({ account = "nic", to, subject, body, cc, bcc, html = false }) {
+  const mailbox = draftMailboxFor(account);
+  const message = buildMailMessage({ to, subject, body, cc, bcc, html });
+  const res = await graph().api(`/users/${mailbox}/messages`).post(message);
+  return { id: res.id, webLink: res.webLink, mailbox };
+}
+
 // --- Clickable email approvals (Approve/Deny buttons) -----------------------
 // The daemon is not publicly reachable, so a one-click HTTP link would need a
 // public endpoint (and would risk email link-scanners auto-approving). Instead

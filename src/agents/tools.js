@@ -105,6 +105,7 @@ for (const s of companySpecialistRoster()) AGENT_ALLOWLIST[s.key] = companySpeci
 export const CHIEF_ONLY_TOOLS = new Set([
   "delegate", // only the chief delegates; a specialist delegating would break isolation
   "send_email", "send_sms", "send_imessage", "reply_email", "reply_to_message",
+  "draft_email", // chief-only (writes into a family mailbox); ungated since it never sends
   "place_order", "run_grocery_order", "create_calendar_event",
 ]);
 
