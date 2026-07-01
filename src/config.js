@@ -29,6 +29,17 @@ export function modelForComplexity(complexity, highStakes = false) {
   }
 }
 
+// Model tier for a turn, factoring the channel. VOICE turns run on the fast tier
+// (Haiku) for snappy conversation, EXCEPT high-stakes or complex asks, which keep
+// their escalated model (quality + safety; the confirmation gate applies regardless).
+// Disable the voice fast-path with COS_VOICE_FAST=false. Pure (env-driven) + tested.
+export function modelForTurn({ channel, complexity, high_stakes = false } = {}) {
+  const base = modelForComplexity(complexity, high_stakes);
+  const voiceFast = String(process.env.COS_VOICE_FAST ?? "true").toLowerCase() !== "false";
+  if (channel === "voice" && voiceFast && !high_stakes && complexity !== "complex") return MODELS.triage;
+  return base;
+}
+
 // ---------------------------------------------------------------------------
 // Per-specialist model tier (cost lever). Specialists used to all run on
 // `standard` (Sonnet). Route DOWN the ones whose work is pattern-matching and

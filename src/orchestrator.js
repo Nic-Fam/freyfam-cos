@@ -1,5 +1,5 @@
 import { agentLoop, systemBlocks } from "./claude.js";
-import { modelForComplexity, GRAPH, BUDGET } from "./config.js";
+import { modelForComplexity, modelForTurn, GRAPH, BUDGET } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
@@ -1385,7 +1385,7 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     }
   } else {
     const t = await triageInbound(triageText);
-    const model = modelForComplexity(t.complexity, t.high_stakes);
+    const model = modelForTurn({ channel: msg.channel, complexity: t.complexity, high_stakes: t.high_stakes });
     text = await runChief(msg.body || "(photo message)", model, {
       content,
       images,
