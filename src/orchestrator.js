@@ -24,6 +24,7 @@ import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchAmazonOrders } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
+import { ingestChaseCsv, isChaseCsvAttachment } from "./chase-csv.js";
 import { budgetChartSvg, renderBudgetChartPng } from "./budget-chart.js";
 import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
@@ -1259,6 +1260,26 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   // handed to extractDocuments, which only keeps PDF/.ics/.vcf and dropped images as
   // "unsupported type" — so a photo emailed to Lloyd never reached Shey/Carmine.
   const attachments = await collectAttachments(msg);
+
+  // Chase CSV auto-import: a forwarded "Download account activity" CSV (checking
+  // or credit) from a family/self address is ingested straight into the finance
+  // log (deduped, non-spend rows dropped) and acknowledged — not run through
+  // triage. This is the reliable path for checking, which Chase mostly doesn't
+  // alert per-transaction. Only family/self senders, so a stranger can't inject
+  // finance rows.
+  if (isFamilyAddress(msg.from) || isSelfAddress(msg.from)) {
+    const csv = attachments.find((a) => isChaseCsvAttachment(a));
+    if (csv) {
+      try {
+        const r = await ingestChaseCsv(csv.bytes.toString("utf8"));
+        await transport.reply(r.summary);
+      } catch (e) {
+        await transport.reply(`I couldn't import that Chase CSV: ${e.message}`);
+      }
+      return;
+    }
+  }
+
   const { imageAtts, audioAtts, docAtts } = splitAttachmentsByKind(attachments);
 
   // MMS/Slack media (msg.media) + emailed/iMessage image attachments share ONE vision
