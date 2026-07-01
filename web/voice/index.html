@@ -63,7 +63,18 @@
   var qk=new URLSearchParams(location.search).get('k');
   if(qk){try{localStorage.setItem('voiceToken',qk);}catch(e){}}
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
-  var rec=null,chunks=[],recording=false,busy=false;
+  var rec=null,chunks=[],recording=false,busy=false,actx=null;
+  function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
+  function playB64(b64,type){
+    return new Promise(function(resolve){
+      function fallback(){try{var a=new Audio('data:'+(type||'audio/mpeg')+';base64,'+b64);a.onended=function(){resolve();};a.play().catch(function(){resolve();});}catch(e){resolve();}}
+      try{
+        var ctx=ensureCtx(); if(!ctx){return fallback();}
+        var bin=atob(b64),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+        ctx.decodeAudioData(u.buffer,function(buf){var s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);s.onended=function(){resolve();};s.start(0);},function(){fallback();});
+      }catch(e){fallback();}
+    });
+  }
   function hintGone(){var h=log.querySelector('.hint');if(h)h.remove();}
   function bubble(t,who){hintGone();var b=document.createElement('div');b.className='bubble '+(who==='you'?'you':'ll');b.textContent=t;log.appendChild(b);log.scrollTop=log.scrollHeight;return b;}
   function setRec(on){wrap.classList.toggle('rec',on);}
@@ -87,11 +98,12 @@
       if(data.transcript)bubble(data.transcript,'you');
       if(data.reply)bubble(data.reply,'ll');
       status.textContent='Tap to talk';
-      if(data.audio){var a=new Audio('data:'+(data.audioType||'audio/mpeg')+';base64,'+data.audio);setRec(true);status.textContent='Speaking…';a.onended=function(){setRec(false);status.textContent='Tap to talk';};a.play().catch(function(){setRec(false);});}
+      if(data.audio){setRec(true);status.textContent='Speaking…';await playB64(data.audio,data.audioType);setRec(false);status.textContent='Tap to talk';}
+      else if(data.reply){status.textContent='(no audio — check silent switch)';}
     }catch(e){fail('Connection problem — try again');}
     busy=false;
   }
-  mic.addEventListener('click',function(){if(busy)return;if(!recording)start();else stop();});
+  mic.addEventListener('click',function(){ensureCtx();if(busy)return;if(!recording)start();else stop();});
 })();
 </script>
 </body>
