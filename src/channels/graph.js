@@ -443,6 +443,21 @@ export async function sendMail({ to, subject, body, cc, bcc, html = false }) {
 }
 
 /**
+ * Send a mail with a single file attachment (e.g. the budget-burn PNG chart).
+ * `attachment` = { bytes:Buffer, filename, contentType }.
+ */
+export async function sendMailWithAttachment({ to, subject, body = "", attachment, cc, bcc, html = false } = {}) {
+  const message = buildMailMessage({ to, subject, body, cc, bcc, html });
+  message.attachments = [{
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: attachment?.filename || "attachment.bin",
+    contentType: attachment?.contentType || "application/octet-stream",
+    contentBytes: Buffer.isBuffer(attachment?.bytes) ? attachment.bytes.toString("base64") : String(attachment?.bytes || ""),
+  }];
+  await graph().api(`/users/${GRAPH.mailbox}/sendMail`).post({ message, saveToSentItems: true });
+}
+
+/**
  * Send a mail with an audio (or file) attachment — Lloyd's audible voice reply over
  * email. `audio` = { bytes:Buffer, filename, contentType }.
  */

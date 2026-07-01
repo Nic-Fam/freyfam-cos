@@ -353,6 +353,24 @@ export const AMAZON_DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
 };
 
+// Monthly budget burn: track cumulative spend as a % of anticipated monthly
+// income, day-by-day, against a savings target (spend cap = income * (1 - rate)).
+// Income is a fixed figure (set BUDGET_MONTHLY_INCOME); until it's set the
+// tracker reports "income not set" instead of dividing by zero. savingsRate is
+// the fraction of income to keep (default 20% -> spend cap 80%).
+export const BUDGET = {
+  monthlyIncome: Number(process.env.BUDGET_MONTHLY_INCOME || 0), // anticipated monthly income ($); 0 = unset
+  savingsRate: Math.min(Math.max(Number(process.env.BUDGET_SAVINGS_RATE ?? 0.1), 0), 0.95), // default 10%
+  // Known fixed monthly outflows that DON'T appear in Patrick's transaction feed
+  // (paid from an account he can't see) — e.g. Shelli's $249 student loan, paid
+  // from her own account. Counted as committed-for-the-month so "% of income
+  // consumed" reflects reality, not just the card+checking Patrick tracks.
+  offBookMonthly: Number(process.env.BUDGET_OFFBOOK_MONTHLY || 0),
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  emailTo: (process.env.BUDGET_EMAIL_TO || process.env.FINANCE_REPORT_EMAIL_TO || "nic@freyfam.com")
+    .split(",").map((s) => s.trim()).filter(Boolean),
+};
+
 // Azure Maps: precise commute times with live traffic (geocode + route).
 // Ported from the legacy assistant; powers the chief's commute_time tool.
 export const MAPS = {

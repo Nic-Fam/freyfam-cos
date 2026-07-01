@@ -1,5 +1,5 @@
 import { agentLoop, systemBlocks } from "./claude.js";
-import { modelForComplexity, GRAPH } from "./config.js";
+import { modelForComplexity, GRAPH, BUDGET } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
@@ -15,7 +15,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, sendVoiceMail, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { synthesizeSpeech, ttsConfigured } from "./tts.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
@@ -23,6 +23,8 @@ import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
 import { fetchAmazonOrders } from "./amazon-orders.js";
+import { budgetStatus, formatBudget } from "./budget.js";
+import { budgetChartSvg, renderBudgetChartPng } from "./budget-chart.js";
 import { printDocument, listPrinters } from "./channels/printer.js";
 import { fetchInboundMedia } from "./media.js";
 import { extractDocuments, fetchDocument } from "./documents.js";
@@ -249,6 +251,18 @@ const tools = [
         maxOrders: { type: "number" },
       },
     },
+  },
+  {
+    name: "budget_status",
+    description:
+      "Where the family is on this month's budget: cumulative spend as a % of monthly income, day-by-day, against the savings-goal spend cap (income minus the savings rate). Counts Patrick-visible spend PLUS known off-book fixed commitments (e.g. Shelli's student loan). Read-only. Use it for 'how are we doing on the budget / are we on track to save this month'. Returns a text summary; call budget_chart to also send the day-by-day chart image.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "budget_chart",
+    description:
+      "Render the month's budget-burn chart (cumulative spend % vs the savings-cap line, day-by-day) and EMAIL it to the owner as a PNG. Use when the family wants to see the trend, not just the number. Read-only (self-report to the owner, no third party). Falls back to the text summary if the image can't be rendered.",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "fetch_document",
@@ -809,6 +823,30 @@ function toolHandlers({ images, onDelegate } = {}) {
         return JSON.stringify(await fetchAmazonOrders({ pages, maxOrders }));
       } catch (e) {
         return `Could not read Amazon orders: ${e.message}`;
+      }
+    },
+    budget_status: async () => {
+      try {
+        return formatBudget(await budgetStatus());
+      } catch (e) {
+        return `Could not read budget status: ${e.message}`;
+      }
+    },
+    budget_chart: async () => {
+      const s = await budgetStatus();
+      if (!s.incomeSet) return formatBudget(s); // nothing to chart until income is set
+      const summary = formatBudget(s);
+      try {
+        const png = await renderBudgetChartPng(budgetChartSvg(s));
+        await sendMailWithAttachment({
+          to: BUDGET.emailTo,
+          subject: `Budget burn — ${s.ym} (day ${s.day}/${s.daysInMonth}), ${s.pctOfIncome}% of income`,
+          body: summary,
+          attachment: { bytes: png, filename: `budget-${s.ym}.png`, contentType: "image/png" },
+        });
+        return `Sent the budget-burn chart to the owner.\n${summary}`;
+      } catch (e) {
+        return `Couldn't render/email the chart (${e.message}); here's the summary:\n${summary}`;
       }
     },
     track_shipment: async ({ subject, body, description }) => {
