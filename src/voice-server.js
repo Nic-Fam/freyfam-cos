@@ -53,15 +53,26 @@ function authed(req, url) {
 async function handleVoice(req, res, url) {
   if (!authed(req, url)) { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
   const contentType = req.headers["content-type"] || "audio/mp4";
-  let bytes;
-  try { bytes = await readBody(req); } catch { res.writeHead(413).end(); return; }
-  if (!bytes?.length) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no audio" })); return; }
+  let body;
+  try { body = await readBody(req); } catch { res.writeHead(413).end(); return; }
+  if (!body?.length) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "empty request" })); return; }
 
-  const transcript = await transcribeAudio({ bytes, contentType, name: "voice.m4a" });
-  if (!transcript) {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ transcript: "", reply: "Sorry, I couldn't make that out. Try again?", audio: null }));
-    return;
+  // Two input modes: JSON { text, speak } for typed input (quiet mode, skips STT),
+  // or a raw audio body for voice. `speak` defaults true for voice, false for text.
+  let transcript = "";
+  let speak = true;
+  if (contentType.includes("application/json")) {
+    let j; try { j = JSON.parse(body.toString("utf8") || "{}"); } catch { j = {}; }
+    transcript = String(j.text || "").trim();
+    speak = j.speak === true; // typed input is silent unless the client asks to hear it
+    if (!transcript) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no text" })); return; }
+  } else {
+    transcript = await transcribeAudio({ bytes: body, contentType, name: "voice.m4a" });
+    if (!transcript) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ transcript: "", reply: "Sorry, I couldn't make that out. Try again?", audio: null }));
+      return;
+    }
   }
 
   // Run Lloyd's full pipeline with a capturing transport (no channel send).
@@ -73,8 +84,8 @@ async function handleVoice(req, res, url) {
     log.error("voice turn failed", { reason: String(err?.message || err) });
     reply = reply || "Something went wrong on my end. Try again in a moment.";
   }
-  const audio = await synthesizeSpeech(reply);
-  log.info("voice turn", { chars: transcript.length, replyChars: reply.length, spoke: !!audio });
+  const audio = speak ? await synthesizeSpeech(reply) : null;
+  log.info("voice turn", { chars: transcript.length, replyChars: reply.length, mode: contentType.includes("application/json") ? "text" : "voice", spoke: !!audio });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ transcript, reply, audio: audio ? audio.bytes.toString("base64") : null, audioType: audio?.contentType || null }));
 }

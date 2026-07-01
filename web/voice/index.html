@@ -55,6 +55,14 @@
         </svg>
       </button>
     </div>
+    <form id="typeform" style="display:flex;gap:8px;width:100%">
+      <input id="typein" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="or type to Lloyd…"
+        style="flex:1;min-width:0;padding:11px 14px;border-radius:22px;border:.5px solid var(--line2);background:var(--card);color:var(--text);font-size:16px;outline:none" />
+      <button id="typesend" type="submit" aria-label="Send"
+        style="flex:0 0 auto;width:44px;border-radius:22px;border:.5px solid var(--line2);background:var(--accent-bg);color:var(--accent);display:flex;align-items:center;justify-content:center;padding:0">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
   </footer>
 <script>
 (function(){
@@ -130,6 +138,20 @@
   }
   function resumeListen(){ speaking=false; if(session) status.textContent='Listening… just talk (tap to stop)'; }
   mic.addEventListener('click',function(){ ensureCtx(); if(!session) startSession(); else stopSession(); });
+  var typein=document.getElementById('typein');
+  document.getElementById('typeform').addEventListener('submit',async function(e){
+    e.preventDefault();
+    var val=(typein.value||'').trim(); if(!val)return;
+    typein.value=''; typein.blur();
+    bubble(val,'you'); status.textContent='Thinking…';
+    try{
+      var res=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:val,speak:false})});
+      if(res.status===401){ fail('Not authorized — check the link'); return; }
+      var data=await res.json();
+      if(data.reply)bubble(data.reply,'ll');
+    }catch(err){ bubble('(connection problem — try again)','ll'); }
+    status.textContent = session ? 'Listening… just talk (tap to stop)' : 'Tap to talk';
+  });
 })();
 </script>
 </body>
