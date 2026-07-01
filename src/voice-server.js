@@ -59,7 +59,9 @@ function authed(req, url) {
 const FILLER_PHRASES = (process.env.VOICE_FILLER_TEXT || "")
   .split("|").map((s) => s.trim()).filter(Boolean);
 if (!FILLER_PHRASES.length) FILLER_PHRASES.push(
-  "One moment.", "Give me a sec.", "Let me check.", "On it.", "Hang on a moment.", "Looking into that."
+  "One moment.", "Let me check on that.", "Good question, let me look.", "Give me a sec.",
+  "On it.", "Let me think on that one.", "Hmm, let me pull that up.", "Working on it.",
+  "Let me look into that.", "Sure, one sec."
 );
 const _fillerCache = new Array(FILLER_PHRASES.length); // index -> bytes | null | undefined
 async function serveFiller(res, url) {
@@ -110,12 +112,36 @@ async function handleVoice(req, res, url) {
     }
   }
 
-  // Wake-word gate (voice only, when the tile enables it via ?wake=1). In a noisy
-  // cabin the VAD fires on radio/passengers; STT is cheap, so we gate BEFORE the
-  // expensive model turn + TTS and drop anything that doesn't actually address
-  // Lloyd. Homophones ("Loyd"/"Floyd") are accepted since STT often mishears the
-  // name. A bare "Lloyd" (no command) gets a quick spoken "Yes?" with no model call.
   const wakeMode = url.searchParams.get("wake") === "1" && !contentType.includes("application/json");
+  const sttOnly = url.searchParams.get("stt") === "1";
+
+  // Two-phase for voice: the tile first asks for STT only (?stt=1) so it can show
+  // what Lloyd heard + apply the wake gate BEFORE the expensive model turn, then
+  // POSTs the command back as JSON for the answer. This gives an immediate "heard
+  // you" + a clear "thinking" state instead of dead air. STT is cheap; the model
+  // turn + TTS is the costly part, so in a noisy cabin non-commands cost nothing.
+  if (sttOnly) {
+    if (wakeMode && !WAKE_RE.test(transcript)) {
+      log.info("voice STT ignored (no wake word)", { chars: transcript.length });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ transcript, accepted: false }));
+      return;
+    }
+    const command = wakeMode ? stripWake(transcript) : transcript;
+    if (wakeMode && !command) {
+      // Addressed by name with no command -> quick spoken "Yes?", no model call.
+      const ack = await synthesizeSpeech("Yes?");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ transcript, accepted: true, command: "", reply: "Yes?", audio: ack ? ack.bytes.toString("base64") : null, audioType: ack?.contentType || null }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ transcript, accepted: true, command }));
+    return;
+  }
+
+  // Single-shot legacy path (audio without ?stt=1): keep the inline wake gate so an
+  // older cached tile still works.
   if (wakeMode) {
     if (!WAKE_RE.test(transcript)) {
       log.info("voice turn ignored (no wake word)", { chars: transcript.length });

@@ -37,6 +37,11 @@
   .rec .mic{background:var(--accent-bg);color:var(--accent);border-color:transparent}
   .rec .ring{animation:pulse 1.5s ease-out infinite}
   @keyframes pulse{0%{transform:scale(1);opacity:.6}70%{transform:scale(1.9);opacity:0}100%{opacity:0}}
+  .think .mic{color:var(--accent);border-color:transparent;background:var(--accent-bg)}
+  .think .ring{animation:pulse 2s ease-out infinite;background:rgba(226,180,74,.16)}
+  .dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin:0 1px;opacity:.3;animation:blink 1s infinite}
+  .dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
 </style>
 </head>
 <body>
@@ -75,8 +80,10 @@
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
   var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,noiseFloor=0.03,utterStart=0,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
   var MAXUTTER=12000; // failsafe: even in steady road noise, close+send an utterance after this
+  var END_SILENCE=1500; // pause after you stop before we consider the sentence done (was 900 — too eager, cut people off)
   var wakeOn=(function(){try{return localStorage.getItem('wakeWord')!=='0';}catch(e){return true;}})(); // default on
   function listenLabel(){ return session ? (wakeOn?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
+  function setThinking(on){ wrap.classList.toggle('think',!!on); if(on) status.innerHTML='Thinking<span class="dots"><span></span><span></span><span></span></span>'; }
   function ensureCtx(){try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}return actx;}
   var fillerBufs=[];
   async function loadFiller(){ if(fillerBufs.length||!actx)return; try{
@@ -85,13 +92,20 @@
   }catch(e){} }
   function playFiller(){ try{ if(fillerBufs.length&&actx){ var b=fillerBufs[Math.floor(Math.random()*fillerBufs.length)]; var s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(0); } }catch(e){} }
   function stopPlayback(){ try{ if(curSource){curSource.onended=null;curSource.stop();} }catch(e){} curSource=null; try{ if(curAudioEl){curAudioEl.pause();curAudioEl.src='';} }catch(e){} curAudioEl=null; }
-  function playB64(b64,type){
+  // Reveal `text` into `el` over `ms`, so his reply appears on screen roughly in
+  // step with his voice (typewriter feel). Cancelled if a newer reveal starts.
+  var revealTok=0;
+  function revealInto(el,text,ms){ if(!el)return; var me=++revealTok,n=text.length,start=performance.now(),dur=Math.max(400,ms||n/16*1000);
+    function step(){ if(me!==revealTok)return; var p=Math.min(1,(performance.now()-start)/dur); el.textContent=text.slice(0,Math.ceil(p*n)); log.scrollTop=log.scrollHeight; if(p<1)requestAnimationFrame(step); else el.textContent=text; }
+    requestAnimationFrame(step);
+  }
+  function playB64(b64,type,reveal){
     return new Promise(function(resolve){
-      function fallback(){try{var a=new Audio('data:'+(type||'audio/mpeg')+';base64,'+b64);curAudioEl=a;a.onended=function(){curAudioEl=null;resolve();};a.play().catch(function(){resolve();});}catch(e){resolve();}}
+      function fallback(){try{var a=new Audio('data:'+(type||'audio/mpeg')+';base64,'+b64);curAudioEl=a;if(reveal)revealInto(reveal.el,reveal.text,0);a.onended=function(){curAudioEl=null;resolve();};a.play().catch(function(){resolve();});}catch(e){resolve();}}
       try{
         var ctx=ensureCtx(); if(!ctx){return fallback();}
         var bin=atob(b64),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
-        ctx.decodeAudioData(u.buffer,function(buf){var s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);curSource=s;s.onended=function(){curSource=null;resolve();};s.start(0);},function(){fallback();});
+        ctx.decodeAudioData(u.buffer,function(buf){var s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);curSource=s;if(reveal)revealInto(reveal.el,reveal.text,buf.duration*1000);s.onended=function(){curSource=null;resolve();};s.start(0);},function(){fallback();});
       }catch(e){fallback();}
     });
   }
@@ -139,29 +153,48 @@
       // Adapt the noise floor only when quiet and not mid-utterance, so changing road
       // noise moves the gate with it instead of being mistaken for speech.
       if(!utterRec) noiseFloor=noiseFloor*0.9+l*0.1;
-      if(utterRec && now-lastVoice>900) endUtterance();
+      if(utterRec && now-lastVoice>END_SILENCE) endUtterance();
     }
     // Failsafe: never let sustained noise hold an utterance open forever (would mean
     // the filler + reply never fire) — force close+send after MAXUTTER.
     if(utterRec && now-utterStart>MAXUTTER) endUtterance();
   }
-  function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
+  function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} setThinking(false); speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
   async function sendUtterance(blob){
-    // Open mode: play the instant filler now. Wake-word mode: don't — we don't yet
-    // know if this was meant for Lloyd, and a "one moment" on the radio is noise.
+    // Open mode: play the instant filler now. Wake mode: hold it — we don't yet know
+    // if this was for Lloyd, and a "one moment" on the radio is just more noise.
     if(!wakeOn) playFiller();
     var ac=new AbortController(); playAbort=ac;
     try{
-      var res=await fetch('/voice?k='+encodeURIComponent(token)+'&wake='+(wakeOn?'1':'0'),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
-      if(res.status===401){ fail('Not authorized — check the link'); session=false; return; }
-      var data=await res.json();
-      if(ac.signal.aborted) return; // user barged in during the request
-      if(data.ignored){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // not addressed to Lloyd — keep listening, no bubbles
-      if(data.transcript)bubble(data.transcript,'you');
-      if(data.reply)bubble(data.reply,'ll');
-      if(data.audio){ status.textContent='Speaking…'; await playB64(data.audio,data.audioType); }
-      else if(data.reply){ status.textContent='(no audio — check silent switch)'; }
-    }catch(e){ if(e&&e.name==='AbortError'){ return; } bubble('(connection problem — I didn’t catch that)','ll'); }
+      // Phase 1 — STT only: fast, so we can SHOW what he heard + decide the wake word
+      // before spending a model turn. This is the "I heard you" acknowledgment.
+      var r1=await fetch('/voice?k='+encodeURIComponent(token)+'&stt=1&wake='+(wakeOn?'1':'0'),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
+      if(r1.status===401){ fail('Not authorized — check the link'); session=false; return; }
+      var d1=await r1.json();
+      if(ac.signal.aborted) return;
+      if(!d1.accepted){ // wake word not heard — say why (briefly), then keep listening
+        if(wakeOn){ status.textContent='(say “Lloyd” first)'; setTimeout(function(){ if(session&&!speaking&&!utterRec) status.textContent=listenLabel(); },1600); }
+        if(playAbort===ac) playAbort=null; resumeListen(); return;
+      }
+      try{ if(navigator.vibrate) navigator.vibrate(25); }catch(e){} // haptic "got it"
+      if(d1.transcript) bubble(d1.transcript,'you');
+      var command=(d1.command!=null?d1.command:d1.transcript)||'';
+      if(!command){ // addressed by name only ("Lloyd") — server may have sent a spoken "Yes?"
+        if(d1.reply){ var yb=bubble('','ll'); status.textContent='Speaking…'; if(d1.audio) await playB64(d1.audio,d1.audioType,{el:yb,text:d1.reply}); else yb.textContent=d1.reply; }
+        if(playAbort===ac) playAbort=null; resumeListen(); return;
+      }
+      if(wakeOn) playFiller();     // confirmed command — spoken "let me check…" cue
+      setThinking(true);            // visible thinking state until the answer lands
+      // Phase 2 — the model turn (+ TTS), sent as text so we don't re-upload audio.
+      var r2=await fetch('/voice?k='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:command,speak:true}),signal:ac.signal});
+      if(r2.status===401){ fail('Not authorized — check the link'); session=false; return; }
+      var d2=await r2.json();
+      if(ac.signal.aborted) return;
+      setThinking(false);
+      var lb=bubble('','ll');
+      if(d2.audio){ status.textContent='Speaking…'; await playB64(d2.audio,d2.audioType,{el:lb,text:d2.reply||''}); }
+      else { lb.textContent=d2.reply||''; if(d2.reply) status.textContent='(no audio — check silent switch)'; }
+    }catch(e){ setThinking(false); if(e&&e.name==='AbortError'){ return; } bubble('(connection problem — I didn’t catch that)','ll'); }
     if(playAbort===ac) playAbort=null;
     resumeListen();
   }
