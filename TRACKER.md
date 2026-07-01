@@ -154,6 +154,17 @@ suite (~300 tests).
             kickstart `com.freyfam.frank`). Test-run synced Frank to latest main and the
             `delegate({agent:"security"})` round-trip still returns text. Mirrors Lloyd's
             mini job. **Frank fully live + self-updating.**
+      - [x] **Frank network device monitor — DONE 2026-07-01.** `deploy/security/netscan.mjs`:
+            ping-sweep + ARP diff of the local /24 vs gitignored `data/network-baseline.json`;
+            `--record-findings` logs each unknown device as a `medium` security finding in
+            Frank's local store (MAC-keyed, deduped so re-runs don't spam).
+            `deploy/com.freyfam.frank.netscan.plist` = 30-min launchd timer (staged in repo;
+            install with `cp` to `~/Library/LaunchAgents/` + `launchctl bootstrap`). Lloyd side:
+            `heartbeat.maybeNetworkScan()` pulls Frank's open new-device findings over the LAN
+            delegate and `notifyOwner`s them — detection on Frank, outbound on Lloyd (constraint
+            2); inert unless security is wired remote, hourly via `NETWORK_SCAN_INTERVAL_MS`.
+            First scan flagged a **Lorex device (192.168.50.222) on the MAIN subnet** — verify
+            it's the NVR mgmt interface vs a leak off the segmented camera subnet.
 
 **Recently shipped (2026-06-23 → 06-25), not mapped to a letter:**
 - **Inbound image intake hardened** — byte-sniffed `media_type` + iPhone **HEIC→JPEG**
