@@ -442,6 +442,23 @@ export async function sendMail({ to, subject, body, cc, bcc, html = false }) {
     .post({ message, saveToSentItems: true });
 }
 
+/**
+ * Send a mail with an audio (or file) attachment — Lloyd's audible voice reply over
+ * email. `audio` = { bytes:Buffer, filename, contentType }.
+ */
+export async function sendVoiceMail({ to, subject, audio, body = "", cc, bcc } = {}) {
+  const message = buildMailMessage({ to, subject, body: body || "(voice reply attached)", cc, bcc });
+  message.attachments = [{
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: audio?.filename || "lloyd.mp3",
+    contentType: audio?.contentType || "audio/mpeg",
+    contentBytes: Buffer.isBuffer(audio?.bytes) ? audio.bytes.toString("base64") : String(audio?.bytes || ""),
+  }];
+  await graph()
+    .api(`/users/${GRAPH.mailbox}/sendMail`)
+    .post({ message, saveToSentItems: true });
+}
+
 // Resolve which family mailbox a draft is saved into. Default Nic. Accepts a
 // person key ("nic"/"shelli") or a full address. Pure + exported for tests.
 const DRAFT_MAILBOXES = {

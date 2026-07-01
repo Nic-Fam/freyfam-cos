@@ -1,27 +1,21 @@
-import twilio from "twilio";
-import { TWILIO } from "../config.js";
+// RETIRED 2026-06-30. Twilio SMS is not an option for this assistant: the A2P /
+// toll-free / long-code approval regime repeatedly rejected the use case, and the
+// Twilio account has been closed. Every owner notification now goes through the
+// live channels (email + Slack) in channels/notify.js. This module is kept only as
+// a safe stub so any lingering import can't construct a Twilio client or make a
+// call against the dead account — sendSms is a logged no-op. Do NOT reintroduce
+// Twilio; the family text channel is iMessage (BlueBubbles).
 
-const client = twilio(TWILIO.accountSid, TWILIO.authToken);
+import { createLogger } from "../log.js";
 
-/**
- * Send an SMS. Prefers a Messaging Service (recommended for production:
- * sender pool, pumping protection, delivery features) and falls back to a
- * plain From number.
- */
-// Twilio rejects a single request body over 1600 chars. Truncate so a long
-// proactive result / digest still delivers (the full version also goes by email).
-const SMS_MAX = 1590;
+const log = createLogger("twilio");
 
-export async function sendSms(to, body) {
-  let text = String(body ?? "");
-  if (text.length > SMS_MAX) text = text.slice(0, SMS_MAX - 1) + "…";
-  const opts = { to, body: text };
-  if (TWILIO.messagingServiceSid) opts.messagingServiceSid = TWILIO.messagingServiceSid;
-  else opts.from = TWILIO.from;
-  const msg = await client.messages.create(opts);
-  return msg.sid;
+/** Retired: never sends. Logged no-op so a stray caller degrades quietly. */
+export async function sendSms(to, _body) {
+  log.warn("sendSms is retired (Twilio closed) — dropping; use notify.js (email+Slack)", { to });
+  return null;
 }
 
 export function notifyOwner(body) {
-  return sendSms(TWILIO.owner, body);
+  return sendSms(undefined, body);
 }

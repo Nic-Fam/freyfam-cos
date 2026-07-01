@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MODELS } from "./config.js";
 import { companyKeyForAgent, companyByKey } from "./companies.js";
-import { notifyOwner } from "./channels/twilio.js";
+import { notifyOwner } from "./channels/notify.js"; // live owner channel (email+Slack); Twilio retired
 import { createLogger } from "./log.js";
 
 const log = createLogger("cost-ledger");

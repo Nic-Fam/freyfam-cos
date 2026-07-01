@@ -48,6 +48,35 @@ export async function sendImessage(target, body) {
   return json?.data?.guid; // message guid, analogous to a Twilio message SID
 }
 
+/**
+ * Send an audio (or any) attachment over iMessage via BlueBubbles — used for
+ * Lloyd's audible voice replies. Multipart to the attachment endpoint; the file
+ * plays inline in Messages. Best-effort caller: throws on failure so the caller
+ * can fall back to the text reply it already sent.
+ */
+export async function sendImessageAudio(target, { bytes, filename = "lloyd.mp3", contentType = "audio/mpeg" } = {}) {
+  if (!IMESSAGE.enabled) throw new Error("iMessage is not configured (set IMESSAGE_SERVER_URL + IMESSAGE_PASSWORD).");
+  if (!target) throw new Error("sendImessageAudio requires a target (chatGuid or handle).");
+  if (!bytes || !bytes.length) throw new Error("sendImessageAudio requires audio bytes.");
+
+  const form = new FormData();
+  form.append("tempGuid", `cos-${Date.now()}-${filename}`); // BlueBubbles needs a unique temp id
+  form.append("name", filename);
+  form.append("method", SEND_METHOD);
+  if (isChatGuid(target)) form.append("chatGuid", target);
+  else form.append("address", String(target));
+  form.append("attachment", new Blob([bytes], { type: contentType }), filename);
+
+  const url = `${IMESSAGE.serverUrl}/api/v1/message/attachment?password=${encodeURIComponent(IMESSAGE.password)}`;
+  const res = await fetch(url, { method: "POST", body: form });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`BlueBubbles attachment send failed: ${res.status} ${detail}`.trim());
+  }
+  const json = await res.json().catch(() => ({}));
+  return json?.data?.guid;
+}
+
 export function notifyOwnerImessage(body) {
   // Owner's iMessage handle (phone/Apple ID). Falls back to no-op if unset so a
   // caller can prefer iMessage and degrade to the SMS notifyOwner elsewhere.

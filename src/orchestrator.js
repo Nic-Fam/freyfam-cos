@@ -14,8 +14,9 @@ import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
-import { sendImessage } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
+import { recentMailSignals, sendMail, sendVoiceMail, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { synthesizeSpeech, ttsConfigured } from "./tts.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
@@ -564,6 +565,35 @@ export function replySubject(subject) {
   const s = String(subject || "").trim();
   if (!s) return "Re: your note";
   return /^re:\s/i.test(s) ? s : `Re: ${s}`;
+}
+
+// Tier 1 voice: when the family sends a voice note, speak Lloyd's answer back on the
+// SAME channel (voice in -> voice out). Additive to the text reply, best-effort, and
+// gated: only on a voice-note turn, only when TTS is configured, and off if
+// COS_VOICE_REPLY=false. iMessage + email carry audio today; Slack audio is a
+// fast-follow (its text reply still lands). Never throws to the caller.
+export async function maybeVoiceReply(msg, text, { hadVoiceNote = false, deps = {} } = {}) {
+  if (!hadVoiceNote) return false;
+  if (String(process.env.COS_VOICE_REPLY ?? "true").toLowerCase() === "false") return false;
+  const { synth = synthesizeSpeech, imessageAudio = sendImessageAudio, voiceMail = sendVoiceMail, configured = ttsConfigured } = deps;
+  if (!configured()) return false;
+  const audio = await synth(text);
+  if (!audio) return false;
+  const target = msg.replyTo || msg.from;
+  try {
+    if (msg.channel === "imessage") {
+      await imessageAudio(target, { bytes: audio.bytes, filename: "lloyd.mp3", contentType: audio.contentType });
+    } else if (msg.channel === "email") {
+      await voiceMail({ to: target, subject: replySubject(msg.subject), audio: { bytes: audio.bytes, filename: "lloyd-reply.mp3", contentType: audio.contentType }, body: "Voice reply from Lloyd is attached." });
+    } else {
+      return false; // slack/other: text reply already delivered; audio deferred
+    }
+    log.info("voice reply sent", { channel: msg.channel });
+    return true;
+  } catch (err) {
+    log.warn("voice reply failed (text reply already delivered)", { channel: msg.channel, reason: String(err?.message || err) });
+    return false;
+  }
 }
 
 // deps injectable for tests; default to the real channel functions.
@@ -1282,6 +1312,10 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
 
   // 4. Deliver via the transport (channel reply for SMS/email; channel post for Slack).
   await transport.reply(text);
+  // 4b. Audible reply (Tier 1 voice): if the family SENT a voice note, also speak the
+  //     answer back on the same channel. Additive + best-effort — the text reply above
+  //     always stands, so a TTS/send failure loses nothing.
+  await maybeVoiceReply(msg, text, { hadVoiceNote: audioAtts.length > 0 }).catch(() => {});
   // 5. Record the exchange so the next message from this sender has context.
   await appendTurn(convoKey, triageText || msg.body || "(photo message)", text);
   return text;
