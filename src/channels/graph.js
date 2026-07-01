@@ -310,10 +310,42 @@ function calendarOwner(mailbox) {
 }
 
 /**
+ * A tiny time-boxed, single-value-per-key cache. Kept generic + injectable-clock
+ * so the TTL and invalidation logic is unit-testable without a live Graph client.
+ * ttlMs <= 0 disables caching entirely (every get() runs produce()).
+ */
+export function makeTtlCache(ttlMs, now = Date.now) {
+  const store = new Map();
+  return {
+    async get(key, produce) {
+      if (ttlMs > 0) {
+        const hit = store.get(key);
+        if (hit && now() - hit.at < ttlMs) return hit.data;
+      }
+      const data = await produce();
+      if (ttlMs > 0) store.set(key, { at: now(), data });
+      return data;
+    },
+    clear() { store.clear(); },
+    size() { return store.size; },
+  };
+}
+
+// Short-TTL cache for listEvents so repeat calendar reads (a voice back-and-forth,
+// the digest's several passes) skip the ~4s Graph calendarView fetch -- the real
+// latency floor for "what's on my calendar". TTL is short so a stale calendar is
+// never served for long; createEvent/deleteEvent clear it so a just-changed event
+// always shows on the next read. Set COS_CALENDAR_CACHE_TTL_MS=0 to disable.
+const calendarCache = makeTtlCache(Number(process.env.COS_CALENDAR_CACHE_TTL_MS ?? 60000));
+export function clearCalendarCache() {
+  calendarCache.clear();
+}
+
+/**
  * Merge the family calendars (GRAPH.calendars) over [today, +days], sorted by
  * start. An event invited to both calendars is deduped (subject+start), keeping
  * the union of owners in `calendars`. One mailbox erroring does not sink the
- * rest. `top` caps the merged result.
+ * rest. `top` caps the merged result. Cached for a short TTL (see calendarCache).
  */
 export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = {}) {
   const win = Math.min(Math.max(1, Math.round(days || GRAPH.calendarDays)), 120); // clamp 1..120 days
@@ -321,29 +353,32 @@ export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = 
   // Scale the cap with the window so a longer look-ahead isn't silently truncated
   // (work free/busy adds several blocks/day). Caller can still override `top`.
   const cap = top ?? Math.min(300, Math.max(50, (win + lookBack) * 8));
-  const window = familyDateWindow(win, new Date(), { back: lookBack });
-  const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
-  const byKey = new Map();
-  for (const r of per) {
-    if (r.status !== "fulfilled") continue;
-    for (const e of r.value) {
-      const key = `${e.subject}|${e.start}`;
-      const existing = byKey.get(key);
-      if (existing) {
-        existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
-        const seen = new Set(existing.refs.map((r) => r.id));
-        existing.refs = [...existing.refs, ...e.refs.filter((r) => !seen.has(r.id))];
-      } else byKey.set(key, e);
+  return calendarCache.get(`${cap}|${win}|${lookBack}`, async () => {
+    const window = familyDateWindow(win, new Date(), { back: lookBack });
+    const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
+    const byKey = new Map();
+    for (const r of per) {
+      if (r.status !== "fulfilled") continue;
+      for (const e of r.value) {
+        const key = `${e.subject}|${e.start}`;
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
+          const seen = new Set(existing.refs.map((r) => r.id));
+          existing.refs = [...existing.refs, ...e.refs.filter((r) => !seen.has(r.id))];
+        } else byKey.set(key, e);
+      }
     }
-  }
-  return [...byKey.values()]
-    .sort((a, b) => String(a.start).localeCompare(String(b.start)))
-    .slice(0, cap);
+    return [...byKey.values()]
+      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+      .slice(0, cap);
+  });
 }
 
 /** Create an event on the family calendar (sends invites). High-stakes: confirm upstream. */
 export async function createEvent(input) {
   const res = await graph().api(`/users/${GRAPH.calendarWrite}/events`).post(buildEventPayload(input));
+  clearCalendarCache(); // a newly created event must appear on the next read
   return { id: res.id, webLink: res.webLink, subject: res.subject };
 }
 
@@ -366,6 +401,7 @@ export async function deleteEvent({ refs } = {}) {
       errors.push({ ref: r, reason: err.message });
     }
   }
+  if (deleted.length) clearCalendarCache(); // a removed event must drop from the next read
   return { deleted, errors };
 }
 
