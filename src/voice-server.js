@@ -96,7 +96,7 @@ const CONT_WORDS = new Set(
   ("uh um uhh umm er erm hmm ah eh mm and so but or nor because cause then plus also with " +
    "for to of in on at by as that which than the a an my your our their its this these those " +
    "some any like well just i we you it im lets need want going gonna wanna maybe actually " +
-   "basically really very about into onto up if when while where how what " +
+   "basically really very about into onto up if when while where how what too " +
    // linking / auxiliary / modal verbs — very common trail-off points ("...we will be", "...it is")
    "be been being is are am was were will would could should can may might must do does did " +
    "have has had").split(" ")
@@ -105,7 +105,8 @@ function endsHanging(text) {
   const t = String(text || "").trim();
   if (!t) return false;
   if (/[,\-…]$/.test(t) || /\.\.\.$/.test(t)) return true; // trailing comma / dash / ellipsis
-  if (/[.!?]$/.test(t)) return false;                          // a clean terminal ending = done
+  // NB: do NOT treat a trailing period as "done" — Azure STT auto-punctuates almost
+  // every segment, so we judge purely by the last spoken word (punctuation stripped).
   const last = (t.toLowerCase().match(/[a-z']+/g) || []).pop();
   return last ? CONT_WORDS.has(last) : false;
 }
