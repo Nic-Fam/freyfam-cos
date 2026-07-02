@@ -1066,6 +1066,16 @@ export function nowInFamilyTz(now = new Date()) {
   return `${local} (${FAMILY_TZ})`;
 }
 
+// Memory ids lead with the save-time epoch ms ("1781878812436:xyz"). Render a short
+// "(saved Jun 28) " tag so the chief anchors a day-specific recalled fact (a daycare
+// schedule, an appointment) to WHEN it was saved rather than assuming it's about today.
+function memSavedTag(m) {
+  const ms = Number(String(m?.id || "").split(":")[0]);
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const d = new Intl.DateTimeFormat("en-US", { timeZone: FAMILY_TZ, month: "short", day: "numeric", year: "numeric" }).format(new Date(ms));
+  return `(saved ${d}) `;
+}
+
 // Anthropic server-side web search. Resolves inline within a single API call
 // (no local handler needed), so the agentLoop just sees the final text. Billed
 // per search, so we only attach it when a caller opts in (today: the morning
@@ -1083,7 +1093,9 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     contacts.length
       ? `Email addresses you have written before (anyone NOT on this list is a first contact, so introduce yourself): ${contacts.join(", ")}`
       : "You have no record of emailing anyone yet, so treat any outbound email as a first contact and introduce yourself.",
-    mems.length ? `Relevant memory:\n${mems.map((m) => "- " + m.text).join("\n")}` : "",
+    mems.length
+      ? `Relevant memory (each tagged with when it was saved; a day-specific fact like a schedule is about THAT date, not necessarily today):\n${mems.map((m) => `- ${memSavedTag(m)}${m.text}`).join("\n")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");

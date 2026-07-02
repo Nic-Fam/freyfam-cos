@@ -159,7 +159,7 @@ export async function recall(query, k = 5, { agent } = {}) {
         ? cosine(qEmb, it.embedding)
         : null;
     const score = sem == null ? lex[i] : SEMANTIC_WEIGHT * sem + (1 - SEMANTIC_WEIGHT) * lex[i];
-    return { text: it.text, meta: it.meta, score };
+    return { text: it.text, meta: it.meta, score, id: it.id };
   });
 
   return scored.sort((a, b) => b.score - a.score).slice(0, k);
