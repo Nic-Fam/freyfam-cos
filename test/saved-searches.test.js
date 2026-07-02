@@ -1,15 +1,20 @@
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert";
-import { rm } from "node:fs/promises";
+import { rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-saved-searches-test.json");
+const HITS = join(os.tmpdir(), "cos-saved-hits-test.json");
+const BRAIN = join(os.tmpdir(), "cos-saved-brain-test.json");
 process.env.SAVED_SEARCHES_PATH = TMP;
-const { addSavedSearch, listSavedSearches, removeSavedSearch, formatSavedSearchList } = await import("../src/saved-searches.js");
+process.env.SAVED_SEARCH_HITS_PATH = HITS; // isolate the removal cascade from real data
+process.env.BRAIN_PATH = BRAIN;
+const { addSavedSearch, listSavedSearches, removeSavedSearch, removeHunt, formatSavedSearchList } = await import("../src/saved-searches.js");
 
-beforeEach(() => rm(TMP, { force: true }));
-after(() => rm(TMP, { force: true }));
+const clean = () => Promise.all([rm(TMP, { force: true }), rm(HITS, { force: true }), rm(BRAIN, { force: true })]);
+beforeEach(clean);
+after(clean);
 
 test("add -> list -> remove round-trips", async () => {
   const a = await addSavedSearch({ query: "Margiela Tabi 39", maxPrice: 400, sites: ["vestiaire"] });
@@ -75,6 +80,29 @@ test("backfills numbers for legacy items lacking one (by creation order)", async
   // a fresh add continues from the backfilled max
   const fresh = await addSavedSearch({ query: "c" });
   assert.equal(fresh.num, 3);
+});
+
+test("removing a search cascades: its past hits are cleared too (no resurface)", async () => {
+  const a = await addSavedSearch({ query: "Alaia heel 38" });
+  // seed accumulated hits for this search + one for a different search
+  await writeFile(HITS, JSON.stringify({ items: [
+    { id: "h1", searchId: a.id, url: "u1" },
+    { id: "h2", searchId: a.id, url: "u2" },
+    { id: "h3", searchId: "other", url: "u3" },
+  ] }));
+  assert.equal(await removeSavedSearch(a.id), true);
+  const hitsLeft = JSON.parse(await readFile(HITS, "utf8")).items;
+  assert.deepEqual(hitsLeft.map((h) => h.id), ["h3"], "only the removed search's hits are cleared");
+});
+
+test("removeHunt clears ALL per-site searches for a piece at once", async () => {
+  await addSavedSearch({ label: "MSGM Fringe Dress - eBay", query: "MSGM fringe dress" });
+  await addSavedSearch({ label: "MSGM Fringe Dress - Poshmark", query: "MSGM fringe dress" });
+  await addSavedSearch({ label: "Gucci loafers - eBay", query: "Gucci loafers" });
+  const res = await removeHunt("msgm fringe");
+  assert.equal(res.count, 2);
+  const left = await listSavedSearches();
+  assert.deepEqual(left.map((s) => s.label), ["Gucci loafers - eBay"], "the unrelated hunt is untouched");
 });
 
 test("formatSavedSearchList shows the number, price cap, and sites", async () => {

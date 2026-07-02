@@ -18,7 +18,7 @@ import { analyzeTransactions, detectRecurring } from "../finance.js";
 import { logTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab, recurringCheckingWithdrawals, formatRecurringWithdrawals } from "../finance-log.js";
 import { reconcile, formatReconciliation } from "../reconcile.js";
 import { useItUpSuggestion } from "../meals.js";
-import { addSavedSearch, listSavedSearches, removeSavedSearch, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
+import { addSavedSearch, listSavedSearches, removeSavedSearch, removeHunt, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
 import { addObligation, listObligations, removeObligation, planCheckingTransfer, formatObligations, monthlyConsumption, formatConsumption } from "../obligations.js";
 import { transferOutlook } from "../transfer-outlook.js";
 import { readTrrReturns, reconcileTrrReturns } from "../resale-returns.js";
@@ -362,7 +362,7 @@ const REGISTRY = {
         }, ["query"]),
       },
       { name: "list_saved_searches", description: "List the family's active saved searches, each with its number (#). Use the number when referring to a specific hunt.", input_schema: obj({}) },
-      { name: "remove_saved_search", description: "Remove a saved search by its number (e.g. 3) or its id.", input_schema: obj({ id: { type: "string" } }, ["id"]) },
+      { name: "remove_saved_search", description: "Remove a hunt for good. Pass a search NUMBER (e.g. 3) or id to remove that one, or a piece NAME (e.g. \"MSGM fringe dress\") to remove the WHOLE hunt (all its per-site searches). Cascades: it also clears past matches and forgets the hunt from memory, so it will NOT resurface.", input_schema: obj({ id: { type: "string" } }, ["id"]) },
       {
         name: "run_saved_searches",
         description: "Run ALL saved searches now and report only the NEW matches since last time (past hits are tracked and not repeated). Use to check for fresh finds across the hunt list.",
@@ -385,7 +385,15 @@ const REGISTRY = {
       ...searchHandler(),
       add_saved_search: async (input) => JSON.stringify(await addSavedSearch(input)),
       list_saved_searches: async () => formatSavedSearchList(await listSavedSearches()),
-      remove_saved_search: async ({ id }) => ((await removeSavedSearch(id)) ? "removed" : "not found"),
+      remove_saved_search: async ({ id }) => {
+        // By number/id: remove that one (cascades hits + forgets the hunt memory).
+        if (await removeSavedSearch(id)) return "removed (cleared its past matches too, so it won't resurface)";
+        // Otherwise treat it as a piece name and remove the WHOLE hunt (all per-site searches).
+        const h = await removeHunt(id);
+        return h.count
+          ? `removed the whole hunt — ${h.count} search${h.count > 1 ? "es" : ""} and their past matches, won't resurface: ${h.labels.join(", ")}`
+          : "not found";
+      },
       run_saved_searches: async () => formatSavedSearchRun(await runSavedSearches()),
       export_saved_searches: async () => JSON.stringify(await listSavedSearches()),
       check_returns: async () => {

@@ -75,6 +75,19 @@ export async function remember(text, meta = {}) {
 }
 
 /**
+ * Forget (delete) every memory item matching `pred(item)`. Returns the count
+ * removed. Used to make a removal STICK: e.g. when a resale hunt is deleted, the
+ * "Active archive hunt: ..." memory that would otherwise resurface it is forgotten
+ * too. Runs against the same store recall reads, so it can't come back.
+ */
+export async function forget(pred) {
+  const items = await col().list();
+  const doomed = items.filter((it) => { try { return pred(it); } catch { return false; } });
+  for (const it of doomed) await col().remove(it.id);
+  return doomed.length;
+}
+
+/**
  * Save a fact only if no item with the exact same text already exists. Returns
  * true if it was written, false if skipped. Lets the seed script run repeatedly
  * without piling up duplicates. (recall/remember stay unchanged for callers.)

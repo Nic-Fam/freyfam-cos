@@ -9,6 +9,7 @@
 
 import { randomUUID, createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
+import { forget } from "./memory.js";
 import { webSearch } from "./search.js";
 import { runSiteSearch, isLocalSite } from "./resale-sources.js";
 
@@ -60,22 +61,66 @@ export async function listSavedSearches() {
   return items.sort((a, b) => (a.num || 0) - (b.num || 0));
 }
 
+// Remove the accumulated hits for a search so a deleted hunt leaves no stale
+// matches behind (part of making a removal actually STICK).
+async function removeHitsFor(searchId) {
+  const all = await hits().list();
+  let n = 0;
+  for (const h of all.filter((x) => x.searchId === searchId)) { await hits().remove(h.id); n += 1; }
+  return n;
+}
+
+// After a hunt is deleted, forget the "Active archive hunt: ..." brain memory that
+// would otherwise resurface it (in recall/digest, or by prompting a re-add).
+// Conservative: only resale memories that mention a hunt AND share the piece's
+// leading term (usually the brand), so a standing brand-interest fact
+// ("Shelli tracks MSGM") is preserved.
+async function forgetHuntMemory(item) {
+  const brand = (String(item?.label || item?.query || "").toLowerCase().match(/[a-z0-9]+/g) || [])[0];
+  if (!brand) return 0;
+  return forget((m) =>
+    m?.meta?.agent === "resale" &&
+    /\b(hunt|archive)\b/i.test(m.text || "") &&
+    String(m.text || "").toLowerCase().includes(brand)
+  );
+}
+
 /**
- * Remove a saved search by its NUMBER (e.g. 3 or "#3") or its 8-char id.
- * @returns {boolean} whether an item was actually removed
+ * Remove a saved search by its NUMBER (e.g. 3 or "#3") or its 8-char id, and
+ * CASCADE: drop its past hits and forget the hunt's brain memory, so it does not
+ * resurface. @returns {boolean} whether an item was actually removed
  */
 export async function removeSavedSearch(idOrNum) {
   const items = await listSavedSearches();
   // Resolve an exact id FIRST: an 8-char hex id can be all-digits, so we must not
-  // mistake one for a search number. Only fall back to a number lookup when the
-  // input matches no id (and a leading # always means "by number").
-  if (items.some((s) => s.id === idOrNum)) return col().remove(idOrNum);
-  const numKey = String(idOrNum).trim().replace(/^#/, "");
-  if (/^\d+$/.test(numKey)) {
-    const hit = items.find((s) => String(s.num) === numKey);
-    return hit ? col().remove(hit.id) : false;
+  // mistake one for a search number. Only fall back to a number lookup.
+  let target = items.find((s) => s.id === idOrNum);
+  if (!target) {
+    const numKey = String(idOrNum).trim().replace(/^#/, "");
+    if (/^\d+$/.test(numKey)) target = items.find((s) => String(s.num) === numKey);
   }
-  return col().remove(idOrNum);
+  if (!target) return false;
+  const ok = await col().remove(target.id);
+  if (ok) { await removeHitsFor(target.id); await forgetHuntMemory(target); }
+  return ok;
+}
+
+/**
+ * Remove an ENTIRE hunt by a text term matched against label/query. A piece is
+ * usually registered as several per-site searches, so this clears them all at once
+ * (each cascades hits), then forgets the hunt memory. @returns {{count, labels}}
+ */
+export async function removeHunt(term) {
+  const t = String(term || "").trim().toLowerCase();
+  if (!t) return { count: 0, labels: [] };
+  const items = await listSavedSearches();
+  const matches = items.filter((s) => `${s.label || ""} ${s.query || ""}`.toLowerCase().includes(t));
+  const labels = [];
+  for (const s of matches) {
+    if (await col().remove(s.id)) { await removeHitsFor(s.id); labels.push(s.label || s.id); }
+  }
+  if (matches[0]) await forgetHuntMemory(matches[0]);
+  return { count: labels.length, labels };
 }
 
 /** Human "hunt list" with each item's number. Pure. */
