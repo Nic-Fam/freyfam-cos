@@ -55,6 +55,12 @@ test("buildDigestPrompt injects the authoritative date as ground truth", () => {
   assert.match(p, /<digest> and <\/digest>/);
 });
 
+test("buildDigestPrompt asks for anticipated package deliveries", () => {
+  const p = buildDigestPrompt(new Date("2026-06-21T19:00:00Z"), TZ);
+  assert.match(p, /list_packages/);
+  assert.match(p, /package deliveries expected today/i);
+});
+
 test("extractDigest pulls fenced content and drops any preamble", () => {
   const raw = "Now I have everything I need. Note: today is...\n<digest>Good morning. Clear day.</digest>\ntrailing";
   assert.equal(extractDigest(raw), "Good morning. Clear day.");

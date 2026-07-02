@@ -67,6 +67,9 @@ ${commuteLine}
   "done", "completed", or "wrapped up" unless list_tasks shows it done or the
   family told you. If you are not sure, treat it as still OPEN. Do not invent
   completion.
+- Package deliveries expected today: call list_packages and include anything arriving
+  today or in transit (what it is + carrier + ETA/status). A short "Arriving:" line;
+  skip it entirely if nothing is on the way.
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
   trends live in the separate weekly finance report, so keep this to anything
@@ -80,7 +83,8 @@ ${commuteLine}
 Then write it warm, short, and scannable: a one-line greeting that names ${human},
 today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
 note, the follow-ups & open actions (with the "reply 'done <item>'" clear line),
-meals plus any prep reminder, and any flags. Skip sections that have nothing.
+any package deliveries expected today, meals plus any prep reminder, and any flags.
+Skip sections that have nothing.
 Plain punctuation, no em dashes.
 
 Output ONLY the finished digest, wrapped exactly in <digest> and </digest> tags,
