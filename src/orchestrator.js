@@ -1102,13 +1102,22 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
       }
     };
   }
+  // Tag each prior turn with WHEN it was said (absolute, family-local, so it's stable
+  // across turns and cache-friendly) so the chief anchors "tonight"/"tomorrow" in an
+  // old turn to when it was uttered — not to now. Strip the ts field the API rejects.
+  const stampedHistory = (history || []).map((m) => ({
+    role: m.role,
+    content: (m && m.ts && typeof m.content === "string")
+      ? `[${new Date(m.ts).toLocaleString("en-US", { timeZone: FAMILY_TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}] ${m.content}`
+      : (m ? m.content : ""),
+  }));
   const { text } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
     // Prior turns (short-term memory) precede the current one so a follow-up like
     // "Nic's" resolves against "whose haircut?". `content` (text + image blocks)
     // wins for the current turn when an MMS carried photos; else plain text.
-    messages: [...history, { role: "user", content: content || body }],
+    messages: [...stampedHistory, { role: "user", content: content || body }],
     tools: webSearch ? [...tools, WEB_SEARCH_TOOL] : tools,
     toolHandlers: tracedHandlers, // images + delegation mirror, with call tracing
     maxTurns: 12, // image -> search -> delegate flows need more than the default 8

@@ -24,9 +24,10 @@ test("appendTurn then getHistory returns the exchange as messages", async () => 
   await appendTurn(k, "schedule a haircut", "Whose haircut, and where?", t);
   const h = await getHistory(k, t + 1);
   assert.deepEqual(h, [
-    { role: "user", content: "schedule a haircut" },
-    { role: "assistant", content: "Whose haircut, and where?" },
+    { role: "user", content: "schedule a haircut", ts: t },
+    { role: "assistant", content: "Whose haircut, and where?", ts: t },
   ]);
+  assert.equal(h[0].ts, t, "each turn is stamped with when it was said");
 });
 
 test("history accumulates and trims to the window (CONVO_MAX_MESSAGES=4)", async () => {

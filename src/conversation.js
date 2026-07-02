@@ -71,8 +71,10 @@ export async function appendTurn(key, userText, assistantText, now = Date.now())
   const db = await load();
   const fresh = !db[key] || now - (db[key].updatedAt || 0) > IDLE_TTL_MS;
   const messages = fresh ? [] : (Array.isArray(db[key].messages) ? db[key].messages : []);
-  messages.push({ role: "user", content: String(userText || "").trim() || "(no text)" });
-  messages.push({ role: "assistant", content: reply });
+  // Stamp each turn with when it was said so the chief can anchor relative time words
+  // ("tonight", "tomorrow") in an OLD turn to when they were uttered, not to now.
+  messages.push({ role: "user", content: String(userText || "").trim() || "(no text)", ts: now });
+  messages.push({ role: "assistant", content: reply, ts: now });
   db[key] = { updatedAt: now, messages: messages.slice(-MAX_MESSAGES) };
   for (const k of Object.keys(db)) {
     if (now - (db[k].updatedAt || 0) > IDLE_TTL_MS) delete db[k]; // prune stale threads
