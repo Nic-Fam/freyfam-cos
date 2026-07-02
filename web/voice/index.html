@@ -74,7 +74,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </form>
-    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-g</div>
+    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-h</div>
   </footer>
 <script>
 (function(){
@@ -95,7 +95,11 @@
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   var onDevice=!!SR && (function(){try{return localStorage.getItem('onDevice')!=='0';}catch(e){return true;}})();
   var rec=null,recActive=false,recStopWanted=false,recFinal='';
-  function listenLabel(){ return session ? (wakeOn?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
+  // Conversation window: right after Lloyd answers, a follow-up doesn't need the wake
+  // word again (nobody re-says "Lloyd" for their next ask). Reset on each answer.
+  var followUpUntil=0;
+  function wakeNeeded(firstSeg){ return wakeOn && firstSeg && Date.now()>followUpUntil; }
+  function listenLabel(){ return session ? ((wakeOn&&Date.now()>followUpUntil)?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
   function setThinking(on){ wrap.classList.toggle('think',!!on); if(on) status.innerHTML='Thinking<span class="dots"><span></span><span></span><span></span></span>'; }
   // Answers computed while the tile was backgrounded are waiting server-side; pull
   // them when we return to the foreground. Times are the SERVER's (lastTs from the
@@ -180,7 +184,7 @@
     var firstSeg=!accText && !accBubble;
     var ac=new AbortController(); playAbort=ac;
     try{
-      var useWake=wakeOn && firstSeg;
+      var useWake=wakeNeeded(firstSeg);
       var r1=await fetch('/voice?k='+encodeURIComponent(token)+'&stt=1&wake='+(useWake?'1':'0'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:t}),signal:ac.signal});
       if(r1.status===401){ fail('Not authorized — check the link'); session=false; return; }
       var d1=await r1.json();
@@ -232,7 +236,7 @@
     var firstSeg=!accText && !accBubble; // opening segment of a (possibly multi-part) turn
     var ac=new AbortController(); playAbort=ac;
     try{
-      var useWake=wakeOn && firstSeg; // only the OPENING segment must contain "Lloyd"
+      var useWake=wakeNeeded(firstSeg); // only the OPENING segment must contain "Lloyd"
       var r1=await fetch('/voice?k='+encodeURIComponent(token)+'&stt=1&wake='+(useWake?'1':'0'),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
       if(r1.status===401){ fail('Not authorized — check the link'); session=false; return; }
       var d1=await r1.json();
@@ -243,7 +247,7 @@
   // wake gate, accumulate trailing-off segments, answer on a real ending / "over".
   async function onSegment(d1, firstSeg, ac){
     if(ac.signal.aborted) return;
-    var useWake=wakeOn && firstSeg;
+    var useWake=wakeNeeded(firstSeg);
     if(useWake && d1.accepted===false){ // wake word not heard on the opener — say why, keep listening
       status.textContent='(say “Lloyd” first)'; setTimeout(function(){ if(session&&!speaking&&!utterRec&&!accText) status.textContent=listenLabel(); },1600);
       if(playAbort===ac) playAbort=null; resumeListen(); return;
@@ -259,7 +263,7 @@
     if(accText){ if(!accBubble) accBubble=bubble(accText,'you'); else { accBubble.textContent=accText; log.scrollTop=log.scrollHeight; } }
     if(playAbort===ac) playAbort=null;
     if(d1.finish){ answer(accText); return; } // explicit "over" / "send it" — answer everything so far, now
-    if(d1.continuation){ speaking=false; status.textContent='Listening… go on'; scheduleFinalize(); if(onDevice) srStart(); return; } // mid-thought — keep listening & append
+    if(d1.continuation){ speaking=false; status.textContent='Listening… go on'; scheduleFinalize(); if(onDevice) setTimeout(srStart,300); return; } // mid-thought — keep listening & append
     answer(accText); // landed on a real ending — go answer the whole thing
   }
   // Phase 2: the model turn (+ TTS) on the full accumulated command.
@@ -281,11 +285,12 @@
       var lb=bubble('','ll');
       if(d2.audio){ status.textContent='Speaking…'; await playB64(d2.audio,d2.audioType,{el:lb,text:d2.reply||''}); }
       else { lb.textContent=d2.reply||''; if(d2.reply) status.textContent='(no audio — check silent switch)'; }
+      followUpUntil=Date.now()+20000; // open a 20s window for a wake-word-free follow-up
     }catch(e){ setThinking(false); if(e&&e.name==='AbortError'){ return; } bubble('(connection problem — I didn’t catch that)','ll'); }
     if(playAbort===ac) playAbort=null;
     resumeListen();
   }
-  function resumeListen(){ speaking=false; if(session){ status.textContent=listenLabel(); if(onDevice) srStart(); } }
+  function resumeListen(){ speaking=false; if(session){ status.textContent=listenLabel(); if(onDevice) setTimeout(srStart,300); } } // iOS needs a beat before restarting recognition
   mic.addEventListener('click',function(){ ensureCtx(); if(!session) startSession(); else stopSession(); });
   var waketgl=document.getElementById('waketgl');
   function paintWake(){ waketgl.textContent='Wake word: '+(wakeOn?'on':'off'); waketgl.setAttribute('aria-pressed',String(wakeOn)); waketgl.style.color=wakeOn?'var(--accent)':'var(--muted)'; if(session) status.textContent=listenLabel(); }
