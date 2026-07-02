@@ -165,7 +165,11 @@ async function handleVoice(req, res, url) {
     }
   }
 
-  const wakeMode = url.searchParams.get("wake") === "1" && !contentType.includes("application/json");
+  // wake gating applies whenever the tile asks for it (?wake=1). It's used only by the
+  // STT-phase and the legacy audio path below; typed input never sends wake=1, and the
+  // on-device path sends its recognized TEXT here as JSON with stt=1&wake=1 so it reuses
+  // the exact same wake / continuation / finish gate as the audio path.
+  const wakeMode = url.searchParams.get("wake") === "1";
   const sttOnly = url.searchParams.get("stt") === "1";
 
   // Two-phase for voice: the tile first asks for STT only (?stt=1) so it can show

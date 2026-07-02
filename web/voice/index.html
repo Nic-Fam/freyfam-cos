@@ -52,8 +52,12 @@
   <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd answers out loud and keeps going. For a long ask, pause freely and say “over” when you’re done. Talk over him to cut him off. Tap again to stop.</div></div>
   <footer>
     <div class="status" id="status">Tap to talk</div>
-    <button id="waketgl" type="button" aria-pressed="true"
-      style="align-self:center;font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px;margin-bottom:6px">Wake word: on</button>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:6px">
+      <button id="waketgl" type="button" aria-pressed="true"
+        style="font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px">Wake word: on</button>
+      <button id="odtgl" type="button" aria-pressed="true" hidden
+        style="font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px">On-device: on</button>
+    </div>
     <div class="micwrap" id="wrap">
       <div class="ring"></div>
       <button class="mic" id="mic" aria-label="Talk to Lloyd">
@@ -70,7 +74,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </form>
-    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-f</div>
+    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-g</div>
   </footer>
 <script>
 (function(){
@@ -84,6 +88,13 @@
   var END_SILENCE=2000; // pause before a segment ends; continuation words then decide keep-going vs done
   var accText='', accBubble=null, finalizeTimer=null; // accumulate segments into one turn across pauses
   var wakeOn=(function(){try{return localStorage.getItem('wakeWord')!=='0';}catch(e){return true;}})(); // default on
+  // On-device recognition: Apple's own dictation via the browser's SpeechRecognition,
+  // when present. Gives better transcripts + endpointing, streaming, no Azure round-trip.
+  // Default ON when supported; falls back to the Azure record-and-upload path if absent
+  // or if the engine errors (permission/service). Toggle persists in localStorage.
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var onDevice=!!SR && (function(){try{return localStorage.getItem('onDevice')!=='0';}catch(e){return true;}})();
+  var rec=null,recActive=false,recStopWanted=false,recFinal='';
   function listenLabel(){ return session ? (wakeOn?'Listening… say “Lloyd…” (tap to stop)':'Listening… just talk (tap to stop)') : 'Tap to talk'; }
   function setThinking(on){ wrap.classList.toggle('think',!!on); if(on) status.innerHTML='Thinking<span class="dots"><span></span><span></span><span></span></span>'; }
   // Answers computed while the tile was backgrounded are waiting server-side; pull
@@ -132,6 +143,7 @@
   async function startSession(){
     ensureCtx();
     loadFiller();
+    if(onDevice && SR){ startOnDevice(); return; } // Apple's recognizer handles mic + endpointing
     try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); }
     catch(e){ fail('Mic blocked — allow microphone access'); return; }
     try{ var src=actx.createMediaStreamSource(stream); analyser=actx.createAnalyser(); analyser.fftSize=1024; src.connect(analyser); }
@@ -142,9 +154,38 @@
   }
   function stopSession(){
     session=false; if(vadRAF)cancelAnimationFrame(vadRAF);
+    recStopWanted=true; try{ if(rec){ (rec.abort||rec.stop).call(rec); } }catch(e){} recActive=false;
     try{ if(mr&&utterRec){mr.onstop=null;mr.stop();} }catch(e){} utterRec=false;
     if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;}
     setRec(false); resetAcc(); setThinking(false); status.textContent='Tap to talk';
+  }
+  // ---- On-device (Apple Web Speech) path ----
+  function startOnDevice(){ session=true; speaking=false; utterRec=false; setRec(true); resetAcc(); status.textContent=listenLabel(); srStart(); }
+  function srFallback(){ onDevice=false; if(paintOnDev)paintOnDev(); if(session){ session=false; setRec(false); startSession(); } } // permission/service denied -> Azure path
+  function srStart(){
+    if(!onDevice||!SR||!session||recActive||speaking) return;
+    try{ rec=new SR(); }catch(e){ srFallback(); return; }
+    rec.lang='en-US'; try{rec.interimResults=true;}catch(e){} try{rec.continuous=false;}catch(e){}
+    recFinal=''; recStopWanted=false;
+    rec.onstart=function(){ recActive=true; };
+    rec.onerror=function(e){ recActive=false; var er=(e&&e.error)||''; if(er==='not-allowed'||er==='service-not-allowed'){ srFallback(); } };
+    rec.onresult=function(e){ var fin='',intr=''; for(var i=e.resultIndex;i<e.results.length;i++){ var tr=e.results[i][0].transcript; if(e.results[i].isFinal) fin+=tr+' '; else intr+=tr; } if(fin) recFinal=(recFinal+' '+fin).replace(/\s+/g,' ').trim(); var cur=(recFinal+' '+intr).trim(); if(cur&&!speaking) status.textContent='“'+cur.slice(-70)+'”'; };
+    rec.onend=function(){ recActive=false; if(recStopWanted){ recStopWanted=false; return; } onSrUtterance(recFinal.trim()); };
+    try{ rec.start(); }catch(e){ recActive=false; }
+  }
+  async function onSrUtterance(text){
+    if(!session||speaking) return;
+    var t=String(text||'').trim();
+    if(!t){ srStart(); return; } // heard nothing this run — keep listening
+    var firstSeg=!accText && !accBubble;
+    var ac=new AbortController(); playAbort=ac;
+    try{
+      var useWake=wakeOn && firstSeg;
+      var r1=await fetch('/voice?k='+encodeURIComponent(token)+'&stt=1&wake='+(useWake?'1':'0'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:t}),signal:ac.signal});
+      if(r1.status===401){ fail('Not authorized — check the link'); session=false; return; }
+      var d1=await r1.json();
+      await onSegment(d1, firstSeg, ac); // same gate as the audio path
+    }catch(e){ if(e&&e.name==='AbortError'){ return; } if(playAbort===ac) playAbort=null; resumeListen(); }
   }
   function level(){ var b=new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(b); var s=0; for(var i=0;i<b.length;i++){var v=(b[i]-128)/128;s+=v*v;} return Math.sqrt(s/b.length); }
   function calibrate(){ var n=0,sum=0; var t=setInterval(function(){ if(!session){clearInterval(t);return;} sum+=level(); if(++n>=15){ clearInterval(t); noiseFloor=Math.max(0.02,sum/n); } },33); }
@@ -186,8 +227,7 @@
     if(utterRec && now-utterStart>MAXUTTER) endUtterance();
   }
   function bargeIn(){ bargeMs=0; stopPlayback(); if(playAbort){try{playAbort.abort();}catch(e){}} setThinking(false); resetAcc(); speaking=false; status.textContent='Listening…'; startUtterance(); lastVoice=performance.now(); }
-  // Phase 1 per segment: STT + wake gate. Accumulate segments that trail off (server
-  // says continuation), answer when a segment lands on a real ending.
+  // Audio (VAD) path: upload the segment for STT, then run the shared gate.
   async function sendUtterance(blob){
     var firstSeg=!accText && !accBubble; // opening segment of a (possibly multi-part) turn
     var ac=new AbortController(); playAbort=ac;
@@ -196,29 +236,37 @@
       var r1=await fetch('/voice?k='+encodeURIComponent(token)+'&stt=1&wake='+(useWake?'1':'0'),{method:'POST',headers:{'content-type':blob.type||'audio/mp4'},body:blob,signal:ac.signal});
       if(r1.status===401){ fail('Not authorized — check the link'); session=false; return; }
       var d1=await r1.json();
-      if(ac.signal.aborted) return;
-      if(useWake && d1.accepted===false){ // wake word not heard on the opener — say why, keep listening
-        status.textContent='(say “Lloyd” first)'; setTimeout(function(){ if(session&&!speaking&&!utterRec&&!accText) status.textContent=listenLabel(); },1600);
-        if(playAbort===ac) playAbort=null; resumeListen(); return;
-      }
-      var seg=(d1.command!=null?d1.command:d1.transcript)||'';
-      if(firstSeg && !seg && d1.reply){ // addressed by name only ("Lloyd") -> spoken "Yes?"
-        var yb=bubble('','ll'); status.textContent='Speaking…'; if(d1.audio) await playB64(d1.audio,d1.audioType,{el:yb,text:d1.reply}); else yb.textContent=d1.reply;
-        if(playAbort===ac) playAbort=null; resumeListen(); return;
-      }
-      if(!seg && !d1.finish){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // empty/garbled STT — ignore (unless it's an explicit "over")
-      if(firstSeg){ try{ if(navigator.vibrate) navigator.vibrate(25); }catch(e){} } // haptic "got it"
-      if(seg) accText = accText ? (accText+' '+seg) : seg;
-      if(accText){ if(!accBubble) accBubble=bubble(accText,'you'); else { accBubble.textContent=accText; log.scrollTop=log.scrollHeight; } }
-      if(playAbort===ac) playAbort=null;
-      if(d1.finish){ answer(accText); return; } // explicit "over" / "send it" — answer everything so far, now
-      if(d1.continuation){ speaking=false; status.textContent='Listening… go on'; scheduleFinalize(); return; } // mid-thought — append the next segment
-      answer(accText); // landed on a real ending — go answer the whole thing
+      await onSegment(d1, firstSeg, ac);
     }catch(e){ if(e&&e.name==='AbortError'){ return; } if(playAbort===ac) playAbort=null; resumeListen(); }
+  }
+  // Shared gate for a recognized segment (from Azure STT or on-device recognition):
+  // wake gate, accumulate trailing-off segments, answer on a real ending / "over".
+  async function onSegment(d1, firstSeg, ac){
+    if(ac.signal.aborted) return;
+    var useWake=wakeOn && firstSeg;
+    if(useWake && d1.accepted===false){ // wake word not heard on the opener — say why, keep listening
+      status.textContent='(say “Lloyd” first)'; setTimeout(function(){ if(session&&!speaking&&!utterRec&&!accText) status.textContent=listenLabel(); },1600);
+      if(playAbort===ac) playAbort=null; resumeListen(); return;
+    }
+    var seg=(d1.command!=null?d1.command:d1.transcript)||'';
+    if(firstSeg && !seg && d1.reply){ // addressed by name only ("Lloyd") -> spoken "Yes?"
+      var yb=bubble('','ll'); status.textContent='Speaking…'; if(d1.audio) await playB64(d1.audio,d1.audioType,{el:yb,text:d1.reply}); else yb.textContent=d1.reply;
+      if(playAbort===ac) playAbort=null; resumeListen(); return;
+    }
+    if(!seg && !d1.finish){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // empty/garbled — ignore (unless explicit "over")
+    if(firstSeg){ try{ if(navigator.vibrate) navigator.vibrate(25); }catch(e){} } // haptic "got it"
+    if(seg) accText = accText ? (accText+' '+seg) : seg;
+    if(accText){ if(!accBubble) accBubble=bubble(accText,'you'); else { accBubble.textContent=accText; log.scrollTop=log.scrollHeight; } }
+    if(playAbort===ac) playAbort=null;
+    if(d1.finish){ answer(accText); return; } // explicit "over" / "send it" — answer everything so far, now
+    if(d1.continuation){ speaking=false; status.textContent='Listening… go on'; scheduleFinalize(); if(onDevice) srStart(); return; } // mid-thought — keep listening & append
+    answer(accText); // landed on a real ending — go answer the whole thing
   }
   // Phase 2: the model turn (+ TTS) on the full accumulated command.
   async function answer(command){
-    clearFinalize(); var text=String(command||'').trim(); resetAcc();
+    clearFinalize(); speaking=true;
+    if(onDevice){ recStopWanted=true; try{ if(rec){ (rec.abort||rec.stop).call(rec); } }catch(e){} recActive=false; } // don't let the recognizer hear Lloyd
+    var text=String(command||'').trim(); resetAcc();
     if(!text){ resumeListen(); return; }
     var ac=new AbortController(); playAbort=ac;
     playFiller();        // spoken "let me check…" cue
@@ -237,12 +285,17 @@
     if(playAbort===ac) playAbort=null;
     resumeListen();
   }
-  function resumeListen(){ speaking=false; if(session) status.textContent=listenLabel(); }
+  function resumeListen(){ speaking=false; if(session){ status.textContent=listenLabel(); if(onDevice) srStart(); } }
   mic.addEventListener('click',function(){ ensureCtx(); if(!session) startSession(); else stopSession(); });
   var waketgl=document.getElementById('waketgl');
   function paintWake(){ waketgl.textContent='Wake word: '+(wakeOn?'on':'off'); waketgl.setAttribute('aria-pressed',String(wakeOn)); waketgl.style.color=wakeOn?'var(--accent)':'var(--muted)'; if(session) status.textContent=listenLabel(); }
   waketgl.addEventListener('click',function(){ wakeOn=!wakeOn; try{localStorage.setItem('wakeWord',wakeOn?'1':'0');}catch(e){} paintWake(); });
   paintWake();
+  var odtgl=document.getElementById('odtgl');
+  function paintOnDev(){ if(!odtgl)return; odtgl.textContent='On-device: '+(onDevice?'on':'off'); odtgl.setAttribute('aria-pressed',String(onDevice)); odtgl.style.color=onDevice?'var(--accent)':'var(--muted)'; }
+  if(SR){ odtgl.hidden=false; paintOnDev();
+    odtgl.addEventListener('click',function(){ onDevice=!onDevice; try{localStorage.setItem('onDevice',onDevice?'1':'0');}catch(e){} paintOnDev(); if(session){ var was=session; session=false; recStopWanted=true; try{if(rec)(rec.abort||rec.stop).call(rec);}catch(e){} recActive=false; if(vadRAF)cancelAnimationFrame(vadRAF); if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;} setRec(false); resetAcc(); if(was) startSession(); } });
+  }
   var typein=document.getElementById('typein');
   document.getElementById('typeform').addEventListener('submit',async function(e){
     e.preventDefault();
