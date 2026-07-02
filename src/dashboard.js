@@ -3,17 +3,23 @@
 // cheap (no model tokens), and consistent, for an on-demand "what's today?" or a
 // Slack card. The gather is best-effort per source; the formatter is pure/testable.
 
-/** Format the gathered pieces into a compact card. Pure. Empty sections are dropped. */
-export function formatDashboard({ dateLabel, events = [], fox = null, meals = [], packages = [], tasks = [] } = {}) {
+/** Format the gathered pieces into a compact card. Pure. Empty sections are dropped.
+ * nowLabel/nowHM (current family-local time, e.g. "6:52 PM" / "18:52") let the card
+ * mark items earlier today as already passed, so a 4pm event read at 7pm isn't
+ * mistaken for upcoming. */
+export function formatDashboard({ dateLabel, nowLabel = "", nowHM = "", events = [], fox = null, meals = [], packages = [], tasks = [] } = {}) {
   const lines = [];
-  lines.push(`Today — ${dateLabel || ""}`.trim());
+  lines.push(`Today — ${dateLabel || ""}${nowLabel ? ` (it is now ${nowLabel}; anything scheduled earlier today has already happened)` : ""}`.trim());
 
   if (events.length) {
     lines.push("\nSchedule:");
-    for (const e of events.slice(0, 8)) lines.push(`- ${e.time ? e.time + " " : ""}${e.title}${e.who ? ` (${e.who})` : ""}`);
+    for (const e of events.slice(0, 8)) {
+      const past = nowHM && e.time && e.time < nowHM;
+      lines.push(`- ${e.time ? e.time + " " : ""}${e.title}${e.who ? ` (${e.who})` : ""}${past ? " — already passed" : ""}`);
+    }
   }
   if (fox && (fox.activities || fox.wardrobe)) {
-    lines.push("\nFox:");
+    lines.push("\nFox (today's FULL daycare plan; compare each listed time to the current time — earlier items already happened):");
     if (fox.activities) lines.push(`- ${fox.activities}`);
     if (fox.wardrobe) lines.push(`- Wear: ${fox.wardrobe}`);
   }

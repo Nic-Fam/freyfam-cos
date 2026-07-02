@@ -938,6 +938,8 @@ function toolHandlers({ images, onDelegate } = {}) {
       const now = new Date();
       const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
       const dateLabel = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(now);
+      const nowLabel = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(now);
+      const nowHM = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(now); // "18:52", for past/upcoming compare
       const safe = async (fn, fb) => { try { return await fn(); } catch { return fb; } };
       const rawEvents = (await safe(() => listEvents({ days: 1 }), [])) || [];
       const events = rawEvents.slice(0, 8).map((e) => ({
@@ -955,7 +957,7 @@ function toolHandlers({ images, onDelegate } = {}) {
         .filter((t) => !t.done && t.dueDate)
         .map((t) => ({ title: t.title, overdue: t.dueDate < todayKey }))
         .filter((t) => t.overdue || taskList.find((x) => x.title === t.title)?.dueDate === todayKey);
-      return formatDashboard({ dateLabel, events, fox, meals, packages, tasks });
+      return formatDashboard({ dateLabel, nowLabel, nowHM, events, fox, meals, packages, tasks });
     },
     remove_shopping_item: async ({ item, clearAll }) => {
       if (clearAll) return `Cleared the shopping list (${await clearShopping()} items).`;
