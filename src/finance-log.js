@@ -58,6 +58,35 @@ export async function logTransaction({ amount, date, merchant, card, category, n
   return item;
 }
 
+/**
+ * Identify an existing transaction AFTER THE FACT: set its merchant/category/note so
+ * a one-off "unnamed/untagged" withdrawal or Zelle payment stops being flagged once
+ * the family says what it was. Auto-ingest can't do this (no merchant text to match a
+ * rule on), so this closes the "I already told you what it was" -> re-flagged loop.
+ * Matches by id, else by amount (+ optional date, source). Persists by replacing the
+ * row (id preserved). @returns {{updated, count}} — updated is null unless exactly one match.
+ */
+export async function identifyTransaction({ id, amount, date, source, merchant, category, note } = {}) {
+  const items = await col().list();
+  let matches;
+  if (id) matches = items.filter((t) => t.id === id);
+  else {
+    const amt = amount == null ? null : round2(amount);
+    matches = items.filter((t) =>
+      (amt == null || t.amount === amt) &&
+      (!date || String(t.date) === String(date)) &&
+      (!source || (t.source || "credit") === source));
+  }
+  if (matches.length !== 1) return { updated: null, count: matches.length };
+  const next = { ...matches[0] };
+  if (merchant != null) next.merchant = String(merchant).trim() || null;
+  if (category != null) next.category = String(category).trim() || null;
+  if (note != null) next.note = String(note).trim() || null;
+  await col().remove(next.id);
+  await col().add(next);
+  return { updated: next, count: 1 };
+}
+
 /** Newest-first list, optionally filtered by recency window, source, card, or merchant. */
 export async function listTransactions({ sinceDays, source, card, merchant } = {}) {
   let items = await col().list();

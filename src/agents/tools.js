@@ -15,7 +15,7 @@ import { logDecision, listDecisions } from "../decisions.js";
 import { webSearch } from "../search.js";
 import { addShoppingItem, listShopping, formatShopping } from "../shopping.js";
 import { analyzeTransactions, detectRecurring } from "../finance.js";
-import { logTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab, recurringCheckingWithdrawals, formatRecurringWithdrawals } from "../finance-log.js";
+import { logTransaction, identifyTransaction, listTransactions, summarizeSpend, formatSpend, runningTab, formatRunningTab, recurringCheckingWithdrawals, formatRecurringWithdrawals } from "../finance-log.js";
 import { reconcile, formatReconciliation } from "../reconcile.js";
 import { useItUpSuggestion } from "../meals.js";
 import { addSavedSearch, listSavedSearches, removeSavedSearch, removeHunt, runSavedSearches, formatSavedSearchRun, formatSavedSearchList } from "../saved-searches.js";
@@ -52,7 +52,7 @@ const obj = (properties, required = []) => ({ type: "object", properties, requir
 const COMMON_TOOLS = ["recall_memory", "remember", "log_decision", "list_decisions"];
 export const AGENT_ALLOWLIST = {
   // NO search/browse/outbound — finance stays locked down. All read/log/compute only.
-  finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "list_transactions", "spending_summary",
+  finance: [...COMMON_TOOLS, "analyze_transactions", "log_transaction", "identify_transaction", "list_transactions", "spending_summary",
             "plan_checking_transfer", "set_obligation", "list_obligations", "remove_obligation",
             "running_tab", "reconcile_statement", "transfer_outlook", "set_checking_balance", "set_credit_statement",
             "add_category_rule", "monthly_consumption", "recurring_withdrawals", "reconcile_returns"],
@@ -207,6 +207,18 @@ const REGISTRY = {
         }, ["amount"]),
       },
       {
+        name: "identify_transaction",
+        description: "Identify a previously-untagged transaction AFTER the family says what it was, so it stops being flagged as 'unnamed/no merchant'. Match by amount (add date + source 'checking'/'credit' if amounts collide) and set merchant and/or category and/or note. Use this whenever the family explains a flagged withdrawal or Zelle payment. Logging only; never moves money.",
+        input_schema: obj({
+          amount: { type: "number" },
+          date: { type: "string", description: "YYYY-MM-DD, to disambiguate same-amount transactions" },
+          source: { type: "string", description: "'checking' or 'credit', to disambiguate" },
+          merchant: { type: "string", description: "who it was to / what it was" },
+          category: { type: "string" },
+          note: { type: "string" },
+        }, ["amount"]),
+      },
+      {
         name: "list_transactions",
         description: "List logged transactions, newest first. Optionally filter by recency window (sinceDays), card, or merchant.",
         input_schema: obj({
@@ -315,6 +327,13 @@ const REGISTRY = {
       analyze_transactions: async ({ transactions }) =>
         JSON.stringify({ ...analyzeTransactions(transactions), recurring: detectRecurring(transactions) }),
       log_transaction: async (input) => JSON.stringify(await logTransaction(input)),
+      identify_transaction: async (input) => {
+        const r = await identifyTransaction(input || {});
+        if (r.updated) return `Identified and tagged: ${r.updated.merchant || r.updated.note || r.updated.category} ($${r.updated.amount} on ${r.updated.date}). It won't be flagged as unnamed again.`;
+        return r.count > 1
+          ? `Found ${r.count} transactions matching that amount — add the date (and source: checking/credit) so I tag the right one.`
+          : "No matching transaction found to identify.";
+      },
       list_transactions: async (input) => JSON.stringify(await listTransactions(input || {})),
       spending_summary: async ({ sinceDays } = {}) => {
         const summary = await summarizeSpend(sinceDays != null ? { sinceDays } : {});

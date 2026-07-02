@@ -6,10 +6,30 @@ import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-finance-log-test.json");
 process.env.FINANCE_LOG_PATH = TMP;
-const { logTransaction, listTransactions, summarizeSpend, formatSpend } = await import("../src/finance-log.js");
+const { logTransaction, identifyTransaction, listTransactions, summarizeSpend, formatSpend } = await import("../src/finance-log.js");
 
 beforeEach(() => rm(TMP, { force: true }));
 after(() => rm(TMP, { force: true }));
+
+test("identifyTransaction tags an untagged withdrawal so it's no longer unnamed", async () => {
+  const t = await logTransaction({ amount: 744.65, date: "2026-06-30", source: "checking", direction: "out" });
+  assert.equal(t.merchant, null);
+  const r = await identifyTransaction({ amount: 744.65, date: "2026-06-30", source: "checking", merchant: "Landlord", note: "July rent" });
+  assert.equal(r.count, 1);
+  assert.equal(r.updated.merchant, "Landlord");
+  assert.equal(r.updated.id, t.id, "same row, id preserved");
+  const stored = (await listTransactions({})).find((x) => x.id === t.id);
+  assert.equal(stored.merchant, "Landlord");
+  assert.equal(stored.note, "July rent");
+});
+
+test("identifyTransaction refuses an ambiguous amount-only match", async () => {
+  await logTransaction({ amount: 216, date: "2026-06-30", source: "checking" });
+  await logTransaction({ amount: 216, date: "2026-06-29", source: "checking" });
+  const r = await identifyTransaction({ amount: 216, merchant: "Sitter" });
+  assert.equal(r.updated, null);
+  assert.equal(r.count, 2, "two matches -> ask for the date instead of guessing");
+});
 
 test("log -> list round-trips, newest first", async () => {
   const a = await logTransaction({ amount: 12.5, merchant: "Starbucks", card: "Sapphire", category: "food_and_drink", date: "2026-06-20" });
