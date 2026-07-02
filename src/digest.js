@@ -73,7 +73,10 @@ ${commuteLine}
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
 - Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
   trends live in the separate weekly finance report, so keep this to anything
-  time-sensitive: a bill due, an unusual charge worth flagging today.)
+  time-sensitive: a bill due, an unusual charge worth flagging today.) Any finance
+  flag MUST be grounded in a real logged transaction (actual merchant + amount +
+  date); never invent amounts, totals, or "unnamed withdrawals". If nothing real is
+  worth flagging, omit the finance section entirely.
 - Any security flags: delegate to security (Frank).
 - Notable resale finds worth a glance: delegate to resale (Shey). Her saved-search
   "traces" are ONGOING hunts, never one-and-done: report any NEW results as the
