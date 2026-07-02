@@ -111,6 +111,13 @@ function endsHanging(text) {
   return last ? CONT_WORDS.has(last) : false;
 }
 
+// Explicit "I'm done" sign-off so you can end a long, pause-heavy request on demand
+// (radio-style "over") instead of waiting for the silence timer. Matched + stripped
+// from the tail so it never reaches the model.
+const FINISH_RE = /[\s,]*\b(?:over and out|over|that'?s (?:it|all)|that is all|go ahead|send it|send now|send that|i'?m done|(?:i am )?done|the end|end of message)\b[\s.!?]*$/i;
+function endsFinish(text) { return FINISH_RE.test(String(text || "").trim()); }
+function stripFinish(text) { return String(text || "").replace(FINISH_RE, "").replace(/\s+/g, " ").trim(); }
+
 // Recent completed turns, kept in memory so an answer computed while the tile was
 // backgrounded (iOS suspends the page) is waiting as text when it returns to the
 // foreground and calls GET /history. Text only + capped; not durable across a
@@ -181,8 +188,10 @@ async function handleVoice(req, res, url) {
       res.end(JSON.stringify({ transcript, accepted: true, command: "", reply: "Yes?", audio: ack ? ack.bytes.toString("base64") : null, audioType: ack?.contentType || null }));
       return;
     }
+    const finish = endsFinish(command);
+    const cmd = finish ? stripFinish(command) : command;
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ transcript, accepted: true, command, continuation: endsHanging(command) }));
+    res.end(JSON.stringify({ transcript, accepted: true, command: cmd, continuation: !finish && endsHanging(cmd), finish }));
     return;
   }
 

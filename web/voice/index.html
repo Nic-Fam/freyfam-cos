@@ -49,7 +49,7 @@
     <div><div class="title">Lloyd</div><div class="sub">Chief of staff</div></div>
     <div class="pill"><span class="dot" id="dot"></span><span id="conn">ready</span></div>
   </header>
-  <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd answers out loud and keeps going. Talk over him to cut him off. Tap again to stop.</div></div>
+  <div class="log" id="log"><div class="hint">Tap once to start, then just talk — Lloyd answers out loud and keeps going. For a long ask, pause freely and say “over” when you’re done. Talk over him to cut him off. Tap again to stop.</div></div>
   <footer>
     <div class="status" id="status">Tap to talk</div>
     <button id="waketgl" type="button" aria-pressed="true"
@@ -70,7 +70,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </form>
-    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-e</div>
+    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-f</div>
   </footer>
 <script>
 (function(){
@@ -153,7 +153,10 @@
   function curThreshold(){ return Math.min(0.35, Math.max(0.045, noiseFloor*2.2 + 0.015)); }
   function endUtterance(){ utterRec=false; speaking=true; status.textContent=accText?'…':'Thinking…'; try{mr.stop();}catch(e){} }
   function startUtterance(){ try{ chunks=[]; mr=new MediaRecorder(stream); }catch(e){ return; }
-    clearFinalize(); // a new segment means they're still going — cancel the pending "you went quiet" send
+    // NB: do NOT clear the finalize timer here — a brief noise blip that never becomes
+    // real speech (speechMs<=350) would otherwise keep resetting it and Lloyd would
+    // never stop listening. The finalize callback is guarded by !utterRec, and a REAL
+    // segment reschedules it in sendUtterance, so we only reset on confirmed speech.
     utterStart=performance.now();
     mr.ondataavailable=function(e){ if(e.data&&e.data.size)chunks.push(e.data); };
     mr.onstop=function(){ var b=new Blob(chunks,{type:mr.mimeType||'audio/mp4'}); if(speechMs>350) sendUtterance(b); else resumeListen(); };
@@ -163,7 +166,7 @@
   // held (accText) and the next segment appended, so a long, pause-heavy request is ONE
   // turn. A finalize timer sends what we have if you actually go quiet.
   function clearFinalize(){ if(finalizeTimer){clearTimeout(finalizeTimer);finalizeTimer=null;} }
-  function scheduleFinalize(){ clearFinalize(); finalizeTimer=setTimeout(function(){ if(session&&!utterRec&&accText.trim()) answer(accText.trim()); },4500); }
+  function scheduleFinalize(){ clearFinalize(); finalizeTimer=setTimeout(function(){ if(session&&!utterRec&&accText.trim()) answer(accText.trim()); },4000); }
   function resetAcc(){ clearFinalize(); accText=''; accBubble=null; }
   function vadLoop(){ if(!session)return; vadRAF=requestAnimationFrame(vadLoop); if(!analyser)return;
     var l=level(), now=performance.now(), thr=curThreshold();
@@ -203,11 +206,12 @@
         var yb=bubble('','ll'); status.textContent='Speaking…'; if(d1.audio) await playB64(d1.audio,d1.audioType,{el:yb,text:d1.reply}); else yb.textContent=d1.reply;
         if(playAbort===ac) playAbort=null; resumeListen(); return;
       }
-      if(!seg){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // empty/garbled STT — ignore
+      if(!seg && !d1.finish){ if(playAbort===ac) playAbort=null; resumeListen(); return; } // empty/garbled STT — ignore (unless it's an explicit "over")
       if(firstSeg){ try{ if(navigator.vibrate) navigator.vibrate(25); }catch(e){} } // haptic "got it"
-      accText = accText ? (accText+' '+seg) : seg;
-      if(!accBubble) accBubble=bubble(accText,'you'); else { accBubble.textContent=accText; log.scrollTop=log.scrollHeight; }
+      if(seg) accText = accText ? (accText+' '+seg) : seg;
+      if(accText){ if(!accBubble) accBubble=bubble(accText,'you'); else { accBubble.textContent=accText; log.scrollTop=log.scrollHeight; } }
       if(playAbort===ac) playAbort=null;
+      if(d1.finish){ answer(accText); return; } // explicit "over" / "send it" — answer everything so far, now
       if(d1.continuation){ speaking=false; status.textContent='Listening… go on'; scheduleFinalize(); return; } // mid-thought — append the next segment
       answer(accText); // landed on a real ending — go answer the whole thing
     }catch(e){ if(e&&e.name==='AbortError'){ return; } if(playAbort===ac) playAbort=null; resumeListen(); }
