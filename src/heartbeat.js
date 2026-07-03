@@ -1,5 +1,6 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, COO_REVIEW } from "./config.js";
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
+import { shouldAlert, recordAlerted } from "./heartbeat-alerts.js";
 import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
@@ -620,8 +621,16 @@ export async function tick() {
   if (!verdict.actionable) return;
 
   for (const item of verdict.items) {
+    // Don't re-raise a proactive alert the family already dismissed, or one we just
+    // sent within the TTL. This is what stops a "cleared" heads-up (e.g. an
+    // acknowledged Amazon DSAR email) from re-firing every tick.
+    if (!(await shouldAlert(item.what))) {
+      log.info("proactive alert suppressed", { reason: "dismissed_or_recent", what: String(item.what).slice(0, 70) });
+      continue;
+    }
     if (item.urgency === "fyi") {
       await notifyOwner(`FYI: ${item.what}`);
+      await recordAlerted(item.what);
       continue;
     }
     // Run the chief directly (triageHeartbeat already judged this, so no second
@@ -634,6 +643,7 @@ export async function tick() {
         model
       );
       await notifyOwner(`Proactive (${item.agent}, ${item.urgency}): ${result}`);
+      await recordAlerted(item.what);
     } catch (e) {
       log.error("escalation failed", { reason: e.message, item: item.what });
     }

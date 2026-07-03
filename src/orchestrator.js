@@ -3,6 +3,7 @@ import { modelForComplexity, modelForTurn, GRAPH, BUDGET } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
+import { dismissAlert } from "./heartbeat-alerts.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { watchItem, listWatched, unwatchItem } from "./watch.js";
@@ -308,6 +309,11 @@ const tools = [
     name: "complete_task",
     description: "Mark a task done by its id (from list_tasks) or its exact title.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "dismiss_alert",
+    description: "Stop a recurring PROACTIVE heads-up once the family has acknowledged or handled it (e.g. 'yes, I submitted that Amazon data request, stop flagging it' or 'that alert is fine, clear it'). Pass the topic in your own words including its distinctive nouns; it's matched by keywords so future heartbeat alerts about the SAME thing are suppressed for good. Use ONLY when the family clears/acknowledges a proactive flag — not for their normal requests.",
+    input_schema: { type: "object", properties: { topic: { type: "string", description: "the alert topic + its key nouns, e.g. 'Amazon DSAR data request confirmation'" } }, required: ["topic"] },
   },
   {
     name: "watch_item",
@@ -878,6 +884,10 @@ function toolHandlers({ images, onDelegate } = {}) {
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
       return t ? `Marked done: "${t.title}"` : "No single matching open task — that phrase matched none or more than one. Call list_tasks and complete by the {id}, or be more specific.";
+    },
+    dismiss_alert: async ({ topic }) => {
+      const r = await dismissAlert(String(topic || ""));
+      return r.ok ? `Got it — I won't flag that again.` : "That topic's too vague to dismiss safely; add its distinctive words (e.g. the merchant/subject).";
     },
     watch_item: async ({ url, label, targetPrice }) => {
       try {
