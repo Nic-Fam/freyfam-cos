@@ -75,6 +75,47 @@ export function isConsumable(title) {
   return CONSUMABLE_RE.test(String(title || ""));
 }
 
+// Needed vs discretionary (finance's beat), separate from `consumable` (chef's).
+// NEEDED wins over DISCRETIONARY when both match (a "kids safety toy lock" is needed).
+// GRAY = coffee + optional recurring (a real spend lever, neither strictly needed nor
+// a one-off want). Heuristic + generous on "needed" since essentials dominate; the
+// unmatched default is "needed" so we under-flag rather than over-flag discretionary.
+const NEED_RE = new RegExp(
+  ["diaper", "pull-?up", "wipe", "sunscreen", "dog food", "cat food", "pee pad", "litter",
+   "detergent", "trash bag", "toothbrush", "toothpaste", "moisturizer", "deodorant", "formula",
+   "vitamin", "supplement", "creatine", "batter(y|ies)", "medicine", "first aid", "cold pack",
+   "ear ?wax", "safety", "door (lock|lever|knob)", "toilet", "cleaning", "pumice",
+   "packing (paper|tape)", "stretch film", "shipping label", "storage (bin|label)", "sticker",
+   "regulator", "valve", "bed sheet", "underwear", "potty", "training pants", "dental chew",
+   "dog treat", "shampoo", "soap", "napkin", "paper towel", "grocery", "\\bfood\\b"].join("|"),
+  "i"
+);
+const GRAY_RE = /\b(coffee|k-?cups?|keurig|espresso|instant coffee)\b/i;
+const DISCRETIONARY_RE = /\b(toy|train (set|track)|basketball|football|soccer ball|board game|video game|puzzle|lego|figure|doll|ice maker|fire tv|tv cube|streaming|echo dot|smart speaker|headphones?|earbuds|owl house|bird house|d[eé]cor|ornament|party favor|novelty|drone|gadget|collectible|candle)\b/i;
+export function classifyNeed(title) {
+  const t = String(title || "");
+  if (NEED_RE.test(t)) return "needed";
+  if (GRAY_RE.test(t)) return "gray";
+  if (DISCRETIONARY_RE.test(t)) return "discretionary";
+  return "needed";
+}
+
+/** Roll classified items into a needed/discretionary/gray summary. Pure. */
+export function summarizeNeeds(orders = []) {
+  const items = [];
+  for (const o of orders) for (const it of (o.items || [])) {
+    items.push({ title: it.title, need: it.need || classifyNeed(it.title), orderTotal: o.total, date: o.placedDate, orderId: o.orderId });
+  }
+  const by = (c) => items.filter((x) => x.need === c);
+  return {
+    itemCount: items.length,
+    neededCount: by("needed").length,
+    grayCount: by("gray").length,
+    discretionary: by("discretionary"),
+    gray: by("gray"),
+  };
+}
+
 /** Parse one scraped order card ({text, items}) into a structured order. Pure. */
 export function parseOrderCard({ text = "", items = [] } = {}) {
   const orderId = (text.match(ORDER_ID_RE) || [])[1] || null;
@@ -89,7 +130,7 @@ export function parseOrderCard({ text = "", items = [] } = {}) {
   const cleanItems = (items || [])
     .map((it) => ({ title: String(it.title || "").trim(), href: it.href || null }))
     .filter((it) => it.title)
-    .map((it) => ({ ...it, consumable: isConsumable(it.title) }));
+    .map((it) => ({ ...it, consumable: isConsumable(it.title), need: classifyNeed(it.title) }));
   return { orderId, placedDate, total, status, deliveryLine, items: cleanItems };
 }
 
