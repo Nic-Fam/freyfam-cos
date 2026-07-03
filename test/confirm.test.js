@@ -5,6 +5,7 @@ import os from "node:os";
 import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-pending-approvals-test.json");
+const RESOLVED = join(os.tmpdir(), "cos-pending-approvals-test-resolved.json");
 process.env.PENDING_APPROVALS_PATH = TMP;
 const { requestConfirmation, resolveByCode, tryResolveConfirmation, registerActionHandler } = await import("../src/confirm.js");
 
@@ -13,14 +14,32 @@ let ran;
 registerActionHandler("test", async (params) => { ran.push(params); return `did: ${params.what}`; });
 registerActionHandler("boom", async () => { throw new Error("kaboom"); });
 
-beforeEach(async () => { ran = []; await rm(TMP, { force: true }); });
-after(() => rm(TMP, { force: true }));
+const wipe = () => Promise.all([rm(TMP, { force: true }), rm(RESOLVED, { force: true })]);
+beforeEach(async () => { ran = []; await wipe(); });
+after(wipe);
 
 test("requestConfirmation stages without executing and returns a code + instruction", async () => {
   const { code, instruction } = await requestConfirmation("do a thing", "test", { what: "x" });
   assert.match(code, /^[0-9A-F]{4}$/);
   assert.match(instruction, new RegExp(`YES ${code}`));
   assert.deepEqual(ran, [], "must not run until approved");
+});
+
+test("a duplicate YES for a just-handled code is reassured, not alarmed", async () => {
+  const { code } = await requestConfirmation("create event X", "test", { what: "event" });
+  await tryResolveConfirmation(`YES ${code}`); // first: runs it
+  const dup = await tryResolveConfirmation(`YES ${code}`); // duplicate reply
+  assert.equal(dup.handled, true);
+  assert.match(dup.message, /already handled/i);
+  assert.doesNotMatch(dup.message, /unknown or expired|forg|phish/i);
+  assert.equal(ran.length, 1, "the action does NOT run a second time");
+});
+
+test("a truly unknown code gets a calm message, never an alarm", async () => {
+  const res = await tryResolveConfirmation("YES 9a9a"); // valid 4-hex code, never staged
+  assert.equal(res.handled, true);
+  assert.doesNotMatch(res.message, /unknown or expired|forg|phish|attack/i);
+  assert.match(res.message, /nothing to worry about/i);
 });
 
 test("YES runs the staged action with its params and returns the result", async () => {
@@ -59,7 +78,8 @@ test("an expired/unknown code is answered gracefully, NOT routed as a new messag
   // normal routing. It must be handled with an "expired" note instead.
   const res = await tryResolveConfirmation("YES AB12"); // hex-shaped code, not pending
   assert.equal(res.handled, true);
-  assert.match(res.message, /unknown or expired/i);
+  assert.match(res.message, /already handled or has expired/i); // calm, not alarmist
+  assert.doesNotMatch(res.message, /forg|phish|attack/i);
 });
 
 test("non-approval text routes normally (handled:false)", async () => {

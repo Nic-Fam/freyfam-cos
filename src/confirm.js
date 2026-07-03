@@ -63,6 +63,27 @@ async function savePending(map) {
   await writeFile(PENDING_PATH(), JSON.stringify(Object.fromEntries(map), null, 2));
 }
 
+// Recently-resolved codes: a code the family JUST approved/denied is remembered
+// briefly so a duplicate reply (the pre-filled "YES" arriving twice, or a webhook +
+// reconcile double-deliver) is recognized as "already handled" instead of firing an
+// alarming "unknown or expired" notice -- which then reads to Frank like a forged code.
+const RESOLVED_PATH = () => process.env.RESOLVED_APPROVALS_PATH || PENDING_PATH().replace(/\.json$/i, "") + "-resolved.json";
+async function loadResolved(now = Date.now()) {
+  let obj = {};
+  try { obj = JSON.parse(await readFile(RESOLVED_PATH(), "utf8")); } catch { return new Map(); }
+  const map = new Map();
+  for (const [code, e] of Object.entries(obj || {})) {
+    if (e && now - (e.at || 0) <= TTL_MS) map.set(code, e);
+  }
+  return map;
+}
+async function recordResolved(code, entry, approved, now = Date.now()) {
+  const map = await loadResolved(now);
+  map.set(code, { at: now, action: entry.action, approved });
+  await mkdir(dirname(RESOLVED_PATH()), { recursive: true });
+  await writeFile(RESOLVED_PATH(), JSON.stringify(Object.fromEntries(map), null, 2));
+}
+
 const approvalRecipient = (params) =>
   String((params || {}).to || (params || {}).recipient || "").toLowerCase().trim();
 
@@ -123,6 +144,7 @@ export async function resolveByCode(code, approved, { now = Date.now() } = {}) {
   if (!entry) return { found: false };
   pending.delete(key);
   await savePending(pending);
+  await recordResolved(key, entry, approved, now); // so a duplicate reply is "already handled", not "unknown"
   if (!approved) return { found: true, approved: false, action: entry.action };
   const handler = handlers.get(entry.kind);
   if (!handler) return { found: true, approved: true, action: entry.action, error: `no handler for "${entry.kind}"` };
@@ -164,7 +186,15 @@ export async function tryResolveConfirmation(messageBody) {
   }
   const res = await resolveByCode(CODE, affirm);
   if (!res.found) {
-    return { handled: true, message: `That approval code (${CODE}) is unknown or expired. Ask me again and I'll send a fresh one.` };
+    // Was this code JUST handled? Then a duplicate reply arrived -- reassure, don't alarm.
+    const prior = (await loadResolved()).get(CODE);
+    if (prior) {
+      return { handled: true, message: prior.approved === false
+        ? `You're all set -- ${CODE} was already cancelled a moment ago, nothing more to do.`
+        : `You're all set -- I already handled ${CODE} (${prior.action}). No need to approve again.` };
+    }
+    // Genuinely unknown: calm, never alarmist. This is our OWN code mechanism, not an attack.
+    return { handled: true, message: `I don't have a pending action for code ${CODE} -- it was likely already handled or has expired. Nothing to worry about; just ask me to redo it if you need it.` };
   }
   if (!affirm) return { handled: true, message: `Cancelled: ${res.action}` };
   if (res.error) return { handled: true, message: `I tried, but it failed: ${res.error}` };
