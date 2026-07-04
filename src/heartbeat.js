@@ -258,11 +258,20 @@ async function maybeNetworkScan() {
   if (now - lastNetScanAt < NET_SCAN_INTERVAL_MS) return;
   lastNetScanAt = now;
   try {
-    const text = await delegate({ agent: "security", task:
-      "List ONLY your OPEN findings whose title starts with 'New device on LAN', " +
-      "one per line (hostname, IP, MAC). If none, reply exactly 'NONE'." });
-    if (!text || /^\s*none\s*\.?\s*$/i.test(text)) return;
-    const fresh = text.split("\n").map((s) => s.trim()).filter(Boolean).filter((l) => !netAlerted.has(l));
+    // Zero-model read (was an hourly Sonnet agent loop just to read Frank's JSON
+    // store — and it was broken: delegate returns {text,requests}, so the old
+    // `text.split` threw every tick). The op runs on Frank's side, so his findings
+    // never leave his machine; Lloyd only surfaces the alert (notifyOwner, not the
+    // confirmation gate — informing, not acting on the family's behalf).
+    const { data } = await delegate({
+      agent: "security",
+      op: "list_findings",
+      args: { status: "open", titlePrefix: "New device on LAN" },
+    });
+    const findings = Array.isArray(data) ? data : [];
+    if (!findings.length) return;
+    const lines = findings.map((f) => String(f?.title || "").trim()).filter(Boolean);
+    const fresh = lines.filter((l) => !netAlerted.has(l));
     if (!fresh.length) return;
     fresh.forEach((l) => netAlerted.add(l));
     await notifyOwner(`Frank flagged new device(s) on the network:\n${fresh.join("\n")}\nReview and confirm they're expected.`);

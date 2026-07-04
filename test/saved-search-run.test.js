@@ -82,7 +82,7 @@ test("parseHuntsJson extracts the array from a chatty reply and tolerates junk",
   assert.deepEqual(ss.parseHuntsJson('[{"sites":["x"]}]'), [], "entries without a query are dropped");
 });
 
-test("fetchHuntsViaDelegate pulls hunts from resale over the delegate seam", async () => {
+test("fetchHuntsViaDelegate pulls hunts from resale over the delegate seam (text fallback)", async () => {
   const delegate = async ({ agent, task }) => {
     assert.equal(agent, "resale");
     assert.match(task, /export_saved_searches/);
@@ -91,6 +91,20 @@ test("fetchHuntsViaDelegate pulls hunts from resale over the delegate seam", asy
   const hunts = await ss.fetchHuntsViaDelegate(delegate);
   assert.equal(hunts.length, 1);
   assert.deepEqual(hunts[0].sites, ["poshmark", "grailed"]);
+});
+
+test("fetchHuntsViaDelegate uses the zero-model op path when delegate returns {data}", async () => {
+  let sawOp;
+  const delegate = async ({ agent, op }) => {
+    assert.equal(agent, "resale");
+    sawOp = op;
+    // The op path returns the raw store array under {data} — no model, no parsing.
+    return { data: [{ query: "Chanel flap", sites: ["poshmark"] }, { sites: ["x"] /* no query -> dropped */ }] };
+  };
+  const hunts = await ss.fetchHuntsViaDelegate(delegate);
+  assert.equal(sawOp, "export_saved_searches", "asks for the zero-model op");
+  assert.equal(hunts.length, 1, "entries without a query are dropped");
+  assert.equal(hunts[0].query, "Chanel flap");
 });
 
 test("a brand-new listing shows up as new on a later run", async () => {

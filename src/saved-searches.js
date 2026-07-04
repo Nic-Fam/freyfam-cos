@@ -231,9 +231,18 @@ export function parseHuntsJson(text) {
   }
 }
 
-/** Ask the resale specialist (over delegate) for its hunt list as JSON. `delegate` injected. */
+/**
+ * Ask the resale specialist (over delegate) for its hunt list. Uses the zero-model
+ * op path ({agent, op} -> {data}); a whole agent loop is not needed to read a JSON
+ * store. Back-compat: an older delegate that returns text (or {text}) still parses
+ * via parseHuntsJson — which also fixes the prior bug where {text,requests} was
+ * passed straight to parseHuntsJson (stringified to "[object Object]" -> []), so
+ * browser-only hunts silently never ran. `delegate` injected.
+ */
 export async function fetchHuntsViaDelegate(delegate, { task = EXPORT_TASK } = {}) {
-  const text = await delegate({ agent: "resale", task });
+  const res = await delegate({ agent: "resale", op: "export_saved_searches", task });
+  if (res && Array.isArray(res.data)) return res.data.filter((h) => h && h.query);
+  const text = typeof res === "string" ? res : res?.text ?? "";
   return parseHuntsJson(text);
 }
 

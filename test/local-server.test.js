@@ -8,6 +8,8 @@ let server, base;
 const KEY = "test-key";
 const calls = [];
 
+const opCalls = [];
+
 before(async () => {
   server = createSpecialistServer({
     pinnedAgent: "dev",
@@ -15,6 +17,10 @@ before(async () => {
     runner: async (agent, task) => {
       calls.push({ agent, task });
       return `ran ${agent}: ${task}`;
+    },
+    opRunner: async (agent, op, args) => {
+      opCalls.push({ agent, op, args });
+      return [{ ran: `${agent}:${op}` }];
     },
     log: { error() {}, info() {} },
   });
@@ -43,7 +49,21 @@ test("refuses a task for a different agent (pin) with 403", async () => {
   assert.equal(res.status, 403);
 });
 
-test("requires a task with 400", async () => {
+test("requires a task or op with 400", async () => {
   const res = await post({ agent: "dev", task: "  " });
   assert.equal(res.status, 400);
+});
+
+test("op path returns {data} without invoking the model runner", async () => {
+  const before = calls.length;
+  const res = await post({ agent: "dev", op: "list_things", args: { k: 1 } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { data: [{ ran: "dev:list_things" }] });
+  assert.deepEqual(opCalls.at(-1), { agent: "dev", op: "list_things", args: { k: 1 } });
+  assert.equal(calls.length, before, "the model runner must not be called on an op request");
+});
+
+test("op path still enforces the agent pin (403) and the key (401)", async () => {
+  assert.equal((await post({ agent: "finance", op: "list_things" })).status, 403);
+  assert.equal((await post({ agent: "dev", op: "list_things" }, {})).status, 401);
 });

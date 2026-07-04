@@ -27,6 +27,11 @@ before(async () => {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
+      // Op path returns {data}; task path returns {text}.
+      if (lastRequest.body.op) {
+        res.end(JSON.stringify({ data: [{ title: "New device on LAN: printer" }] }));
+        return;
+      }
       res.end(JSON.stringify({ text: `handled: ${lastRequest.body.task}` }));
     });
   });
@@ -92,4 +97,40 @@ test("delegate surfaces a graceful message on remote failure (no silent local fa
   assert.match(out.text, /could not reach the finance specialist/i);
   assert.deepEqual(out.requests, []);
   assert.equal(localCalled, false, "must NOT fall back to local (would break isolation)");
+});
+
+// --- zero-model op path ({agent, op, args} -> {data}) -----------------------
+
+test("delegate op path runs the op runner locally and returns {data} (no model)", async () => {
+  const cfg = { mode: "local", endpoints: {} };
+  let modelRan = false;
+  const out = await delegate(
+    { agent: "security", op: "list_findings", args: { status: "open" } },
+    { cfg, localRunner: () => ((modelRan = true), "MODEL"), opRunner: async (a, op, args) => ({ a, op, args }) }
+  );
+  assert.deepEqual(out, { data: { a: "security", op: "list_findings", args: { status: "open" } } });
+  assert.equal(modelRan, false, "the op path must not invoke the model runner");
+});
+
+test("delegate op path posts {agent,op,args} to the remote endpoint and reads {data}", async () => {
+  const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { security: `${base}/op` } };
+  const out = await delegate(
+    { agent: "security", op: "list_findings", args: { titlePrefix: "New device on LAN" } },
+    { cfg }
+  );
+  assert.equal(lastRequest.body.op, "list_findings");
+  assert.deepEqual(lastRequest.body.args, { titlePrefix: "New device on LAN" });
+  // The stub echoes {data:[...]}; see the op branch added to the test server.
+  assert.ok(Array.isArray(out.data), "returns the data array from the server");
+});
+
+test("delegate op path returns {data:null} on remote failure (no throw, no local fallback)", async () => {
+  const cfg = { mode: "remote", timeoutMs: 5000, endpoints: { security: `${base}/boom` } };
+  let localCalled = false;
+  const out = await delegate(
+    { agent: "security", op: "list_findings", args: {} },
+    { cfg, localRunner: () => ((localCalled = true), "LOCAL"), opRunner: () => ((localCalled = true), "OP") }
+  );
+  assert.equal(out.data, null);
+  assert.equal(localCalled, false, "a remote op failure must not fall back to local");
 });

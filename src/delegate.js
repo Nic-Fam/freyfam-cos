@@ -1,5 +1,6 @@
 import { SPECIALISTS } from "./config.js";
 import { runSpecialist } from "./specialists/runner.js";
+import { runSpecialistOp } from "./specialists/ops.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("delegate");
@@ -64,12 +65,57 @@ export async function invokeRemoteSpecialist(agent, task, { cfg = SPECIALISTS, f
 }
 
 /**
+ * Invoke a specialist's zero-model OP over the remote transport. Sends
+ * {agent, op, args}, expects {data}. Same auth + agent pin as a task call.
+ */
+export async function invokeRemoteOp(agent, op, args, { cfg = SPECIALISTS, fetchImpl = fetch } = {}) {
+  const url = cfg.endpoints?.[agent];
+  if (!url) throw new Error(`no remote endpoint configured for "${agent}"`);
+  const key = cfg.keys?.[agent] || cfg.functionKey;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(key ? { "x-functions-key": key } : {}) },
+      body: JSON.stringify({ agent, op, args: args || {} }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`specialist "${agent}" op "${op}" returned HTTP ${res.status}`);
+    const data = await res.json();
+    return { data: data?.data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Run a specialist through whichever transport config selects. Remote failures
  * do NOT silently fall back to local: running a remote specialist's work on
  * Lloyd would break the isolation guarantee, so we surface a short error string
  * the chief can relay instead. (localRunner is injectable for tests.)
+ *
+ * Two call shapes share the seam:
+ *   {agent, task}        -> {text, requests}   (LLM run, the default)
+ *   {agent, op, args}    -> {data}             (zero-model store read)
+ * The op path runs on the specialist's side too (remote server dispatches it),
+ * so isolation is identical; it just skips the model.
  */
-export async function delegate({ agent, task, images }, { cfg = SPECIALISTS, fetchImpl = fetch, localRunner = runSpecialist } = {}) {
+export async function delegate(
+  { agent, task, images, op, args },
+  { cfg = SPECIALISTS, fetchImpl = fetch, localRunner = runSpecialist, opRunner = runSpecialistOp } = {}
+) {
+  if (op) {
+    if (chooseTransport(agent, cfg) === "remote") {
+      try {
+        return await invokeRemoteOp(agent, op, args, { cfg, fetchImpl });
+      } catch (err) {
+        log.error("remote specialist op failed", { agent, op, error: String(err?.message || err) });
+        return { data: null, error: `could not reach the ${agent} specialist` };
+      }
+    }
+    return { data: await opRunner(agent, op, args) };
+  }
   if (chooseTransport(agent, cfg) === "remote") {
     try {
       return await invokeRemoteSpecialist(agent, task, { cfg, fetchImpl, images });

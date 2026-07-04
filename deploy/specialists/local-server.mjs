@@ -1,6 +1,7 @@
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { runSpecialist } from "../../src/specialists/runner.js";
+import { runSpecialistOp } from "../../src/specialists/ops.js";
 import { createLogger } from "../../src/log.js";
 
 // ===========================================================================
@@ -18,7 +19,7 @@ import { createLogger } from "../../src/log.js";
 //     power. Those stay on Lloyd, exactly as in-process and in Azure.
 // ===========================================================================
 
-export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialist, log = createLogger("specialist") } = {}) {
+export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialist, opRunner = runSpecialistOp, log = createLogger("specialist") } = {}) {
   return http.createServer((req, res) => {
     const json = (status, obj) => {
       res.writeHead(status, { "content-type": "application/json" });
@@ -45,11 +46,23 @@ export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialis
       }
       const agent = body?.agent || pinnedAgent;
       const task = body?.task;
+      const op = body?.op;
       const images = Array.isArray(body?.images) ? body.images : undefined;
-      if (!task || !String(task).trim()) return json(400, { error: "task is required" });
+      // The agent pin applies to BOTH shapes so a misrouted op can't cross domains.
       if (pinnedAgent && agent !== pinnedAgent) {
         return json(403, { error: `this server serves "${pinnedAgent}", not "${agent}"` });
       }
+      // Zero-model op path: {agent, op, args} -> {data}. No model, no task.
+      if (op) {
+        try {
+          const data = await opRunner(agent, op, body?.args || {});
+          return json(200, { data });
+        } catch (err) {
+          log.error("specialist op failed", { agent, op, reason: err.message });
+          return json(400, { error: `op "${op}" failed` });
+        }
+      }
+      if (!task || !String(task).trim()) return json(400, { error: "task or op is required" });
       try {
         // Contract is {text, requests} (workstream S step 2). Tolerate a runner
         // that returns a bare string (older/injected) by defaulting requests to [].

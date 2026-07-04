@@ -1,5 +1,6 @@
 import { app } from "@azure/functions";
 import { runSpecialist } from "../src/specialists/runner.js";
+import { runSpecialistOp } from "../src/specialists/ops.js";
 
 // ===========================================================================
 // Azure Function entrypoint for ONE specialist. This is the remote half of the
@@ -35,20 +36,39 @@ app.http("specialist", {
 
     const agent = body?.agent || PINNED;
     const task = body?.task;
+    const op = body?.op;
     const images = Array.isArray(body?.images) ? body.images : undefined;
 
-    if (!task || !String(task).trim()) {
-      return { status: 400, jsonBody: { error: "task is required" } };
-    }
     if (PINNED && agent !== PINNED) {
       // Defense-in-depth: this app is scoped to PINNED's identity + data, so it
-      // must not run another agent's work even if asked.
+      // must not run another agent's work even if asked. Applies to ops too.
       return { status: 403, jsonBody: { error: `this deployment serves "${PINNED}", not "${agent}"` } };
     }
 
+    // Zero-model op path: {agent, op, args} -> {data}. Deterministic store read,
+    // no model tokens (see src/specialists/ops.js).
+    if (op) {
+      try {
+        const data = await runSpecialistOp(agent, op, body?.args || {});
+        return { jsonBody: { data } };
+      } catch (err) {
+        context.error(`specialist "${agent}" op "${op}" failed`, err);
+        return { status: 400, jsonBody: { error: `op "${op}" failed` } };
+      }
+    }
+
+    if (!task || !String(task).trim()) {
+      return { status: 400, jsonBody: { error: "task or op is required" } };
+    }
+
     try {
-      const text = await runSpecialist(agent, task, { images });
-      return { jsonBody: { text } };
+      // runSpecialist returns {text, requests}; unwrap so the JSON body matches
+      // the delegate contract (previously double-nested text under text).
+      const result = await runSpecialist(agent, task, { images });
+      const jsonBody = typeof result === "string"
+        ? { text: result, requests: [] }
+        : { text: result?.text ?? "", requests: Array.isArray(result?.requests) ? result.requests : [] };
+      return { jsonBody };
     } catch (err) {
       context.error(`specialist "${agent}" failed`, err);
       return { status: 500, jsonBody: { error: "specialist run failed" } };
