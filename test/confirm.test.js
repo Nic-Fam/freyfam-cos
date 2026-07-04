@@ -7,7 +7,7 @@ import { join } from "node:path";
 const TMP = join(os.tmpdir(), "cos-pending-approvals-test.json");
 const RESOLVED = join(os.tmpdir(), "cos-pending-approvals-test-resolved.json");
 process.env.PENDING_APPROVALS_PATH = TMP;
-const { requestConfirmation, resolveByCode, tryResolveConfirmation, registerActionHandler } = await import("../src/confirm.js");
+const { requestConfirmation, resolveByCode, tryResolveConfirmation, registerActionHandler, registerApprovalNotifier } = await import("../src/confirm.js");
 
 // A test executor: records the params it ran with, keyed by `kind`.
 let ran;
@@ -17,6 +17,15 @@ registerActionHandler("boom", async () => { throw new Error("kaboom"); });
 const wipe = () => Promise.all([rm(TMP, { force: true }), rm(RESOLVED, { force: true })]);
 beforeEach(async () => { ran = []; await wipe(); });
 after(wipe);
+
+test("requestConfirmation passes the source-email thread to notifiers", async () => {
+  let got = null;
+  const unregister = registerApprovalNotifier((payload) => { got = payload; });
+  await requestConfirmation("email to x", "test", { what: "e" }, { thread: { messageId: "AAMk123", subject: "Re: tour" } });
+  unregister();
+  assert.ok(got, "notifier fired");
+  assert.deepEqual(got.thread, { messageId: "AAMk123", subject: "Re: tour" });
+});
 
 test("requestConfirmation stages without executing and returns a code + instruction", async () => {
   const { code, instruction } = await requestConfirmation("do a thing", "test", { what: "x" });

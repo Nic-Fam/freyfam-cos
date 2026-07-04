@@ -48,6 +48,16 @@ function graph() {
  * Cheap signal fetch for the heartbeat: recent message headers only.
  * Returns a compact array the triage model can scan without a full agent run.
  */
+// Our OWN approval mechanism (the "Approval needed (XXXX)" prompt and the
+// "Approve/Deny/YES/NO XXXX" mailto replies) lands in this same inbox. Those are
+// handled by the inbound resolver (tryResolveConfirmation) and must NEVER be fed to
+// the proactive heartbeat triage — otherwise a consumed/duplicate approval reply
+// gets re-surfaced as a mystery "I don't have code XXXX" heads-up. Exported for tests.
+export function isApprovalMechanismMail(subject) {
+  const s = String(subject || "");
+  return /^\s*approval needed\b/i.test(s) || /^\s*(approve|deny|yes|no)\s+[0-9a-f]{4}\b/i.test(s);
+}
+
 export async function recentMailSignals({ top = 15 } = {}) {
   const res = await graph()
     .api(`/users/${GRAPH.mailbox}/mailFolders/inbox/messages`)
@@ -55,13 +65,15 @@ export async function recentMailSignals({ top = 15 } = {}) {
     .select("from,subject,receivedDateTime,isRead")
     .orderby("receivedDateTime desc")
     .get();
-  return (res.value || []).map((m) => ({
-    source: "email",
-    from: m.from?.emailAddress?.address,
-    subject: m.subject,
-    receivedAt: m.receivedDateTime,
-    unread: !m.isRead,
-  }));
+  return (res.value || [])
+    .filter((m) => !isApprovalMechanismMail(m.subject))
+    .map((m) => ({
+      source: "email",
+      from: m.from?.emailAddress?.address,
+      subject: m.subject,
+      receivedAt: m.receivedDateTime,
+      unread: !m.isRead,
+    }));
 }
 
 /**
@@ -564,16 +576,42 @@ export function approvalEmailHtml(code, action, mailbox = GRAPH.mailbox) {
   ].join("");
 }
 
-/** Register email as an approval channel: each staged action emails Approve/Deny
- *  buttons to GRAPH.approvalEmailTo. No-op if no recipient is configured. */
+/**
+ * Send the Approve/Deny buttons as a REPLY inside the source email's conversation
+ * (so the approval rides the existing thread, not a standalone email). Uses Graph's
+ * native createReply, which sets the threading headers (In-Reply-To/References) a
+ * standalone sendMail cannot, then retargets the draft to the owner and replaces its
+ * body with the buttons. Throws on any Graph error so the caller can fall back.
+ */
+export async function sendThreadedApproval(sourceMessageId, { to, htmlBody, mailbox = GRAPH.mailbox }) {
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!recipients.length) throw new Error("sendThreadedApproval: no recipient");
+  const reply = await graph().api(`/users/${mailbox}/messages/${sourceMessageId}/createReply`).post({});
+  await graph().api(`/users/${mailbox}/messages/${reply.id}`).patch({
+    toRecipients: recipients.map((address) => ({ emailAddress: { address } })),
+    body: { contentType: "HTML", content: htmlBody },
+  });
+  await graph().api(`/users/${mailbox}/messages/${reply.id}/send`).post({});
+}
+
+/** Register email as an approval channel: each staged action sends Approve/Deny
+ *  buttons to GRAPH.approvalEmailTo. When the action was triggered by an email
+ *  (`thread.messageId`), the buttons reply INSIDE that conversation; otherwise one
+ *  standalone approval email is sent. No-op if no recipient is configured. */
 export function registerEmailApprovals() {
   if (!GRAPH.approvalEmailTo.length) return;
-  registerApprovalNotifier(({ code, action }) => {
-    sendMail({
-      to: GRAPH.approvalEmailTo,
-      subject: `Approval needed (${code})`,
-      body: approvalEmailHtml(code, action),
-      html: true,
-    }).catch((e) => _glog.error("approval email failed", { reason: e.message, code }));
+  registerApprovalNotifier(({ code, action, thread }) => {
+    const html = approvalEmailHtml(code, action);
+    const standalone = () =>
+      sendMail({ to: GRAPH.approvalEmailTo, subject: `Approval needed (${code})`, body: html, html: true })
+        .catch((e) => _glog.error("approval email failed", { reason: e.message, code }));
+    if (thread && thread.messageId) {
+      sendThreadedApproval(thread.messageId, { to: GRAPH.approvalEmailTo, htmlBody: html }).catch((e) => {
+        _glog.error("threaded approval failed; sending standalone", { reason: e.message, code });
+        standalone(); // a threading hiccup must never drop the approval (safety gate)
+      });
+    } else {
+      standalone();
+    }
   });
 }

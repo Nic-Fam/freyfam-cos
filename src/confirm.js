@@ -104,7 +104,7 @@ const NOTIFY_CAP = Number(process.env.APPROVAL_NOTIFY_CAP || 3);
  * losing or merging a distinct approval; it only suppresses a redundant ping.
  * @returns {Promise<{code:string, instruction:string, throttled?:boolean}>}
  */
-export async function requestConfirmation(actionDescription, kind, params, { now = Date.now() } = {}) {
+export async function requestConfirmation(actionDescription, kind, params, { now = Date.now(), thread = null } = {}) {
   if (!handlers.has(kind)) throw new Error(`no action handler registered for kind "${kind}"`);
   const code = randomUUID().slice(0, 4).toUpperCase();
   const pending = await loadPending(now);
@@ -114,7 +114,9 @@ export async function requestConfirmation(actionDescription, kind, params, { now
     (e) => e && e.kind === kind && approvalRecipient(e.params) === to
   ).length;
 
-  pending.set(code, { kind, params, action: actionDescription, createdAt: now });
+  // `thread` (source email's {messageId, subject}) lets the email approval notifier
+  // reply INSIDE that conversation instead of sending a standalone approval email.
+  pending.set(code, { kind, params, action: actionDescription, createdAt: now, thread });
   await savePending(pending);
 
   // Suppress the ping (only) once this recipient+kind is clearly piling up.
@@ -126,7 +128,7 @@ export async function requestConfirmation(actionDescription, kind, params, { now
     // (channels/notify.js), and the email-approval notifier already emails, so
     // doing both double-sent every approval. The notifiers are the one path.
     for (const n of notifiers) {
-      try { n({ code, action: actionDescription }); } catch { /* a broken notifier must never block */ }
+      try { n({ code, action: actionDescription, thread }); } catch { /* a broken notifier must never block */ }
     }
   }
   return { code, instruction: `Reply "YES ${code}" to confirm or "NO ${code}" to cancel.`, throttled };

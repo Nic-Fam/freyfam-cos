@@ -683,7 +683,7 @@ export function wrapDelegateWithMirror(delegateFn, { onDelegate, images, fulfill
   };
 }
 
-function toolHandlers({ images, onDelegate } = {}) {
+function toolHandlers({ images, onDelegate, thread = null } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
     // Optional `agent` routes the fact to that specialist's scoped brain; omit for shared.
@@ -765,7 +765,8 @@ function toolHandlers({ images, onDelegate } = {}) {
       const { instruction } = await requestConfirmation(
         `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`,
         "calendar",
-        input
+        input,
+        { thread }
       );
       return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
     },
@@ -776,7 +777,8 @@ function toolHandlers({ images, onDelegate } = {}) {
       const { instruction } = await requestConfirmation(
         `Delete event: ${subject}${when}\nRemoves it from ${list.length} calendar${list.length === 1 ? "" : "s"} and notifies any attendees.`,
         "calendar_delete",
-        { refs: list, subject, start }
+        { refs: list, subject, start },
+        { thread }
       );
       return `Ready to delete "${subject}"${when}. ${instruction}`;
     },
@@ -808,7 +810,8 @@ function toolHandlers({ images, onDelegate } = {}) {
       const { instruction } = await requestConfirmation(
         `Email to ${to}${ccLine}${bccLine}${flag}\nSubject: ${subject}\n${signed.slice(0, 220)}`,
         "email",
-        { to, cc, bcc, subject, body: signed }
+        { to, cc, bcc, subject, body: signed },
+        { thread }
       );
       const copies = [cc ? `cc ${cc}` : "", bcc ? `bcc ${bcc}` : ""].filter(Boolean).join(", ");
       return `Ready to email ${to}${copies ? ` (${copies})` : ""}${flag} (subject: ${subject}). ${instruction}`;
@@ -1044,7 +1047,8 @@ function toolHandlers({ images, onDelegate } = {}) {
       const { instruction } = await requestConfirmation(
         `Place order via browser:\n${summary}\n${url}`,
         "order",
-        { url, summary, steps }
+        { url, summary, steps },
+        { thread }
       );
       return `Ready to place this order: ${summary}. ${instruction}`;
     },
@@ -1096,7 +1100,7 @@ function memSavedTag(m) {
 // digest, for live weather + traffic along each person's commute).
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
 
-export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [] } = {}) {
+export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
@@ -1115,7 +1119,7 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     .join("\n\n");
   // Trace each tool the chief calls so a runaway loop (the one that ends in "max
   // tool turns reached") is visible — same wrapper as the specialists. Names only.
-  const rawHandlers = toolHandlers({ images, onDelegate });
+  const rawHandlers = toolHandlers({ images, onDelegate, thread });
   const tracedHandlers = {};
   for (const [name, fn] of Object.entries(rawHandlers)) {
     tracedHandlers[name] = async (input) => {
@@ -1425,6 +1429,9 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       content,
       images,
       history,
+      // Thread approval emails INTO the source conversation when this turn was triggered
+      // by an email (else the notifier falls back to a standalone approval email).
+      thread: msg.channel === "email" && msg.graphMessageId ? { messageId: msg.graphMessageId, subject: msg.subject } : null,
       onDelegate: (event) => transport.mirror(event),
     });
   }
