@@ -10,6 +10,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { VOICE } from "./config.js";
 import { handleInbound } from "./orchestrator.js";
 import { transcribeAudio } from "./audio.js";
@@ -46,8 +47,13 @@ async function serveStatic(res, urlPath) {
 }
 
 function authed(req, url) {
-  const t = url.searchParams.get("k") || req.headers["x-voice-token"];
-  return Boolean(VOICE.token) && t === VOICE.token;
+  // Prefer the header; the ?k= query param is a fallback (it leaks into URLs/logs)
+  // for the audio <source> tags that can't set headers. Compared in constant time.
+  const t = req.headers["x-voice-token"] || url.searchParams.get("k");
+  if (!VOICE.token) return false;
+  const a = createHash("sha256").update(String(t ?? "")).digest();
+  const b = createHash("sha256").update(String(VOICE.token)).digest();
+  return timingSafeEqual(a, b);
 }
 
 // Short spoken "thinking" fillers (Lloyd's Azure voice). The tile plays one the

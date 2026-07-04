@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createLogger } from "./log.js";
@@ -106,7 +106,10 @@ const NOTIFY_CAP = Number(process.env.APPROVAL_NOTIFY_CAP || 3);
  */
 export async function requestConfirmation(actionDescription, kind, params, { now = Date.now(), thread = null } = {}) {
   if (!handlers.has(kind)) throw new Error(`no action handler registered for kind "${kind}"`);
-  const code = randomUUID().slice(0, 4).toUpperCase();
+  // 6 hex chars (16.7M combos) from a CSPRNG, up from 4 (65k). Combined with the
+  // owner-only submission gate (only an authorized sender's YES reaches this — see
+  // orchestrator.handleInbound) and the short TTL, brute force is not feasible.
+  const code = randomBytes(3).toString("hex").toUpperCase();
   const pending = await loadPending(now);
 
   const to = approvalRecipient(params);
@@ -174,10 +177,10 @@ export async function tryResolveConfirmation(messageBody) {
   // contain "yes" + a 4-char token is NOT an approval -> let it route normally.
   if (!head || head.length > 200) return { handled: false };
 
-  // A 4-char code token (codes are uppercase hex) anywhere in the head, plus a
-  // clear yes/no intent. Tolerates punctuation and a few extra words ("Yes, 1234
-  // thanks", "approve 1234", "no 1234 cancel that").
-  const code = (head.match(/\b([0-9a-f]{4})\b/i) || [])[1];
+  // A 6-char code token (codes are uppercase hex) anywhere in the head, plus a
+  // clear yes/no intent. Tolerates punctuation and a few extra words ("Yes, 1a2b3c
+  // thanks", "approve 1a2b3c", "no 1a2b3c cancel that").
+  const code = (head.match(/\b([0-9a-f]{6})\b/i) || [])[1];
   const affirm = /\b(yes|yep|yeah|approve[d]?|confirm(?:ed)?|ok|okay|go ahead|do it|send it)\b/i.test(head);
   const negate = /\b(no|nope|deny|denied|cancel(?:led)?|don'?t|do not|stop|reject)\b/i.test(head);
   if (!code || (!affirm && !negate)) return { handled: false }; // not an approval reply

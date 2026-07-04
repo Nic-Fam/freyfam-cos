@@ -48,8 +48,10 @@ export async function triageInbound(message) {
   try {
     return parseJson(textOf(resp));
   } catch {
-    // Fail safe: treat as standard chief-of-staff work, not high stakes.
-    return { agent: "chief-of-staff", complexity: "standard", high_stakes: false, summary: message.slice(0, 60) };
+    // Fail SAFE: an unparseable triage verdict is treated as high-stakes standard
+    // chief work, so a malformed/garbled message can't slip under the high-stakes
+    // posture. (Model cost is unchanged — high_stakes is a Sonnet floor, not Opus.)
+    return { agent: "chief-of-staff", complexity: "standard", high_stakes: true, summary: message.slice(0, 60) };
   }
 }
 

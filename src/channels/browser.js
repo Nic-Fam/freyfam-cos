@@ -23,6 +23,7 @@
 // an Azure specialist, so the IP is residential (see the topology note above).
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { assertPublicUrl } from "../net-guard.js";
 
 const BROWSER = {
   channel: process.env.BROWSER_CHANNEL || null,             // e.g. "chrome" (real Chrome w/ the saved creds)
@@ -199,8 +200,11 @@ function priceSignalsInPage() {
  * @param {string} url
  * @param {{maxChars?:number, timeoutMs?:number}} [opts]
  */
-export async function readPage(url, { maxChars = 4000, timeoutMs = 30000 } = {}) {
-  hostOf(url); // validate before launching anything
+export async function readPage(url, { maxChars = 4000, timeoutMs = 30000, resolve } = {}) {
+  // SSRF guard: reject non-http(s) and private/loopback/link-local targets before
+  // launching the (signed-in) browser. A browse_page URL can arrive via prompt
+  // injection, so it must not be steerable at 127.0.0.1 / metadata / the LAN.
+  await assertPublicUrl(url, resolve ? { resolve } : {});
   const page = await newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });

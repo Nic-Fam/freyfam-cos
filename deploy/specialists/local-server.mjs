@@ -1,5 +1,6 @@
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { runSpecialist } from "../../src/specialists/runner.js";
 import { runSpecialistOp } from "../../src/specialists/ops.js";
 import { createLogger } from "../../src/log.js";
@@ -14,10 +15,24 @@ import { createLogger } from "../../src/log.js";
 //
 // Isolation parity with Azure:
 //   - auth: COS_SPECIALIST_LOCAL_KEY must match the x-functions-key header
+//     (compared in constant time; the CLI refuses to start without it)
+//   - bind: 127.0.0.1 by default so it is NOT exposed to the whole LAN. A real
+//     Lloyd-on-another-Mac deployment sets COS_SPECIALIST_LOCAL_HOST to the
+//     Tailscale/LAN interface IP deliberately (never 0.0.0.0)
 //   - agent pin: COS_AGENT names the one agent this process may serve
 //   - a specialist only RETURNS text: no outbound channel, no confirmation
 //     power. Those stay on Lloyd, exactly as in-process and in Azure.
 // ===========================================================================
+
+// Constant-time key check. Hash both sides so the compare length is fixed (no
+// timing/length leak) and a missing header can't shortcut. No key configured =>
+// auth disabled (used only by tests; the CLI requires a key).
+function keyMatches(provided, expected) {
+  if (!expected) return true;
+  const a = createHash("sha256").update(String(provided ?? "")).digest();
+  const b = createHash("sha256").update(String(expected)).digest();
+  return timingSafeEqual(a, b);
+}
 
 export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialist, opRunner = runSpecialistOp, log = createLogger("specialist") } = {}) {
   return http.createServer((req, res) => {
@@ -27,8 +42,9 @@ export function createSpecialistServer({ pinnedAgent, key, runner = runSpecialis
     };
 
     if (req.method !== "POST") return json(405, { error: "POST only" });
-    // Same x-functions-key contract delegate.invokeRemoteSpecialist sends.
-    if (key && req.headers["x-functions-key"] !== key) {
+    // Same x-functions-key contract delegate.invokeRemoteSpecialist sends, checked
+    // in constant time.
+    if (!keyMatches(req.headers["x-functions-key"], key)) {
       return json(401, { error: "bad or missing function key" });
     }
 
@@ -86,10 +102,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const pinnedAgent = process.env.COS_AGENT;
   const key = process.env.COS_SPECIALIST_LOCAL_KEY;
   const port = Number(process.env.PORT || 8787);
+  // Default to localhost so the harness is never silently exposed to the LAN. A
+  // real cross-Mac deployment sets this to the Tailscale/LAN IP on purpose.
+  const host = process.env.COS_SPECIALIST_LOCAL_HOST || "127.0.0.1";
   if (!pinnedAgent) {
     log.error("COS_AGENT is required (e.g. security or dev)");
     process.exit(1);
   }
+  // Refuse to run unauthenticated: this serves a specialist over the network, so
+  // an unset key would let anyone who can reach the port invoke it. (Parity with
+  // voice-server.js, which also refuses to start without its token.)
+  if (!key) {
+    log.error("COS_SPECIALIST_LOCAL_KEY is required (refusing to serve a specialist without auth)");
+    process.exit(1);
+  }
   const server = createSpecialistServer({ pinnedAgent, key });
-  server.listen(port, () => log.info("local specialist listening", { agent: pinnedAgent, port, authed: Boolean(key) }));
+  server.listen(port, host, () => log.info("local specialist listening", { agent: pinnedAgent, host, port, authed: true }));
 }

@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { createLogger } from "./log.js";
+import { assertPublicUrl } from "./net-guard.js";
 
 // ===========================================================================
 // Inbound document intake (workstream L). Email attachments -> text the agent
@@ -166,10 +167,16 @@ const MAX_FETCH_BYTES = Number(process.env.DOC_MAX_FETCH_BYTES || 15_000_000);
  * curriculum PDF (those media URLs are public direct-fetch, no auth). Read-only:
  * http(s) only, timeout, size cap. Returns the same shape as extractDocuments.
  */
-export async function fetchDocument(url, { fetchImpl = fetch } = {}) {
+export async function fetchDocument(url, { fetchImpl = fetch, resolve } = {}) {
   const u = String(url || "");
   const empty = { blocks: [], summaries: [], skipped: [] };
-  if (!/^https?:\/\//i.test(u)) return { ...empty, skipped: [{ url: u, reason: "only http(s) URLs allowed" }] };
+  // SSRF guard: http(s) only AND not a private/loopback/link-local target (a link
+  // in an email body is untrusted). assertPublicUrl throws on both.
+  try {
+    await assertPublicUrl(u, resolve ? { resolve } : {});
+  } catch (err) {
+    return { ...empty, skipped: [{ url: u, reason: err.message }] };
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

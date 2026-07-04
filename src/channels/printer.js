@@ -10,12 +10,29 @@
 
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
+import { resolve as resolvePath, relative, isAbsolute } from "node:path";
 
 const PRINTER = {
   // lp uses the system DEFAULT printer when no -d is given; PRINTER_NAME pins one.
   name: process.env.PRINTER_NAME || null,
   enabled: String(process.env.PRINTER_ENABLED ?? "true").toLowerCase() === "true",
 };
+
+// Printing is a physical side effect that reads a host file, so an unrestricted
+// path let an injected/malicious request print secrets (~/.ssh/id_rsa, .env) on
+// the networked printer. Confine `file` to PRINT_ROOT (default ./data, where
+// generated images land). `getPrintRoot` is read per-call so tests can point it
+// at a temp dir via env.
+function getPrintRoot() {
+  return resolvePath(process.env.PRINT_ROOT || "./data");
+}
+
+/** True if `file` resolves to a path inside PRINT_ROOT (blocks .. and absolute escapes). */
+export function isWithinPrintRoot(file, root = getPrintRoot()) {
+  const abs = resolvePath(String(file || "")); // relative to cwd, or absolute as-is
+  const rel = relative(root, abs);
+  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 // Spawn a command, capture stdout/stderr, resolve {code, stdout, stderr}. Never
 // rejects on a non-zero exit (the caller maps that to a friendly message); only
@@ -51,6 +68,9 @@ export async function listPrinters({ runProcess = run } = {}) {
 export async function printDocument(file, { printer, copies = 1, runProcess = run } = {}) {
   if (!PRINTER.enabled) return { ok: false, message: "Printing is disabled (set PRINTER_ENABLED=true)." };
   if (!file) return { ok: false, message: "No file given to print." };
+  if (!isWithinPrintRoot(file)) {
+    return { ok: false, message: `Refusing to print outside the printable folder (${process.env.PRINT_ROOT || "data/"}). Save the file there first.` };
+  }
   try { await access(file); } catch { return { ok: false, message: `File not found on the host: ${file}` }; }
 
   const target = printer || PRINTER.name;

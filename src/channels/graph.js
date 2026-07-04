@@ -55,7 +55,7 @@ function graph() {
 // gets re-surfaced as a mystery "I don't have code XXXX" heads-up. Exported for tests.
 export function isApprovalMechanismMail(subject) {
   const s = String(subject || "");
-  return /^\s*approval needed\b/i.test(s) || /^\s*(approve|deny|yes|no)\s+[0-9a-f]{4}\b/i.test(s);
+  return /^\s*approval needed\b/i.test(s) || /^\s*(approve|deny|yes|no)\s+[0-9a-f]{4,8}\b/i.test(s);
 }
 
 export async function recentMailSignals({ top = 15 } = {}) {

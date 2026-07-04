@@ -29,7 +29,7 @@ test("requestConfirmation passes the source-email thread to notifiers", async ()
 
 test("requestConfirmation stages without executing and returns a code + instruction", async () => {
   const { code, instruction } = await requestConfirmation("do a thing", "test", { what: "x" });
-  assert.match(code, /^[0-9A-F]{4}$/);
+  assert.match(code, /^[0-9A-F]{6}$/);
   assert.match(instruction, new RegExp(`YES ${code}`));
   assert.deepEqual(ran, [], "must not run until approved");
 });
@@ -45,7 +45,7 @@ test("a duplicate YES for a just-handled code is reassured, not alarmed", async 
 });
 
 test("a truly unknown code gets a calm message, never an alarm", async () => {
-  const res = await tryResolveConfirmation("YES 9a9a"); // valid 4-hex code, never staged
+  const res = await tryResolveConfirmation("YES 9a9a9a"); // valid 6-hex code, never staged
   assert.equal(res.handled, true);
   assert.doesNotMatch(res.message, /unknown or expired|forg|phish|attack/i);
   assert.match(res.message, /nothing to worry about/i);
@@ -85,7 +85,7 @@ test("a code resolves only once", async () => {
 test("an expired/unknown code is answered gracefully, NOT routed as a new message", async () => {
   // The bug behind Frank's freakout: a late/expired approval reply fell through to
   // normal routing. It must be handled with an "expired" note instead.
-  const res = await tryResolveConfirmation("YES AB12"); // hex-shaped code, not pending
+  const res = await tryResolveConfirmation("YES AB12CD"); // hex-shaped code, not pending
   assert.equal(res.handled, true);
   assert.match(res.message, /already handled or has expired/i); // calm, not alarmist
   assert.doesNotMatch(res.message, /forg|phish|attack/i);
