@@ -9,9 +9,21 @@ test("voice turns run on Haiku for normal complexity, but escalate for complex/h
   // voice: standard/trivial -> Haiku (fast)
   assert.equal(modelForTurn({ channel: "voice", complexity: "standard" }), MODELS.triage);
   assert.equal(modelForTurn({ channel: "voice", complexity: "trivial" }), MODELS.triage);
-  // voice: complex or high-stakes keep their escalated model (safety/quality)
+  // voice: complex keeps Opus; high-stakes stays OFF the fast path -> Sonnet (not Haiku)
   assert.equal(modelForTurn({ channel: "voice", complexity: "complex" }), MODELS.heavy);
-  assert.equal(modelForTurn({ channel: "voice", complexity: "standard", high_stakes: true }), MODELS.heavy);
+  assert.equal(modelForTurn({ channel: "voice", complexity: "standard", high_stakes: true }), MODELS.standard);
+});
+
+test("high-stakes sets a Sonnet floor, not Opus — Opus is reserved for complex work", () => {
+  // high-stakes but not complex -> Sonnet (the confirmation gate is the protection)
+  assert.equal(modelForComplexity("standard", true), MODELS.standard);
+  assert.equal(modelForComplexity("trivial", true), MODELS.standard, "even a trivial outbound gets Sonnet, not Haiku");
+  // complex still escalates to Opus, high-stakes or not
+  assert.equal(modelForComplexity("complex", true), MODELS.heavy);
+  assert.equal(modelForComplexity("complex", false), MODELS.heavy);
+  // non-high-stakes routing is unchanged
+  assert.equal(modelForComplexity("trivial", false), MODELS.triage);
+  assert.equal(modelForComplexity("standard", false), MODELS.standard);
 });
 
 test("COS_VOICE_FAST=false disables the voice fast-path", () => {

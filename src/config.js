@@ -19,11 +19,18 @@ export const MODELS = {
 };
 
 // Map a triage complexity verdict to a model tier.
+//
+// COMPLEXITY drives the tier; high-stakes only sets a FLOOR of Sonnet. It used to
+// force Opus, but that was wasteful: triage flags high_stakes for anything that
+// could send/spend, so a routine "email the plumber" ran the full chief loop on
+// Opus. The protection for high-stakes actions is the confirmation gate (the model
+// only STAGES the action, a human approves it), not model IQ — so Sonnet is plenty
+// unless the work is genuinely complex. Opus is reserved for complexity==="complex".
 export function modelForComplexity(complexity, highStakes = false) {
-  if (highStakes) return MODELS.heavy;
+  if (complexity === "complex") return MODELS.heavy;   // genuinely hard/agentic work
+  if (highStakes) return MODELS.standard;              // outbound/spend: Sonnet + the gate
   switch (complexity) {
     case "trivial":  return MODELS.triage;   // Haiku can just answer it
-    case "complex":  return MODELS.heavy;
     case "standard":
     default:         return MODELS.standard;
   }

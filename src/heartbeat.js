@@ -658,10 +658,13 @@ export async function tick() {
     // triage) and deliver the result to the owner. Previously this faked an
     // inbound SMS from "heartbeat", which threw in sendSms and dropped the result.
     try {
-      const model = item.urgency === "now" ? MODELS.heavy : MODELS.standard;
+      // Urgency is about TIMING, not difficulty, so it no longer buys Opus — a
+      // time-sensitive item isn't necessarily a hard one, and the proactive run
+      // only stages any high-stakes action behind the gate. Sonnet handles these;
+      // reserve Opus for genuinely complex inbound work (modelForComplexity).
       const result = await runChief(
         `Proactive task (${item.agent}, ${item.urgency}): ${item.what}`,
-        model
+        MODELS.standard
       );
       await notifyOwner(`Proactive (${item.agent}, ${item.urgency}): ${result}`);
       await recordAlerted(item.what);
