@@ -51,7 +51,7 @@ export async function extractStatement({ from, subject, body } = {}, { complete 
     model: MODELS.triage,
     system: STMT_SYSTEM,
     messages: [{ role: "user", content: `FROM: ${from || ""}\nSUBJECT: ${subject || ""}\n${String(body || "").slice(0, 1500)}` }],
-    max_tokens: 300,
+    maxTokens: 300, // complete() expects maxTokens (max_tokens was silently ignored -> defaulted to 1024)
   });
   const out = parseJson(textOf(resp)) || {};
   const num = (x) => (typeof x === "number" && Number.isFinite(x) ? round2(x) : null);

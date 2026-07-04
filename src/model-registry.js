@@ -25,6 +25,23 @@ const log = createLogger("model-registry");
 
 const FAMILIES = { triage: "claude-haiku", standard: "claude-sonnet", heavy: "claude-opus" };
 
+// Models that must NEVER be auto-selected for a tier, even if the catalog reports
+// them as newest. Defaults to claude-sonnet-5, which was reverted 2026-07-01 for
+// returning EMPTY on long/tool-heavy standard-tier outputs (see the NOTE in
+// config.js): with COS_MODEL_AUTOUPDATE=true the weekly check would otherwise
+// silently re-apply that regression. Override with MODEL_DENYLIST (comma-sep) —
+// e.g. clear it once sonnet-5 is safe to re-attempt after tuning max_tokens.
+export const MODEL_DENYLIST = (process.env.MODEL_DENYLIST ?? "claude-sonnet-5")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+// Denied if the id equals a denylist entry or is one of its dated snapshots
+// (claude-sonnet-5 also denies claude-sonnet-5-20260901). The trailing "-" guard
+// keeps it from over-matching a differently-numbered family member.
+export function isDeniedModel(id, denylist = MODEL_DENYLIST) {
+  const s = String(id || "");
+  return denylist.some((d) => s === d || s.startsWith(`${d}-`));
+}
+
 const isDatedSnapshot = (id) => /-\d{8}$/.test(String(id || ""));
 const ts = (m) => Date.parse(m?.created_at || "") || 0;
 
@@ -44,7 +61,7 @@ export function newestInFamily(models, prefix) {
  * (or on error), so a transient failure never blanks a tier.
  * @returns {Promise<{tiers, changes, ok}>} changes: [{tier, from, to}] where newer exists.
  */
-export async function discoverModelTiers({ listModels = defaultListModels, fallback = MODELS } = {}) {
+export async function discoverModelTiers({ listModels = defaultListModels, fallback = MODELS, denylist = MODEL_DENYLIST } = {}) {
   let models;
   try {
     models = await listModels();
@@ -52,6 +69,9 @@ export async function discoverModelTiers({ listModels = defaultListModels, fallb
     log.error("models list failed; keeping configured tiers", { reason: err.message });
     return { tiers: { ...fallback }, changes: [], ok: false };
   }
+  // Drop denylisted models before ranking, so a reverted/known-bad model can never
+  // be picked as a tier's "newest" (nor notified as an available upgrade).
+  models = (models || []).filter((m) => !isDeniedModel(m?.id, denylist));
   const tiers = { ...fallback };
   const changes = [];
   for (const [tier, prefix] of Object.entries(FAMILIES)) {

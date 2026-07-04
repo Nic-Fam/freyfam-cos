@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { newestInFamily, discoverModelTiers, changeKey, getModelNotifyState, setModelNotifyState } from "../src/model-registry.js";
+import { newestInFamily, discoverModelTiers, changeKey, getModelNotifyState, setModelNotifyState, isDeniedModel } from "../src/model-registry.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
@@ -36,11 +36,30 @@ test("heavy stays on the Opus family even though Fable is newer/premium", async 
   assert.notEqual(tiers.heavy, "claude-fable-5");
 });
 
-test("discoverModelTiers detects a newer Sonnet (e.g. a future Sonnet 5)", async () => {
+test("discoverModelTiers detects a newer Sonnet (e.g. a future Sonnet 6)", async () => {
+  const withSonnet6 = [...catalog, { id: "claude-sonnet-6", created_at: "2026-09-01T00:00:00Z" }];
+  const { tiers, changes } = await discoverModelTiers({ listModels: async () => withSonnet6, fallback: FALLBACK });
+  assert.equal(tiers.standard, "claude-sonnet-6");
+  assert.deepEqual(changes, [{ tier: "standard", from: "claude-sonnet-4-6", to: "claude-sonnet-6" }]);
+});
+
+test("isDeniedModel matches the alias and its dated snapshots, not siblings", () => {
+  assert.equal(isDeniedModel("claude-sonnet-5"), true);
+  assert.equal(isDeniedModel("claude-sonnet-5-20260901"), true, "dated snapshot of a denied model");
+  assert.equal(isDeniedModel("claude-sonnet-4-6"), false);
+  assert.equal(isDeniedModel("claude-sonnet-50"), false, "trailing '-' guard prevents over-match");
+});
+
+test("denylist keeps a reverted model (sonnet-5) from being auto-selected or notified", async () => {
+  // Even though sonnet-5 is newest in its family, the default denylist skips it:
+  // the tier stays on the configured sonnet-4-6 and NO change is reported.
   const withSonnet5 = [...catalog, { id: "claude-sonnet-5", created_at: "2026-09-01T00:00:00Z" }];
   const { tiers, changes } = await discoverModelTiers({ listModels: async () => withSonnet5, fallback: FALLBACK });
-  assert.equal(tiers.standard, "claude-sonnet-5");
-  assert.deepEqual(changes, [{ tier: "standard", from: "claude-sonnet-4-6", to: "claude-sonnet-5" }]);
+  assert.equal(tiers.standard, "claude-sonnet-4-6", "reverted model must not win the tier");
+  assert.deepEqual(changes, [], "and it must not be surfaced as an available upgrade");
+  // With the denylist explicitly cleared, detection works again (opt-in re-attempt).
+  const cleared = await discoverModelTiers({ listModels: async () => withSonnet5, fallback: FALLBACK, denylist: [] });
+  assert.equal(cleared.tiers.standard, "claude-sonnet-5");
 });
 
 test("a family missing from the catalog keeps the configured tier", async () => {

@@ -155,7 +155,7 @@ export async function extractTransactions(alerts, { complete = defaultComplete, 
       model,
       system: EXTRACT_SYSTEM,
       messages: [{ role: "user", content: renderBatch(chunk) }], // renderBatch re-indexes from 0 per chunk
-      max_tokens: 2000,
+      maxTokens: 2000, // complete() expects maxTokens; max_tokens was silently ignored -> defaulted to 1024 -> truncated JSON -> re-flagged items (double spend)
     });
     const out = parseJson(textOf(resp)) || {};
     const txns = Array.isArray(out.transactions) ? out.transactions : [];
