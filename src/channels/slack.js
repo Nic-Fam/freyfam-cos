@@ -173,8 +173,19 @@ export async function startSlack() {
   app.action(/^cos_(approve|deny)$/, async ({ ack, action, body, client }) => {
     await ack();
     const approved = action.action_id === "cos_approve";
-    const res = await resolveByCode(action.value, approved);
     const who = body?.user?.username || body?.user?.id || "someone";
+    // Owner-only approvals (hard constraint #2). Any member who can SEE the button
+    // could otherwise tap it to execute a staged money/email action. When SLACK.allow
+    // is set, only those user ids may approve/deny; the tap is otherwise refused.
+    const tapper = String(body?.user?.id || "").trim();
+    if (SLACK.allow.length && !SLACK.allow.includes(tapper)) {
+      log.warn("approval tap refused (unauthorized slack user)", { user: tapper, code: action.value });
+      try {
+        await client.chat.postEphemeral({ channel: body.channel.id, user: tapper, text: `You're not authorized to approve actions (code ${action.value}).` });
+      } catch { /* ignore */ }
+      return;
+    }
+    const res = await resolveByCode(action.value, approved);
     // On approval the staged action ran; surface its result (or error) in-thread.
     let text;
     if (!res.found) text = `Code ${action.value} already resolved or expired`;

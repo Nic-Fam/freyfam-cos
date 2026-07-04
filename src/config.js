@@ -189,6 +189,17 @@ export const FAMILY_ADDRESSES = (
   .map((s) => s.toLowerCase().trim())
   .filter(Boolean);
 
+// Extra email addresses (beyond the family) allowed to DRIVE the chief inbound.
+// The mailbox is public (cos@freyfam.com), so without an allowlist any stranger
+// who emails it gets a full agent run + reply — unauthenticated data exfiltration
+// and a lever into the confirmation gate. Authorized inbound = family OR this
+// list. Empty by default: family only. Automated/OTP/shipping senders are still
+// handled silently (no agent run) upstream, so they don't need to be listed.
+export const INBOUND_EMAIL_ALLOW = (process.env.INBOUND_EMAIL_ALLOW || "")
+  .split(",")
+  .map((s) => s.toLowerCase().trim())
+  .filter(Boolean);
+
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------
@@ -295,6 +306,14 @@ export const SLACK = {
   botToken: process.env.SLACK_BOT_TOKEN,   // xoxb-...
   // Where delegation handoffs + approval buttons are mirrored. Channel id or name.
   commandChannel: process.env.SLACK_COMMAND_CHANNEL || "#command",
+  // Optional allowlist of Slack user ids permitted to drive the chief AND to tap
+  // Approve/Deny. A workspace can hold guests/contractors, so without this any
+  // member could command Lloyd or approve a staged high-stakes action. Empty =
+  // allow all workspace members (parity with an empty iMessage allowlist).
+  allow: (process.env.SLACK_ALLOW || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   get enabled() {
     return Boolean(this.appToken && this.botToken);
   },

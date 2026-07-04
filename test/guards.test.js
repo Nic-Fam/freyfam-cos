@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress } from "../src/guards.js";
+import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress, isAuthorizedSender } from "../src/guards.js";
 
 test("isFamilyAddress recognizes the family's own addresses (case-insensitive), not outsiders", () => {
   assert.equal(isFamilyAddress("Nic@Freyfam.com"), true);
@@ -50,4 +50,27 @@ test("isWorkDomain still classifies configured work domains", () => {
   assert.equal(isWorkDomain("someone@flyerdefense.com"), true);
   assert.equal(isWorkDomain("someone@disney.com"), true);
   assert.equal(isWorkDomain("Nic@Freyfam.com"), false);
+});
+
+test("isAuthorizedSender: email is family-only (public mailbox is strict)", () => {
+  assert.equal(isAuthorizedSender({ channel: "email", from: "Nic@Freyfam.com" }), true);
+  assert.equal(isAuthorizedSender({ channel: "email", from: "shelli.frey@disney.com" }), true);
+  // A human stranger who emails the public mailbox must NOT drive the chief.
+  assert.equal(isAuthorizedSender({ channel: "email", from: "attacker@evil.com" }), false);
+  assert.equal(isAuthorizedSender({ channel: "email", from: "" }), false);
+});
+
+test("isAuthorizedSender: imessage/sms open when no allowlist configured", () => {
+  // Default env sets no IMESSAGE_ALLOW, so the private handle/number is the gate.
+  assert.equal(isAuthorizedSender({ channel: "imessage", from: "+15551234567" }), true);
+  assert.equal(isAuthorizedSender({ channel: "sms", from: "+15551234567" }), true);
+});
+
+test("isAuthorizedSender: slack open when no allowlist configured", () => {
+  assert.equal(isAuthorizedSender({ channel: "slack", from: "U12345SLACK" }), true);
+});
+
+test("isAuthorizedSender: unknown/internal channels are trusted", () => {
+  assert.equal(isAuthorizedSender({ channel: "voice", from: "x" }), true);
+  assert.equal(isAuthorizedSender({ channel: undefined, from: "x" }), true);
 });

@@ -40,7 +40,7 @@ import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
-import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress } from "./guards.js";
+import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isAuthorizedSender } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
@@ -1221,12 +1221,23 @@ export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
 export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null } = {}) {
+  // Authorization (hard constraint #1 + #2). Only an authorized sender may drive
+  // the chief OR resolve an approval. Computed once, up front. Silent-capture
+  // paths below (OTP relay, shipment/txn filing) deliberately run for UNauthorized
+  // service mail too — they never run a model or reply — so this only gates the
+  // agent run and the approval gate.
+  const authorized = isAuthorizedSender(msg);
+
   // 0. Is this a YES/NO answer to a pending approval? If so, resolve it (running
   //    the staged action on YES) and reply with the outcome on this same channel.
-  const confirm = await tryResolveConfirmation(msg.body);
-  if (confirm.handled) {
-    if (confirm.message) await transport.reply(confirm.message);
-    return;
+  //    Approvals are high-stakes: only an AUTHORIZED sender can approve, so an
+  //    outsider's "YES <code>" is ignored (it never reaches resolveByCode).
+  if (authorized) {
+    const confirm = await tryResolveConfirmation(msg.body);
+    if (confirm.handled) {
+      if (confirm.message) await transport.reply(confirm.message);
+      return;
+    }
   }
 
   // 0a. Verification / one-time codes: relay the code to the owner immediately.
@@ -1287,6 +1298,17 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       }
     }
     log.info("auto-reply suppressed (automated/self sender)", { from: msg.from, channel: msg.channel });
+    return;
+  }
+
+  // 0c. Authorization gate for the agent run. A human STRANGER (not automated, so
+  //     it passed the suppression above) must NOT be able to drive the chief or be
+  //     replied to — that was unauthenticated data exfiltration via the public
+  //     mailbox. Drop silently: no reply, so Lloyd is not an oracle for outsiders.
+  //     OTP relay + shipment/txn capture already ran above for legitimate service
+  //     mail, so nothing useful is lost.
+  if (!authorized) {
+    log.warn("inbound dropped (unauthorized sender)", { from: msg.from, channel: msg.channel });
     return;
   }
 

@@ -1,4 +1,4 @@
-import { WORK_DOMAINS, GRAPH, FAMILY_ADDRESSES } from "./config.js";
+import { WORK_DOMAINS, GRAPH, FAMILY_ADDRESSES, INBOUND_EMAIL_ALLOW, IMESSAGE, SLACK } from "./config.js";
 
 // ===========================================================================
 // Outbound policy (updated 2026-06-20). Work domains (flyerdefense.com,
@@ -80,4 +80,39 @@ export function isAutomatedSender(from) {
  */
 export function shouldAutoReply(from) {
   return !isSelfAddress(from) && !isAutomatedSender(from);
+}
+
+// ===========================================================================
+// Inbound authorization (hard constraint #1 + #2 protection). shouldAutoReply
+// only screens out MACHINE senders; a human STRANGER who emails the public
+// mailbox (cos@freyfam.com) still passed it and got a full agent run + reply —
+// unauthenticated data exfiltration, and a lever to stage/approve outbound
+// actions. This gate is the positive allowlist: only these senders may drive the
+// chief or resolve an approval. Silent-capture paths (OTP relay, shipment/txn
+// filing) run BEFORE this gate, so unattended service mail is still ingested; it
+// just never triggers a model run, a reply, or an approval.
+//
+// Policy per channel:
+//   - email     : family address OR INBOUND_EMAIL_ALLOW (public mailbox -> strict)
+//   - imessage/sms: IMESSAGE.allow (empty = open; the handle/number is private)
+//   - slack     : SLACK.allow (empty = open; workspace membership is the gate)
+//   - voice     : trusted (localhost + token gated in voice-server.js)
+// ===========================================================================
+export function isAuthorizedSender(msg) {
+  const channel = msg?.channel;
+  const from = String(msg?.from || "").toLowerCase().trim();
+  switch (channel) {
+    case "email":
+      return isFamilyAddress(from) || INBOUND_EMAIL_ALLOW.includes(from);
+    case "imessage":
+    case "sms":
+      return IMESSAGE.allow.length === 0 || IMESSAGE.allow.includes(from);
+    case "slack":
+      // Slack user ids are case-sensitive, so compare the raw value too.
+      return SLACK.allow.length === 0 || SLACK.allow.includes(String(msg?.from || "").trim());
+    case "voice":
+      return true;
+    default:
+      return true; // unknown/internal channels (tests, timers) are trusted
+  }
 }
