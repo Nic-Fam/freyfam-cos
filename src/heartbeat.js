@@ -25,6 +25,7 @@ import { runCooReview, shouldRunReview, getReviewState, setReviewRan } from "./c
 import { budgetState } from "./cost-ledger.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
 import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
+import { runBoutiqueFeeds, formatBoutiqueFeed } from "./boutique-feed.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
 import { formatResolution } from "./grocery-match.js";
 import { listShopping } from "./shopping.js";
@@ -483,6 +484,17 @@ async function maybeRunResale() {
         } catch (e) {
           log.error("first-look feed failed", { reason: e.message });
         }
+        // Archive-boutique feeds: read public curated-shop storefronts (Allison's
+        // Archive, LAL Vintage, ...) via the LOCAL browser for NEW listings a web
+        // search would miss. No login needed; seeds silently per shop on first run.
+        let boutiqueNew = 0;
+        try {
+          const feeds = await runBoutiqueFeeds();
+          boutiqueNew = feeds.reduce((n, r) => n + (r.newItems ? r.newItems.length : 0), 0);
+          if (boutiqueNew) await notifyOwner(`Archive boutique new arrivals:\n${formatBoutiqueFeed(feeds)}`);
+        } catch (e) {
+          log.error("boutique feed failed", { reason: e.message });
+        }
         // Price-watch: re-check watched listings via the LOCAL browser (Lloyd) and
         // flag any drops / target hits. Done here on Lloyd, not the remote resale.
         const flagged = await checkWatched();
@@ -504,7 +516,7 @@ async function maybeRunResale() {
             log.error("local browser saved-search run failed", { reason: e.message });
           }
         }
-        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew, browserNew });
+        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew, boutiqueNew, browserNew });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
