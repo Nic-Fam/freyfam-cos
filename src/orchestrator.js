@@ -7,6 +7,7 @@ import { dismissAlert } from "./heartbeat-alerts.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { watchItem, listWatched, unwatchItem } from "./watch.js";
+import { dismissBoutiqueListings } from "./boutique-feed.js";
 import { placeRalphsOrder } from "./grocery.js";
 import { planRxSync, formatRxPlan } from "./rx.js";
 import { triageInbound } from "./triage.js";
@@ -328,6 +329,16 @@ const tools = [
     name: "list_watched",
     description: "List the items being price-watched (with last seen price and any target).",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "dismiss_resale_listing",
+    description:
+      "Permanently stop surfacing specific resale/boutique listings the family said aren't right. Pass the listing URL(s) — take them from the family's message and the quoted alert it replies to. Those exact listings will never appear in future new-arrivals alerts. Use whenever the family replies to a resale/boutique 'new arrivals' alert saying the finds aren't right, they're not interested, or to stop showing them. Low-stakes and reversible; no confirmation needed.",
+    input_schema: {
+      type: "object",
+      properties: { urls: { type: "array", items: { type: "string" }, description: "Listing URLs to stop showing (from the alert/reply)." } },
+      required: ["urls"],
+    },
   },
   {
     name: "unwatch_item",
@@ -904,6 +915,13 @@ function toolHandlers({ images, onDelegate, thread = null } = {}) {
       const items = await listWatched();
       if (!items.length) return "Not watching any items.";
       return items.map((i) => `- ${i.label}: ${i.lastPrice != null ? `$${i.lastPrice}` : "price unknown"}${i.targetPrice != null ? ` (target $${i.targetPrice})` : ""} {${i.id}}\n  ${i.url}`).join("\n");
+    },
+    dismiss_resale_listing: async ({ urls } = {}) => {
+      const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+      if (!list.length) return "No listing URL found to dismiss.";
+      const added = await dismissBoutiqueListings(list);
+      if (!added.length) return "Those listings were already dismissed. You won't see them again.";
+      return `Got it. I won't show ${added.length === 1 ? "that listing" : `those ${added.length} listings`} again.`;
     },
     unwatch_item: async ({ item }) => {
       const it = await unwatchItem(item);

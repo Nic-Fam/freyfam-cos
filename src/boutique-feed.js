@@ -28,6 +28,13 @@ export const BOUTIQUES = (() => {
 const feedHits = () =>
   createCollection({ file: process.env.BOUTIQUE_FEED_HITS_PATH || "./data/boutique-feed-hits.json", partition: "boutiquefeedhit" });
 
+// Listings the family explicitly rejected ("these aren't right"). Keyed by the
+// CANONICAL href so a reply that quotes the alert (with or without tracking
+// params) matches, and so a dismissed piece stays gone even if the seen-history
+// is cleared or its handle later reappears in the grid.
+const dismissedCol = () =>
+  createCollection({ file: process.env.BOUTIQUE_DISMISSED_PATH || "./data/boutique-dismissed.json", partition: "boutiquedismissed" });
+
 const hitId = (name, href) => createHash("sha1").update(`${name}|${href}`).digest("hex").slice(0, 12);
 
 /** Derive a readable name from a /products/<handle> slug. Pure. */
@@ -78,6 +85,30 @@ export function normalizeBoutiqueItems(items, base = "") {
   return out;
 }
 
+/**
+ * Record listings the family said aren't right, so they never surface again.
+ * Accepts full URLs or /products/ hrefs (canonicalized before storing), dedupes,
+ * and returns the hrefs newly dismissed. `col` injectable for tests.
+ */
+export async function dismissBoutiqueListings(urls, { col = dismissedCol() } = {}) {
+  const list = Array.isArray(urls) ? urls : [urls];
+  const have = new Set((await col.list()).map((d) => d.href));
+  const added = [];
+  for (const raw of list) {
+    const href = canonicalHref(raw);
+    if (!href || have.has(href)) continue;
+    have.add(href);
+    await col.add({ id: hitId("_dismissed", href), href, at: new Date().toISOString() });
+    added.push(href);
+  }
+  return added;
+}
+
+/** All dismissed boutique hrefs (canonical). */
+export async function listDismissedBoutique({ col = dismissedCol() } = {}) {
+  return (await col.list()).map((d) => d.href);
+}
+
 /** Human summary of new boutique finds. Pure. */
 export function formatBoutiqueFeed(results, { max = 10 } = {}) {
   const lines = [];
@@ -100,6 +131,9 @@ export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new
   const existing = await col.list();
   const known = new Set(existing.map((h) => h.id));
   const boutiquesSeen = new Set(existing.map((h) => h.name));
+  // Listings the family rejected via email ("not right"): never surface these,
+  // regardless of seen-history. Matched on canonical href.
+  const dismissed = new Set(await listDismissedBoutique());
   const results = [];
   for (const b of boutiques) {
     let raw = [];
@@ -115,6 +149,9 @@ export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new
     const firstRun = !boutiquesSeen.has(b.name);
     const fresh = [];
     for (const it of all) {
+      // Match dismissals on the absolute canonical URL: alerts (hence rejects) carry
+      // absolute urls, feed items carry relative hrefs, and it.url reconciles both.
+      if (dismissed.has(it.url)) continue; // family said "not right" -> never surface
       const id = hitId(b.name, it.href);
       if (known.has(id)) continue;
       known.add(id);

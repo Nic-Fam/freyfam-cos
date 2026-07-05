@@ -5,11 +5,14 @@ import os from "node:os";
 import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-boutique-hits-test.json");
+const DIS = join(os.tmpdir(), "cos-boutique-dismissed-test.json");
 process.env.BOUTIQUE_FEED_HITS_PATH = TMP;
-const { slugToName, canonicalHref, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds } = await import("../src/boutique-feed.js");
+process.env.BOUTIQUE_DISMISSED_PATH = DIS;
+const { slugToName, canonicalHref, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds, dismissBoutiqueListings, listDismissedBoutique } = await import("../src/boutique-feed.js");
 
-beforeEach(() => rm(TMP, { force: true }));
-after(() => rm(TMP, { force: true }));
+const clean = () => Promise.all([rm(TMP, { force: true }), rm(DIS, { force: true })]);
+beforeEach(clean);
+after(clean);
 
 test("slugToName makes a readable name from a /products/ handle", () => {
   assert.equal(slugToName("/products/dsquared2-fw2014-feather-top"), "Dsquared2 Fw2014 Feather Top");
@@ -75,6 +78,32 @@ test("a boutique whose read throws degrades to error, never crashes", async () =
   const res = await runBoutiqueFeeds({ read: async () => { throw new Error("navigation timeout"); }, boutiques: B });
   assert.equal(res[0].error, true);
   assert.equal(res[0].newItems.length, 0);
+});
+
+test("dismissBoutiqueListings canonicalizes + dedupes and reports what was added", async () => {
+  const a = await dismissBoutiqueListings([
+    "https://allisonsarchive.shop/products/dsquared2-little-nude-dress?_pos=1&_sid=AAA&_ss=r",
+    "https://allisonsarchive.shop/products/dsquared2-little-nude-dress?_pos=9&_sid=ZZ&_ss=r", // same dress, dup
+  ]);
+  assert.equal(a.length, 1, "the same dress under different session params dismisses once");
+  const again = await dismissBoutiqueListings(["https://allisonsarchive.shop/products/dsquared2-little-nude-dress"]);
+  assert.equal(again.length, 0, "already dismissed -> nothing added");
+  assert.deepEqual(await listDismissedBoutique(), ["https://allisonsarchive.shop/products/dsquared2-little-nude-dress"]);
+});
+
+test("a dismissed listing never surfaces, even on a fresh (unseen) run", async () => {
+  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  // Family rejects the dress by URL (as it appeared in the alert).
+  await dismissBoutiqueListings(["https://allisonsarchive.shop/products/rejected-dress?_pos=1&_sid=AAA&_ss=r"]);
+  // Seed run so it's not first-run, then it appears in the grid again with a new session id.
+  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/other" }] }), boutiques: B });
+  const run = await runBoutiqueFeeds({
+    read: async () => ({ items: [{ href: "/products/rejected-dress?_pos=2&_sid=BBB&_ss=r" }, { href: "/products/allowed" }] }),
+    boutiques: B,
+  });
+  const hrefs = run[0].newItems.map((i) => i.href);
+  assert.ok(!hrefs.includes("/products/rejected-dress"), "dismissed dress must never surface");
+  assert.ok(hrefs.includes("/products/allowed"), "a non-dismissed new item still surfaces");
 });
 
 test("formatBoutiqueFeed lists shops with new items, skips empty ones", () => {
