@@ -38,12 +38,38 @@ export function slugToName(href) {
   return n || null;
 }
 
-/** Normalize raw feed rows to {href, url, name}. Dedupes by href. Pure. */
+/**
+ * Canonical product href — the STABLE identity of a listing, used for both dedup
+ * and display. Shopify search anchors carry volatile query params
+ * (`?_pos=1&_sid=<per-request>&_ss=r`): `_sid` changes every fetch and `_pos`
+ * shifts as inventory reorders, so keying dedup on the raw href made the SAME item
+ * hash differently each run and re-alert forever. We collapse to `/products/<handle>`
+ * (a listing's true identity) and otherwise just drop the query/fragment. Pure.
+ */
+export function canonicalHref(href) {
+  const s = String(href || "");
+  if (/^https?:\/\//i.test(s)) {
+    // Absolute: keep the origin, collapse to the product path, drop query/fragment.
+    try {
+      const u = new URL(s);
+      const m = u.pathname.match(/\/products\/[^/?#]+/);
+      return `${u.origin}${m ? m[0] : u.pathname}`;
+    } catch { return s.split(/[?#]/)[0]; }
+  }
+  // Relative: collapse to /products/<handle>, else at least strip query/fragment.
+  const m = s.match(/\/products\/[^/?#]+/);
+  return m ? m[0] : s.split(/[?#]/)[0];
+}
+
+/** Normalize raw feed rows to {href, url, name}. Dedupes by CANONICAL href
+ *  (query/fragment stripped) so tracking params can't defeat dedup. Pure. */
 export function normalizeBoutiqueItems(items, base = "") {
   const out = [];
   const seen = new Set();
   for (const it of items || []) {
-    const href = it && it.href;
+    const rawHref = it && it.href;
+    if (!rawHref) continue;
+    const href = canonicalHref(rawHref);
     if (!href || seen.has(href)) continue;
     seen.add(href);
     const url = /^https?:\/\//i.test(href) ? href : `${String(base).replace(/\/$/, "")}${href}`;

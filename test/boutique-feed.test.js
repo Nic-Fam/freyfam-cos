@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-boutique-hits-test.json");
 process.env.BOUTIQUE_FEED_HITS_PATH = TMP;
-const { slugToName, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds } = await import("../src/boutique-feed.js");
+const { slugToName, canonicalHref, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds } = await import("../src/boutique-feed.js");
 
 beforeEach(() => rm(TMP, { force: true }));
 after(() => rm(TMP, { force: true }));
@@ -25,6 +25,34 @@ test("normalizeBoutiqueItems dedupes by href and absolutizes urls", () => {
   assert.equal(out[0].url, "https://shop.com/products/a");
   assert.equal(out[1].url, "https://x.com/products/b");
   assert.equal(out[1].name, "B Coat");
+});
+
+test("canonicalHref strips Shopify's volatile _pos/_sid/_ss params (relative + absolute)", () => {
+  assert.equal(canonicalHref("/products/dsquared2-little-nude-dress?_pos=1&_sid=4fbd367bc&_ss=r"), "/products/dsquared2-little-nude-dress");
+  assert.equal(canonicalHref("https://allisonsarchive.shop/products/x?_pos=2&_sid=ZZ&_ss=r"), "https://allisonsarchive.shop/products/x");
+  assert.equal(canonicalHref("/products/x#frag"), "/products/x");
+});
+
+test("normalizeBoutiqueItems collapses the SAME product carrying different session params", () => {
+  const out = normalizeBoutiqueItems(
+    [
+      { href: "/products/dress?_pos=1&_sid=AAA&_ss=r" },
+      { href: "/products/dress?_pos=3&_sid=BBB&_ss=r" }, // same dress, new session id + position
+    ],
+    "https://allisonsarchive.shop"
+  );
+  assert.equal(out.length, 1, "one product, not two");
+  assert.equal(out[0].url, "https://allisonsarchive.shop/products/dress", "display url has no tracking params");
+});
+
+test("runBoutiqueFeeds does NOT re-surface a seen item whose only change is session params (the repeat-dress bug)", async () => {
+  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  // Seed run records the dress under a session id.
+  const seed = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=1&_sid=AAA&_ss=r" }] }), boutiques: B });
+  assert.equal(seed[0].seeded, true);
+  // Next run: SAME dress, different _sid/_pos. Pre-fix this re-alerted every run.
+  const run2 = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=4&_sid=BBB&_ss=r" }] }), boutiques: B });
+  assert.equal(run2[0].newItems.length, 0, "an already-seen dress must not resurface just because its session id changed");
 });
 
 test("first run per boutique seeds silently; new items surface only afterward", async () => {
