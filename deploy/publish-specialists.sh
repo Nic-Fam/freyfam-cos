@@ -40,11 +40,27 @@ git -C "$REPO_ROOT" archive HEAD src | tar -x -C "$BUILD"
 echo "bundle assembled, source-only ($BUILD)"
 
 # --- deploy to each specialist app with a remote Linux build ---
+PUBLISH_WARN=0
 for AGENT in $AGENTS; do
   APP="${APP_PREFIX}-${AGENT}"
   echo "=== publishing -> $APP (remote build) ==="
   ( cd "$BUILD" && func azure functionapp publish "$APP" --javascript --build remote )
+  # Verify the host actually REGISTERED the function. An empty list means the
+  # deploy landed but no function is served (every call 404s) — the silent failure
+  # that hid a broken provision for weeks. Surface it here instead of at runtime.
+  FN_COUNT=$(az functionapp function list -g "$RG" -n "$APP" --query "length(@)" -o tsv 2>/dev/null || echo 0)
+  if [ "${FN_COUNT:-0}" = "0" ]; then
+    echo "  !! WARNING: $APP registered 0 functions -> it will 404. Likely a non-Flex app"
+    echo "     (re-run provision-specialists.sh) or missing EnableWorkerIndexing."
+    PUBLISH_WARN=1
+  else
+    echo "  ok: $APP serving $FN_COUNT function(s)"
+  fi
 done
+if [ "$PUBLISH_WARN" = 1 ]; then
+  echo
+  echo "One or more apps registered NO functions — fix those before relying on them (see warnings above)."
+fi
 
 # --- print the Lloyd-side .env block ---
 echo

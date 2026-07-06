@@ -23,9 +23,23 @@ NODE_VERSION=${NODE_VERSION:-22}                 # verified on Flex Consumption;
 # so they are NOT provisioned in Azure - they run via deploy/specialists/local-server.mjs
 # on that hardware. Override AGENTS to add/remove apps.
 AGENTS=${AGENTS:-finance resale chef}
-# Storage account name: globally unique, 3-24 chars, lowercase alnum only.
-DATA_STORAGE=${DATA_STORAGE:-freyfamcosdata$(echo $RANDOM)}
+# Storage account name: globally unique, 3-24 chars, lowercase alnum only. On a
+# RE-provision we must REUSE the RG's existing account, not invent a new random
+# one (a fresh account strands the apps' runtime + data). Prefer an existing one;
+# fall back to a new unique name on a first run.
+DATA_STORAGE=${DATA_STORAGE:-$(az storage account list -g "$RG" --query "[0].name" -o tsv 2>/dev/null || true)}
+DATA_STORAGE=${DATA_STORAGE:-freyfamcosdata$RANDOM}
 : "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY (the inference key) before running}"
+
+# Preflight: this recipe REQUIRES a Flex Consumption-capable Azure CLI. A stale az
+# silently creates plain-Linux apps with NO runtime (functionAppConfig=null) that
+# never register a function and 404 forever (the exact failure that stranded the
+# first provisioning). Fail early with a clear message instead of leaving stubs.
+if ! az functionapp create --help 2>/dev/null | grep -q -- '--flexconsumption-location'; then
+  echo "ERROR: this Azure CLI is too old for Flex Consumption (--flexconsumption-location)."
+  echo "Upgrade it ('az upgrade', or Homebrew: 'brew upgrade azure-cli'), then re-run."
+  exit 1
+fi
 
 SUB=$(az account show --query id -o tsv)
 echo "Subscription : $SUB"
@@ -59,11 +73,36 @@ for AGENT in $AGENTS; do
   # not start in this sub/region: every app 503'd, including an undeployed one.
   # Flex fixed it. Flex is Linux-only and always Functions v4, so --os-type and
   # --functions-version are implicit.) System-assigned identity per app.
-  az functionapp create -n "$APP" -g "$RG" \
-    --storage-account "$DATA_STORAGE" \
-    --flexconsumption-location "$LOCATION" \
-    --runtime node --runtime-version "$NODE_VERSION" \
-    --assign-identity '[system]' -o none
+  #
+  # An existing app can't have its plan type converted in place: if one is present
+  # but is NOT Flex (functionAppConfig.runtime unset — a broken stub from an older
+  # attempt), delete it so we recreate cleanly. A healthy Flex app is left as-is.
+  if az functionapp show -n "$APP" -g "$RG" -o none 2>/dev/null; then
+    RT=$(az functionapp show -n "$APP" -g "$RG" --query "functionAppConfig.runtime.name" -o tsv 2>/dev/null || true)
+    if [ -n "$RT" ]; then
+      echo "  $APP already Flex ($RT); skipping create"
+    else
+      echo "  $APP exists but is NOT Flex (broken stub) -> deleting to recreate"
+      az functionapp delete -n "$APP" -g "$RG" -o none
+      RT=""
+    fi
+  else
+    RT=""
+  fi
+  if [ -z "$RT" ]; then
+    az functionapp create -n "$APP" -g "$RG" \
+      --storage-account "$DATA_STORAGE" \
+      --flexconsumption-location "$LOCATION" \
+      --runtime node --runtime-version "$NODE_VERSION" \
+      --assign-identity '[system]' -o none
+    # Assert Flex actually took. A null runtime here means create silently produced
+    # a dead classic app again — abort loudly rather than move on and 404 later.
+    RT_CHECK=$(az functionapp show -n "$APP" -g "$RG" --query "functionAppConfig.runtime.name" -o tsv 2>/dev/null || true)
+    if [ -z "$RT_CHECK" ]; then
+      echo "ERROR: $APP did not come up as Flex Consumption (no runtime). Check 'az upgrade' and that Flex is offered in $LOCATION."
+      exit 1
+    fi
+  fi
 
   PRINCIPAL=$(az functionapp identity show -n "$APP" -g "$RG" --query principalId -o tsv)
   TABLE_ENDPOINT="https://${DATA_STORAGE}.table.core.windows.net"
