@@ -1,6 +1,15 @@
 import { SLACK, OWNER_EMAIL } from "../config.js";
-import { sendMail } from "./graph.js";
 import { createLogger } from "../log.js";
+
+// graph.js is imported LAZILY (inside notifyOwner), not at module top. It
+// statically pulls in @microsoft/microsoft-graph-client, which the remote Azure
+// specialists do NOT bundle (they have no outbound channel). A top-level import
+// here reaches a specialist's worker via runner.js -> cost-ledger.js -> notify.js
+// and crashes it at load, so the host indexes ZERO functions and every call 404s.
+// Deferring the load keeps notify.js importable in a channel-less specialist; the
+// same rationale as the Slack injection above (this module stays outbound-dep-free
+// at import time). If a specialist ever does call notifyOwner, the dynamic import
+// rejects and is swallowed by allSettled below — the never-throws contract holds.
 
 // ===========================================================================
 // Owner notification, Twilio-FREE (the family is off Twilio). Fans out to the
@@ -37,7 +46,10 @@ export async function notifyOwner(body) {
   if (slackNotifier) tasks.push(Promise.resolve().then(() => slackNotifier(text)));
   if (OWNER_EMAIL) {
     const subject = `Lloyd: ${text.split("\n")[0].slice(0, 80) || "notification"}`;
-    tasks.push(Promise.resolve().then(() => sendMail({ to: OWNER_EMAIL, subject, body: text })));
+    tasks.push(Promise.resolve().then(async () => {
+      const { sendMail } = await import("./graph.js");
+      return sendMail({ to: OWNER_EMAIL, subject, body: text });
+    }));
   }
   if (!tasks.length) {
     log.warn("notifyOwner had no channel (Slack not registered, OWNER_EMAIL unset)");

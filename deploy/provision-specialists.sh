@@ -41,6 +41,17 @@ if ! az functionapp create --help 2>/dev/null | grep -q -- '--flexconsumption-lo
   exit 1
 fi
 
+# Read a Flex app's runtime name (e.g. "node"), or empty if absent/not-Flex. We go
+# straight to the ARM resource at a pinned recent API version because `az functionapp
+# show` on some CLI builds (seen on 2.79.0) uses a stale API version that returns a
+# null functionAppConfig for perfectly healthy Flex apps — a false negative that
+# aborted provisioning even though the app was Running. This is the source of truth.
+flex_runtime() {  # $1 = app name
+  az resource show -g "$RG" --resource-type Microsoft.Web/sites -n "$1" \
+    --api-version 2023-12-01 \
+    --query "properties.functionAppConfig.runtime.name" -o tsv 2>/dev/null || true
+}
+
 SUB=$(az account show --query id -o tsv)
 echo "Subscription : $SUB"
 echo "Resource grp : $RG ($LOCATION)"
@@ -78,7 +89,7 @@ for AGENT in $AGENTS; do
   # but is NOT Flex (functionAppConfig.runtime unset — a broken stub from an older
   # attempt), delete it so we recreate cleanly. A healthy Flex app is left as-is.
   if az functionapp show -n "$APP" -g "$RG" -o none 2>/dev/null; then
-    RT=$(az functionapp show -n "$APP" -g "$RG" --query "functionAppConfig.runtime.name" -o tsv 2>/dev/null || true)
+    RT=$(flex_runtime "$APP")
     if [ -n "$RT" ]; then
       echo "  $APP already Flex ($RT); skipping create"
     else
@@ -90,14 +101,19 @@ for AGENT in $AGENTS; do
     RT=""
   fi
   if [ -z "$RT" ]; then
+    # --disable-app-insights: the specialists don't use App Insights telemetry, and
+    # letting az auto-create it fails ("Error while trying to create and configure an
+    # Application Insights...") when the Microsoft.Insights provider isn't registered
+    # in the sub. That failure is benign but noisy; skipping it removes the failure mode.
     az functionapp create -n "$APP" -g "$RG" \
       --storage-account "$DATA_STORAGE" \
       --flexconsumption-location "$LOCATION" \
       --runtime node --runtime-version "$NODE_VERSION" \
+      --disable-app-insights true \
       --assign-identity '[system]' -o none
     # Assert Flex actually took. A null runtime here means create silently produced
     # a dead classic app again — abort loudly rather than move on and 404 later.
-    RT_CHECK=$(az functionapp show -n "$APP" -g "$RG" --query "functionAppConfig.runtime.name" -o tsv 2>/dev/null || true)
+    RT_CHECK=$(flex_runtime "$APP")
     if [ -z "$RT_CHECK" ]; then
       echo "ERROR: $APP did not come up as Flex Consumption (no runtime). Check 'az upgrade' and that Flex is offered in $LOCATION."
       exit 1
