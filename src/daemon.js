@@ -5,6 +5,8 @@ import { startImessage, stopImessage } from "./channels/imessage-inbound.js";
 import { registerEmailApprovals } from "./channels/graph.js";
 import { startVoiceServer, stopVoiceServer } from "./voice-server.js";
 import { closeBrowser } from "./channels/browser.js";
+import { startUplinkWatcher } from "./uplink.js";
+import { notifyOwner } from "./channels/notify.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("daemon");
@@ -27,16 +29,22 @@ async function main() {
   const imsg = startImessage();
   // Voice tile server: no-op unless COS_VOICE_SERVER=true + VOICE_TOKEN set.
   const voice = startVoiceServer();
+  // Starlink failover watcher: low-data public-IP/ASN poll that alerts the owner on
+  // a fiber<->Starlink transition so full Starlink service can be activated off the
+  // throttled standby. Detection is Frank's domain (shared uplink.js); the outbound
+  // notify stays here on Lloyd. Disable with UPLINK_MONITOR=false.
+  const stopUplink = process.env.UPLINK_MONITOR === "false" ? null : startUplinkWatcher({ notify: notifyOwner, log });
 
-  process.on("SIGINT", () => shutdown(hb, imsg, voice));
-  process.on("SIGTERM", () => shutdown(hb, imsg, voice));
+  process.on("SIGINT", () => shutdown(hb, imsg, voice, stopUplink));
+  process.on("SIGTERM", () => shutdown(hb, imsg, voice, stopUplink));
 
   await startQueueConsumer(); // blocks until stopped
 }
 
-function shutdown(hb, imsg, voice) {
+function shutdown(hb, imsg, voice, stopUplink) {
   log.info("shutting down");
   clearInterval(hb);
+  stopUplink?.(); // stop the Starlink failover watcher (no-op if it wasn't started)
   stopQueueConsumer();
   stopImessage(imsg); // close the iMessage listener if it was started (no-op otherwise)
   stopVoiceServer(voice); // close the voice tile server (no-op if it wasn't started)
