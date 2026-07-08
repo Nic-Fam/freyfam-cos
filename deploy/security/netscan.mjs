@@ -65,6 +65,12 @@ function normMac(mac) {
 }
 const ouiOf = (mac) => OUI[mac.split(":").slice(0, 3).join(":")] || "unknown";
 
+// Locally-administered ("private Wi-Fi" / randomized) MAC: the 0x02 bit is set in
+// the first octet. Phones and laptops rotate these for privacy, so they can't be
+// stably baselined and would otherwise generate a perpetual stream of false "new
+// device" findings. We still LIST them in a scan, but skip recording findings.
+const isRandomMac = (mac) => (parseInt(mac.split(":")[0], 16) & 0x02) !== 0;
+
 async function localPrefix() {
   // e.g. 192.168.50.117 -> "192.168.50"
   const { stdout } = await exec("ipconfig", ["getifaddr", "en0"]).catch(() => ({ stdout: "" }));
@@ -164,7 +170,11 @@ if (RECORD && baseline) {
   const open = (await listFindings()).filter((f) => f && f.status === "open");
   const alreadyFlagged = (mac) => open.some((f) => (f.summary || "").toLowerCase().includes(mac));
   let logged = 0;
+  let skippedRandom = 0;
   for (const d of added) {
+    // Private-Wi-Fi / randomized MACs rotate, so they can't be baselined and would
+    // flag forever. They're personal devices (phones/laptops), not the threat model.
+    if (isRandomMac(d.mac)) { skippedRandom++; continue; }
     if (alreadyFlagged(d.mac)) continue;
     await addFinding({
       title: `New device on LAN: ${d.host || "unknown"} ${d.ip} [${d.mac}]`,
@@ -174,7 +184,7 @@ if (RECORD && baseline) {
     });
     logged++;
   }
-  if (!JSON_OUT) console.log(`\nRecorded ${logged} new-device finding(s) to Frank's security store.`);
+  if (!JSON_OUT) console.log(`\nRecorded ${logged} new-device finding(s) to Frank's security store.${skippedRandom ? ` Skipped ${skippedRandom} randomized-MAC (personal) device(s).` : ""}`);
 }
 
 if (SAVE) {
