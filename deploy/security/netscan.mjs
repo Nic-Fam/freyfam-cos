@@ -33,9 +33,16 @@ const BASELINE = join(here, "..", "..", "data", "network-baseline.json");
 // Known household OUIs (first 3 MAC octets, lowercase). Extend as devices are
 // identified. Anything unmatched prints "unknown" -> a prompt to look it up.
 const OUI = {
-  "60:cf:84": "ASUSTek",
-  "14:9d:99": "Apple",
-  "00:1f:54": "Lorex",
+  "60:cf:84": "ASUSTek",   // core Asus RT-BE92U router
+  "c8:7f:54": "ASUSTek",   // Asus device (AiMesh node / spare Merlin router)
+  "14:9d:99": "Apple",     // the Mac minis (Lloyd, Frank)
+  "00:1f:54": "Lorex",     // camera NVR
+  "40:89:c6": "Amazon",    // Echo/Alexa/Fire/Ring
+  "a8:b0:88": "eero",      // Eero mesh node
+  "88:de:7c": "Askey",     // AT&T fiber gateway/CPE
+  "00:90:a9": "WD",        // Western Digital My Book Live NAS (EOL - watch)
+  "00:20:00": "Lexmark",   // printer
+  "9c:ad:ef": "Obihai",    // OBi200 VoIP ATA
 };
 
 const args = new Set(process.argv.slice(2));
