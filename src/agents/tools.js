@@ -31,6 +31,7 @@ import {
   listActive, summary, getExpiringSoon, addItem, consume,
 } from "../meals.js";
 import { addFinding, listFindings, resolveFinding, SECURITY_SEVERITIES } from "../security.js";
+import { uplinkStatus } from "../uplink.js";
 import { securityPosture } from "../security-monitor.js";
 import { cooRoster, companySpecialistRoster } from "../companies.js";
 import { requestToolDefs, requestHandlers, REQUEST_TOOL_NAMES } from "../coo-requests.js";
@@ -58,7 +59,7 @@ export const AGENT_ALLOWLIST = {
             "add_category_rule", "monthly_consumption", "recurring_withdrawals", "reconcile_returns"],
   resale: [...COMMON_TOOLS, "search", "add_saved_search", "list_saved_searches", "remove_saved_search", "run_saved_searches", "export_saved_searches", "check_returns"],
   chef: [...COMMON_TOOLS, "view_meal_plan", "plan_meal", "remove_meal", "kitchen_inventory", "inventory_summary", "expiring_soon", "add_inventory_item", "consume_inventory_item", "add_shopping_item", "list_shopping"],
-  security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "resolve_security_finding", "security_posture"],
+  security: [...COMMON_TOOLS, "search", "log_security_finding", "list_security_findings", "resolve_security_finding", "security_posture", "uplink_status"],
   dev: [...COMMON_TOOLS, "propose_change", "list_proposals"],
 };
 
@@ -546,6 +547,7 @@ const REGISTRY = {
       { name: "list_security_findings", description: "List recorded security findings (each has an id, title, severity, status).", input_schema: obj({}) },
       { name: "resolve_security_finding", description: "Mark a security finding RESOLVED by its id (after it's been reviewed/handled, or a flagged device is now trusted/baselined). Bookkeeping only: takes no control action. Call list_security_findings first to get the id.", input_schema: obj({ id: { type: "string" }, note: { type: "string" } }, ["id"]) },
       { name: "security_posture", description: "Summarize the OPEN security findings worst-first (counts by severity + what needs attention). Use for 'how's our security?' / a posture check. Read-only.", input_schema: obj({}) },
+      { name: "uplink_status", description: "Check which internet uplink the home is on right now (primary AT&T fiber vs Starlink satellite backup) by reading the public IP/ASN. Read-only, low-data. Use to answer 'are we on backup internet?' or 'did we fail over?'.", input_schema: obj({}) },
     ],
     handlers: {
       ...memoryHandlers("security"),
@@ -558,6 +560,7 @@ const REGISTRY = {
         return f ? JSON.stringify(f) : `No finding with id "${id}".`;
       },
       security_posture: async () => securityPosture(await listFindings()),
+      uplink_status: async () => (await uplinkStatus()).summary,
     },
   }),
 
