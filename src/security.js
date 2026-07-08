@@ -82,3 +82,26 @@ export async function addFinding({ title, severity = "info", summary = "", recom
 export async function listFindings() {
   return (await load()).items;
 }
+
+/**
+ * Mark an OPEN finding resolved by id. Bookkeeping only — like every security
+ * write, it takes no control action. Returns the updated finding, or null if the
+ * id isn't found. Idempotent: resolving an already-resolved finding is a no-op
+ * that still returns it. A resolved finding no longer suppresses a genuinely new
+ * recurrence (addFinding's dedup only collapses OPEN ones).
+ * @param {string} id
+ * @param {{note?:string}} [opts]
+ */
+export async function resolveFinding(id, { note = "" } = {}) {
+  if (!id || !String(id).trim()) throw new Error("id is required");
+  const db = await load();
+  const f = db.items.find((x) => x && x.id === id);
+  if (!f) return null;
+  if (f.status !== "resolved") {
+    f.status = "resolved";
+    f.resolvedAt = new Date().toISOString();
+    if (note) f.resolvedNote = String(note);
+    await save(db);
+  }
+  return f;
+}

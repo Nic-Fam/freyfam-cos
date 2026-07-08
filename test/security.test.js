@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const TMP = join(os.tmpdir(), "cos-security-findings-test.json");
 process.env.SECURITY_FINDINGS_PATH = TMP;
-const { addFinding, listFindings, SECURITY_SEVERITIES } = await import("../src/security.js");
+const { addFinding, listFindings, resolveFinding, SECURITY_SEVERITIES } = await import("../src/security.js");
 
 beforeEach(() => rm(TMP, { force: true }));
 after(() => rm(TMP, { force: true }));
@@ -65,5 +65,31 @@ test("a RESOLVED finding does not suppress a genuinely new recurrence", async ()
 test("genuinely distinct findings still create separate rows", async () => {
   await addFinding({ title: "Phishing email impersonating the bank", severity: "high" });
   await addFinding({ title: "Router firmware is out of date", severity: "medium" });
+  assert.equal((await listFindings()).length, 2);
+});
+
+test("resolveFinding marks a finding resolved by id", async () => {
+  const a = await addFinding({ title: "New device on LAN: printer", severity: "medium" });
+  const r = await resolveFinding(a.id, { note: "confirmed, baselined" });
+  assert.equal(r.status, "resolved");
+  assert.ok(r.resolvedAt);
+  assert.equal(r.resolvedNote, "confirmed, baselined");
+  const open = (await listFindings()).filter((f) => f.status === "open");
+  assert.equal(open.length, 0, "no open findings left");
+});
+
+test("resolveFinding returns null for an unknown id; id is required", async () => {
+  assert.equal(await resolveFinding("nope"), null);
+  await assert.rejects(() => resolveFinding(""));
+});
+
+test("resolveFinding is idempotent and unblocks a fresh recurrence", async () => {
+  const a = await addFinding({ title: "Suspicious login", severity: "high" });
+  await resolveFinding(a.id);
+  const again = await resolveFinding(a.id); // no-op, still returns it
+  assert.equal(again.status, "resolved");
+  // resolved -> a genuinely new recurrence is a fresh row, not a dedup
+  const b = await addFinding({ title: "Suspicious login", severity: "high" });
+  assert.notEqual(b.deduped, true);
   assert.equal((await listFindings()).length, 2);
 });

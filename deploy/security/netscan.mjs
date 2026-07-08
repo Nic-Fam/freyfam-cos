@@ -24,7 +24,7 @@ import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { addFinding, listFindings } from "../../src/security.js";
+import { addFinding, listFindings, resolveFinding } from "../../src/security.js";
 
 const exec = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -196,4 +196,15 @@ if (SAVE) {
   });
   await writeFile(BASELINE, JSON.stringify(merged, null, 2) + "\n");
   console.log(`\nBaseline saved: ${merged.length} device(s) -> ${BASELINE}`);
+
+  // Baselining a device means it's now trusted, so auto-resolve any open
+  // "New device on LAN" finding whose MAC is now in the baseline. Closes the
+  // loop: --save both stops future alerts and clears the ones already logged.
+  const macs = new Set(merged.map((d) => d.mac));
+  let resolved = 0;
+  for (const f of (await listFindings()).filter((f) => f && f.status === "open" && /^New device on LAN/.test(f.title))) {
+    const mac = (f.summary || "").toLowerCase().match(/mac ([0-9a-f:]{11,17})/)?.[1];
+    if (mac && macs.has(mac)) { await resolveFinding(f.id, { note: "baselined via netscan --save" }); resolved++; }
+  }
+  if (resolved) console.log(`Auto-resolved ${resolved} finding(s) for now-baselined device(s).`);
 }
