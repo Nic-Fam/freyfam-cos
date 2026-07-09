@@ -6,6 +6,7 @@ import { registerEmailApprovals } from "./channels/graph.js";
 import { startVoiceServer, stopVoiceServer } from "./voice-server.js";
 import { closeBrowser } from "./channels/browser.js";
 import { startUplinkWatcher } from "./uplink.js";
+import { startDeadManBeacon } from "./deadman.js";
 import { notifyOwner } from "./channels/notify.js";
 import { createLogger } from "./log.js";
 
@@ -34,17 +35,23 @@ async function main() {
   // throttled standby. Detection is Frank's domain (shared uplink.js); the outbound
   // notify stays here on Lloyd. Disable with UPLINK_MONITOR=false.
   const stopUplink = process.env.UPLINK_MONITOR === "false" ? null : startUplinkWatcher({ notify: notifyOwner, log });
+  // Dead-man's switch for TOTAL outage: push a liveness beacon to an off-site
+  // monitor (DEADMAN_PING_URL) that alerts the owner from the cloud if the pings
+  // stop. No-op unless DEADMAN_PING_URL is set. Handles the case the uplink watcher
+  // cannot: when NO local channel can reach out because the link is fully down.
+  const stopBeacon = startDeadManBeacon({ log });
 
-  process.on("SIGINT", () => shutdown(hb, imsg, voice, stopUplink));
-  process.on("SIGTERM", () => shutdown(hb, imsg, voice, stopUplink));
+  process.on("SIGINT", () => shutdown(hb, imsg, voice, stopUplink, stopBeacon));
+  process.on("SIGTERM", () => shutdown(hb, imsg, voice, stopUplink, stopBeacon));
 
   await startQueueConsumer(); // blocks until stopped
 }
 
-function shutdown(hb, imsg, voice, stopUplink) {
+function shutdown(hb, imsg, voice, stopUplink, stopBeacon) {
   log.info("shutting down");
   clearInterval(hb);
   stopUplink?.(); // stop the Starlink failover watcher (no-op if it wasn't started)
+  stopBeacon?.(); // stop the dead-man's-switch beacon (no-op if it wasn't started)
   stopQueueConsumer();
   stopImessage(imsg); // close the iMessage listener if it was started (no-op otherwise)
   stopVoiceServer(voice); // close the voice tile server (no-op if it wasn't started)
