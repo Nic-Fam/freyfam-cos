@@ -65,10 +65,14 @@ export async function addTask({ title, dueDate = null, owner = null } = {}, now 
 // reply — an UNAMBIGUOUS keyword match (the phrase is contained in exactly one open
 // task's title, or vice versa). Open tasks preferred. Returns undefined if none, or
 // null if the phrase is ambiguous (matches >1 open task) so the caller can ask which.
-function find(items, match) {
+function find(items, match, now = Date.now()) {
   const m = String(match || "").trim();
-  const nm = normTitle(m);
   const open = items.filter((t) => t.status === "open");
+  // Numeric index ("done 2") -> the Nth open task in the SAME order the numbered
+  // morning digest / list_tasks shows. Limited to 1-2 digits so it can't collide
+  // with an all-digit 8-char task id.
+  if (/^\d{1,2}$/.test(m)) return [...open].sort(byDue(now))[Number(m) - 1];
+  const nm = normTitle(m);
   const exact =
     open.find((t) => t.id === m) ||
     open.find((t) => t.id.startsWith(m) && m.length >= 4) ||
@@ -85,7 +89,7 @@ function find(items, match) {
 /** Mark a task done by id/prefix/title. Returns the task or null. */
 export async function completeTask(match, now = Date.now()) {
   const db = await load();
-  const task = find(db.items, match);
+  const task = find(db.items, match, now);
   if (!task) return null;
   task.status = "done";
   task.completedAt = new Date(now).toISOString();
@@ -103,17 +107,25 @@ export async function removeTask(match) {
   return task;
 }
 
-/** Open tasks, sorted: overdue first, then by due date, then undated. */
-export async function listTasks({ includeDone = false } = {}, now = new Date()) {
-  const db = await load();
+// Sort comparator: overdue first, then by due date, then undated. Shared by
+// listTasks and the numeric-index resolver in find(), so "done 2" maps to the
+// SAME 2nd item the numbered digest / list_tasks shows. (function decl = hoisted,
+// so find() above can call it.)
+function byDue(now = new Date()) {
   const today = todayLocal(now);
-  const items = includeDone ? db.items : db.items.filter((t) => t.status === "open");
   const bucket = (t) => (t.dueDate && t.dueDate < today ? 0 : t.dueDate === today ? 1 : t.dueDate ? 2 : 3);
-  return items.sort((a, b) => {
+  return (a, b) => {
     const ba = bucket(a), bb = bucket(b);
     if (ba !== bb) return ba - bb;
     return (a.dueDate || "9999").localeCompare(b.dueDate || "9999");
-  });
+  };
+}
+
+/** Open tasks, sorted: overdue first, then by due date, then undated. */
+export async function listTasks({ includeDone = false } = {}, now = new Date()) {
+  const db = await load();
+  const items = includeDone ? db.items : db.items.filter((t) => t.status === "open");
+  return items.sort(byDue(now));
 }
 
 /** Human summary, flagging overdue/today. */
@@ -121,14 +133,14 @@ export function formatTasks(tasks, now = new Date()) {
   if (!tasks || !tasks.length) return "No open tasks.";
   const today = todayLocal(now);
   return tasks
-    .map((t) => {
+    .map((t, i) => {
       let when = "";
       if (t.dueDate && t.dueDate < today) when = ` (OVERDUE, due ${t.dueDate})`;
       else if (t.dueDate === today) when = " (due today)";
       else if (t.dueDate) when = ` (due ${t.dueDate})`;
       const who = t.owner ? ` [${t.owner}]` : "";
       const done = t.status === "done" ? "[x] " : "";
-      return `${done}${t.title}${when}${who} {${t.id}}`;
+      return `${i + 1}. ${done}${t.title}${when}${who} {${t.id}}`;
     })
     .join("\n");
 }

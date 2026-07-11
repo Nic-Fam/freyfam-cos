@@ -61,8 +61,11 @@ ${commuteLine}
   exists for it yet, create one with add_task, phrased as the ACTION and dated
   ${date} (e.g. add_task title "Follow up: email Deborah re: Fairview tour"
   dueDate ${date}). Then call list_tasks and surface EVERY open follow-up plus
-  anything overdue or due today. Close the section with exactly: "To clear any of
-  these, reply 'done <item>' and I'll mark it handled."
+  anything overdue or due today AS A NUMBERED LIST (1., 2., 3. ...), keeping the
+  SAME order and numbers list_tasks returns so a later "done 2" maps to the right
+  one. The numbers make it easy to see at a glance which items are done or still
+  need input. Close the section with exactly: "To clear any of these, reply 'done 2'
+  with its number (or 'done <the item>'), and I'll mark it handled."
   GROUNDING (important): never state that a task, hunt, tour, or action is "over",
   "done", "completed", or "wrapped up" unless list_tasks shows it done or the
   family told you. If you are not sure, treat it as still OPEN. Do not invent

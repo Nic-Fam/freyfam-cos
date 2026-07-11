@@ -78,6 +78,33 @@ test("formatTasks flags overdue and due-today", async () => {
   assert.match(out, /late one \(OVERDUE, due 2026-06-20\)/);
 });
 
+test("formatTasks numbers each task 1., 2., 3. in list order", async () => {
+  const now = new Date("2026-06-22T19:00:00Z");
+  await t.addTask({ title: "future", dueDate: "2026-06-30" });
+  await t.addTask({ title: "overdue", dueDate: "2026-06-20" });
+  const out = t.formatTasks(await t.listTasks({}, now), now);
+  assert.match(out, /^1\. overdue/m); // overdue sorts first
+  assert.match(out, /^2\. future/m);
+});
+
+test("completeTask resolves a numeric index into the sorted open list ('done 2')", async () => {
+  const now = new Date("2026-06-22T19:00:00Z");
+  await t.addTask({ title: "no date" });
+  await t.addTask({ title: "future", dueDate: "2026-06-30" });
+  await t.addTask({ title: "overdue", dueDate: "2026-06-20" });
+  await t.addTask({ title: "today", dueDate: "2026-06-22" });
+  // sorted order: [overdue, today, future, no date] -> "done 2" == "today"
+  const done = await t.completeTask("2", now);
+  assert.ok(done && done.title === "today", "index 2 maps to the 2nd listed task");
+  assert.equal((await t.listTasks({}, now)).length, 3, "exactly one closed");
+});
+
+test("a 3+ digit number is NOT treated as an index (won't hijack a numeric id)", async () => {
+  await t.addTask({ title: "task A" });
+  assert.equal(await t.completeTask("999"), null); // not a 1-2 digit index, not an id/title
+  assert.equal((await t.listTasks()).length, 1, "nothing closed");
+});
+
 test("completeTask returns null when nothing matches", async () => {
   assert.equal(await t.completeTask("nope"), null);
 });

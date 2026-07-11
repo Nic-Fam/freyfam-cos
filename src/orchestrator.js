@@ -308,7 +308,7 @@ const tools = [
   },
   {
     name: "complete_task",
-    description: "Mark a task done by its id (from list_tasks) or its exact title.",
+    description: "Mark a task done by its NUMBER from the morning digest / list_tasks (a bare 1-2 digit number = its position in the current open-task list, e.g. \"2\"), its id (from list_tasks), or its exact title.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
