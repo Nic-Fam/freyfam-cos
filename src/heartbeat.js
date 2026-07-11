@@ -13,6 +13,7 @@ import { buildDailyIngest, getLastIngestDate, setLastIngestDate, scanInboxForAle
 import { isCreditStatement, scanInboxForStatements } from "./credit-statement.js";
 import { reconcileInboundEmail } from "./email-reconcile.js";
 import { runWeeklyFinanceReport, shouldRunWeeklyReport, getLastReportDate, setLastReportDate } from "./finance-report.js";
+import { WEEK_CONFLICTS, shouldRunWeekConflicts, getLastConflictRun, setLastConflictRun, runWeekAheadConflicts } from "./week-conflicts.js";
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
 import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLastAmazonDigestDate } from "./amazon-digest.js";
@@ -251,7 +252,6 @@ async function maybeSecurityScan() {
 // remote (no COS_SPECIALIST_URL_SECURITY => runs in-process, no netscan findings).
 let lastNetScanAt = 0;
 const NET_SCAN_INTERVAL_MS = Number(process.env.NETWORK_SCAN_INTERVAL_MS || 60 * 60 * 1000);
-const netAlerted = new Set(); // per-line dedup so a lingering device isn't re-alerted each tick
 async function maybeNetworkScan() {
   if (chooseTransport("security") !== "remote") return; // only when Frank runs remote
   const now = Date.now();
@@ -271,10 +271,15 @@ async function maybeNetworkScan() {
     const findings = Array.isArray(data) ? data : [];
     if (!findings.length) return;
     const lines = findings.map((f) => String(f?.title || "").trim()).filter(Boolean);
-    const fresh = lines.filter((l) => !netAlerted.has(l));
+    // Persisted dedup + dismiss (heartbeat-alerts), same as the other proactive
+    // alerts: survives restarts, so a lingering OPEN finding isn't re-alerted on
+    // every reboot, and a device the family dismissed stays quiet. (This was an
+    // in-memory Set, so each daemon restart re-fired every open device finding.)
+    const fresh = [];
+    for (const l of lines) if (await shouldAlert(l)) fresh.push(l);
     if (!fresh.length) return;
-    fresh.forEach((l) => netAlerted.add(l));
-    await notifyOwner(`Frank flagged new device(s) on the network:\n${fresh.join("\n")}\nReview and confirm they're expected.`);
+    for (const l of fresh) await recordAlerted(l);
+    await notifyOwner(`Frank flagged new device(s) on the network:\n${fresh.join("\n")}\nReview and confirm they're expected. Say "that's expected" to dismiss.`);
     log.info("network scan surfaced", { newDevices: fresh.length });
   } catch (err) {
     log.error("network scan surface failed", { reason: err.message });
@@ -395,6 +400,22 @@ async function maybeRunFinanceReport() {
     log.info("weekly finance report sent", { date });
   } catch (err) {
     log.error("weekly finance report failed", { reason: err.message });
+  }
+}
+
+// Week-ahead scheduling-conflict scan (tracker 004): Sunday evening, once per day,
+// persisted like the finance report. Surfacing only (notifyOwner), never the gate.
+async function maybeRunWeekConflicts() {
+  if (!WEEK_CONFLICTS.enabled) return;
+  const last = await getLastConflictRun();
+  const { run, date } = shouldRunWeekConflicts(new Date(), last, WEEK_CONFLICTS);
+  if (!run) return;
+  await setLastConflictRun(date); // persist BEFORE running so a restart mid-run can't double-fire
+  try {
+    const n = await runWeekAheadConflicts();
+    log.info("week-ahead conflict scan ran", { date, conflicts: n });
+  } catch (err) {
+    log.error("week-ahead conflict scan failed", { reason: err.message });
   }
 }
 
@@ -618,6 +639,7 @@ export async function tick() {
   await maybeScanTransactionAlerts();
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
+  await maybeRunWeekConflicts();
   await maybeRunTransferOutlook();
   await maybeRunPackageDigest();
   await maybeRunAmazonDigest();
