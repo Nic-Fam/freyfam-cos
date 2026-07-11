@@ -57,6 +57,8 @@
         style="font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px">Wake word: on</button>
       <button id="odtgl" type="button" aria-pressed="true" hidden
         style="font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px">On-device: on</button>
+      <button id="mutetgl" type="button" aria-pressed="false" hidden
+        style="font-size:12px;color:var(--muted);background:transparent;border:.5px solid var(--line2);border-radius:14px;padding:4px 12px">Mute</button>
     </div>
     <div class="micwrap" id="wrap">
       <div class="ring"></div>
@@ -74,7 +76,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </form>
-    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0701-h</div>
+    <div style="font-size:10px;color:var(--hint);margin-top:2px">build 0711-mute</div>
   </footer>
 <script>
 (function(){
@@ -83,7 +85,7 @@
   var qk=new URLSearchParams(location.search).get('k');
   if(qk){try{localStorage.setItem('voiceToken',qk);}catch(e){}}
   var token=qk||(function(){try{return localStorage.getItem('voiceToken')||'';}catch(e){return'';}})();
-  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,noiseFloor=0.03,utterStart=0,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0;
+  var actx=null,session=false,stream=null,analyser=null,mr=null,chunks=[],utterRec=false,speaking=false,vadRAF=null,lastVoice=0,speechMs=0,noiseFloor=0.03,utterStart=0,curSource=null,curAudioEl=null,playAbort=null,bargeMs=0,muted=false;
   var MAXUTTER=30000; // hard cap on ONE continuous segment (was 12s — chopped long dictation)
   var END_SILENCE=2000; // pause before a segment ends; continuation words then decide keep-going vs done
   var accText='', accBubble=null, finalizeTimer=null; // accumulate segments into one turn across pauses
@@ -154,20 +156,25 @@
     catch(e){ fail('Audio init failed — reload'); return; }
     session=true; speaking=false; utterRec=false; setRec(true);
     status.textContent=listenLabel();
-    calibrate(); vadRAF=requestAnimationFrame(vadLoop);
+    calibrate(); vadRAF=requestAnimationFrame(vadLoop); paintMute();
   }
-  function stopSession(){
-    session=false; if(vadRAF)cancelAnimationFrame(vadRAF);
+  // Tear down the mic + recognizer. Shared by stop and mute: stopping the track
+  // (not just a flag) truly cuts capture AND clears the OS mic indicator.
+  function stopMic(){
+    if(vadRAF)cancelAnimationFrame(vadRAF);
     recStopWanted=true; try{ if(rec){ (rec.abort||rec.stop).call(rec); } }catch(e){} recActive=false;
     try{ if(mr&&utterRec){mr.onstop=null;mr.stop();} }catch(e){} utterRec=false;
     if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;}
-    setRec(false); resetAcc(); setThinking(false); status.textContent='Tap to talk';
+  }
+  function stopSession(){
+    session=false; muted=false; stopMic();
+    setRec(false); resetAcc(); setThinking(false); status.textContent='Tap to talk'; paintMute();
   }
   // ---- On-device (Apple Web Speech) path ----
-  function startOnDevice(){ session=true; speaking=false; utterRec=false; setRec(true); resetAcc(); status.textContent=listenLabel(); srStart(); }
+  function startOnDevice(){ session=true; speaking=false; utterRec=false; setRec(true); resetAcc(); status.textContent=listenLabel(); paintMute(); srStart(); }
   function srFallback(){ onDevice=false; if(paintOnDev)paintOnDev(); if(session){ session=false; setRec(false); startSession(); } } // permission/service denied -> Azure path
   function srStart(){
-    if(!onDevice||!SR||!session||recActive||speaking) return;
+    if(!onDevice||!SR||!session||recActive||speaking||muted) return;
     try{ rec=new SR(); }catch(e){ srFallback(); return; }
     rec.lang='en-US'; try{rec.interimResults=true;}catch(e){} try{rec.continuous=false;}catch(e){}
     recFinal=''; recStopWanted=false;
@@ -213,7 +220,7 @@
   function clearFinalize(){ if(finalizeTimer){clearTimeout(finalizeTimer);finalizeTimer=null;} }
   function scheduleFinalize(){ clearFinalize(); finalizeTimer=setTimeout(function(){ if(session&&!utterRec&&accText.trim()) answer(accText.trim()); },4000); }
   function resetAcc(){ clearFinalize(); accText=''; accBubble=null; }
-  function vadLoop(){ if(!session)return; vadRAF=requestAnimationFrame(vadLoop); if(!analyser)return;
+  function vadLoop(){ if(!session||muted)return; vadRAF=requestAnimationFrame(vadLoop); if(!analyser)return;
     var l=level(), now=performance.now(), thr=curThreshold();
     if(speaking){ // Lloyd is thinking/talking — barge-in: sustained speech over him interrupts
       if(l>thr*1.6){ bargeMs+=16; if(bargeMs>180) bargeIn(); } else { bargeMs=Math.max(0,bargeMs-16); }
@@ -290,7 +297,7 @@
     if(playAbort===ac) playAbort=null;
     resumeListen();
   }
-  function resumeListen(){ speaking=false; if(session){ status.textContent=listenLabel(); if(onDevice) setTimeout(srStart,300); } } // iOS needs a beat before restarting recognition
+  function resumeListen(){ speaking=false; if(session&&!muted){ status.textContent=listenLabel(); if(onDevice) setTimeout(srStart,300); } } // iOS needs a beat before restarting recognition
   mic.addEventListener('click',function(){ ensureCtx(); if(!session) startSession(); else stopSession(); });
   var waketgl=document.getElementById('waketgl');
   function paintWake(){ waketgl.textContent='Wake word: '+(wakeOn?'on':'off'); waketgl.setAttribute('aria-pressed',String(wakeOn)); waketgl.style.color=wakeOn?'var(--accent)':'var(--muted)'; if(session) status.textContent=listenLabel(); }
@@ -301,6 +308,16 @@
   if(SR){ odtgl.hidden=false; paintOnDev();
     odtgl.addEventListener('click',function(){ onDevice=!onDevice; try{localStorage.setItem('onDevice',onDevice?'1':'0');}catch(e){} paintOnDev(); if(session){ var was=session; session=false; recStopWanted=true; try{if(rec)(rec.abort||rec.stop).call(rec);}catch(e){} recActive=false; if(vadRAF)cancelAnimationFrame(vadRAF); if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;} setRec(false); resetAcc(); if(was) startSession(); } });
   }
+  var mutetgl=document.getElementById('mutetgl');
+  function paintMute(){ if(!mutetgl)return; mutetgl.hidden=!session; mutetgl.textContent=muted?'Muted':'Mute'; mutetgl.setAttribute('aria-pressed',String(muted)); mutetgl.style.color=muted?'var(--accent)':'var(--muted)'; }
+  // Mute truly cuts the mic (stops the track + halts VAD/recognizer), not just a UI
+  // flag. Unmute re-acquires the mic and resumes. Only meaningful during a session.
+  function setMuted(on){
+    if(!session){ muted=false; paintMute(); return; }
+    if(on){ muted=true; stopMic(); setThinking(false); setRec(false); status.textContent='Muted — tap Mute to resume'; paintMute(); }
+    else { muted=false; paintMute(); startSession(); }
+  }
+  mutetgl.addEventListener('click',function(){ setMuted(!muted); });
   var typein=document.getElementById('typein');
   document.getElementById('typeform').addEventListener('submit',async function(e){
     e.preventDefault();
