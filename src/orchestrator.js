@@ -18,6 +18,8 @@ import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { calendarGateDecision } from "./calendar-gate.js";
+import { findConflicts } from "./week-conflicts.js";
 import { synthesizeSpeech, ttsConfigured } from "./tts.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
@@ -694,7 +696,21 @@ export function wrapDelegateWithMirror(delegateFn, { onDelegate, images, fulfill
   };
 }
 
-function toolHandlers({ images, onDelegate, thread = null } = {}) {
+// 011: would this proposed event overlap an existing one? Free/closure events never
+// conflict; a date too far out to fetch (>120d) is treated as "gate to be safe".
+async function calendarWouldConflict(input) {
+  const t = Date.parse(String(input.start));
+  if (Number.isNaN(t)) return true;
+  if (String(input.showAs || "").toLowerCase() === "free") return false;
+  const daysOut = Math.ceil((t - Date.now()) / 864e5) + 2;
+  if (daysOut > 120) return true;
+  const owner = String(GRAPH.calendarWrite || "nic@freyfam.com").split("@")[0];
+  const proposed = { subject: input.subject, start: input.start, end: input.end || input.start, showAs: input.showAs, calendars: [owner] };
+  const events = await listEvents({ days: Math.max(1, daysOut) });
+  return findConflicts([...events, proposed]).some((c) => c.a === proposed || c.b === proposed);
+}
+
+function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
     // Optional `agent` routes the fact to that specialist's scoped brain; omit for shared.
@@ -773,6 +789,21 @@ function toolHandlers({ images, onDelegate, thread = null } = {}) {
     create_calendar_event: async (input) => {
       const who = (input.attendees || []).join(", ") || "(no invitees)";
       const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
+      // 011: auto-create routine, family-own events (personal blocks or family-only
+      // invitees requested by family, no conflict); gate everything else exactly as
+      // before. Conservative: any error -> treat as conflict -> gate.
+      let hasConflict = true;
+      try { hasConflict = await calendarWouldConflict(input); } catch { hasConflict = true; }
+      const gate = calendarGateDecision({ start: input.start, attendees: input.attendees, sourceFrom, hasConflict });
+      if (gate.auto) {
+        try {
+          await createEvent(input);
+          log.info("calendar auto-created (011)", { subject: input.subject, why: gate.why });
+          return `Added "${input.subject}" (${when})${(input.attendees || []).length ? `, invitees: ${who}` : ""} to the calendar automatically (${gate.why}). Tell me if you want it changed or removed.`;
+        } catch (e) {
+          log.error("calendar auto-create failed; falling back to approval", { reason: e.message });
+        }
+      }
       const { instruction } = await requestConfirmation(
         `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`,
         "calendar",
@@ -1118,7 +1149,7 @@ function memSavedTag(m) {
 // digest, for live weather + traffic along each person's commute).
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
 
-export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null } = {}) {
+export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null, sourceFrom = null } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
@@ -1137,7 +1168,7 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     .join("\n\n");
   // Trace each tool the chief calls so a runaway loop (the one that ends in "max
   // tool turns reached") is visible — same wrapper as the specialists. Names only.
-  const rawHandlers = toolHandlers({ images, onDelegate, thread });
+  const rawHandlers = toolHandlers({ images, onDelegate, thread, sourceFrom });
   const tracedHandlers = {};
   for (const [name, fn] of Object.entries(rawHandlers)) {
     tracedHandlers[name] = async (input) => {
@@ -1472,6 +1503,7 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       // Thread approval emails INTO the source conversation when this turn was triggered
       // by an email (else the notifier falls back to a standalone approval email).
       thread: msg.channel === "email" && msg.graphMessageId ? { messageId: msg.graphMessageId, subject: msg.subject } : null,
+      sourceFrom: msg.from, // 011: "trusted sender" check for calendar auto-create
       onDelegate: (event) => transport.mirror(event),
     });
   }
