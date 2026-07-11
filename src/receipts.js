@@ -79,3 +79,74 @@ export function formatReceipts(items) {
   if (!items || !items.length) return "No recent receipts.";
   return items.map((r) => `- ${r.date} ${r.vendor}${r.total != null ? ` $${r.total.toFixed(2)}` : ""}${r.kind === "grocery" ? " (grocery)" : ""}`).join("\n");
 }
+
+// --- Finance reconciliation (double entry = the reconciliation) ---------------
+// A receipt and the bank's card charge for the SAME purchase are two views of one
+// transaction. Match them (fuzzy merchant, within a few days, charge >= receipt up
+// to a tip) to CONFIRM + itemize; a receipt with no charge is pending; a merchant/
+// date match whose amount is out of range is a MISMATCH to flag. The ledger total
+// still counts the bank charge once — receipts annotate, they don't double-spend.
+const round2 = (x) => Math.round(Number(x) * 100) / 100;
+const canon = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+function merchantMatch(vendor, merchant) {
+  const v = canon(vendor), m = canon(merchant);
+  const vtok = v.split(" ")[0];
+  if (!vtok || vtok.length < 4 || !m) return false;
+  return m.includes(vtok) || v.includes((m.split(" ")[0] || "\0"));
+}
+
+export function reconcileReceipts(receipts, transactions, { dayWindow = 3, tipMax = 0.30 } = {}) {
+  const txns = (transactions || []).filter((t) => t && t.amount != null);
+  const matched = [], pending = [], discrepancies = [];
+  for (const r of receipts || []) {
+    if (r.total == null) continue; // can't reconcile without a total
+    const rd = Date.parse(r.date);
+    const cands = txns.filter((t) => merchantMatch(r.vendor, t.merchant) && Math.abs((Date.parse(t.date) - rd) / 864e5) <= dayWindow);
+    if (!cands.length) { pending.push(r); continue; }
+    const clean = cands.find((t) => t.amount >= r.total - 0.01 && t.amount <= r.total * (1 + tipMax) + 0.01);
+    if (clean) matched.push({ receipt: r, txn: clean, tip: round2(clean.amount - r.total) });
+    else discrepancies.push({ receipt: r, txn: cands[0], delta: round2(cands[0].amount - r.total) });
+  }
+  return { matched, pending, discrepancies };
+}
+
+export function formatReconcile({ matched, pending, discrepancies } = {}) {
+  matched = matched || []; pending = pending || []; discrepancies = discrepancies || [];
+  if (!matched.length && !pending.length && !discrepancies.length) return null;
+  const parts = [`Receipts reconciled: ${matched.length} matched to a card charge${matched.some((m) => m.tip > 0.01) ? " (some incl. tip)" : ""}.`];
+  if (pending.length) parts.push(`  ${pending.length} with no matching charge yet: ${pending.map((p) => `${p.vendor} $${(p.total ?? 0).toFixed(2)}`).join("; ")}`);
+  if (discrepancies.length) parts.push(`  ${discrepancies.length} to check (receipt vs charge disagree): ${discrepancies.map((d) => `${d.receipt.vendor} receipt $${(d.receipt.total ?? 0).toFixed(2)} vs charge $${(d.txn.amount ?? 0).toFixed(2)}`).join("; ")}`);
+  return parts.join("\n");
+}
+
+// --- Chef: prepared-food order size -> leftovers, calendar-aware ---------------
+// Servings estimated from the order total; headcount = family + any guests the
+// CALENDAR shows that evening. Bigger than headcount and no guest event => leftovers
+// for the next day (Carmine plans lighter). A guest event means the order is for
+// them, so no leftover inference. Calendar is the source of truth for headcount.
+const GUEST_RE = /\b(dinner|guests?|party|potluck|bbq|barbecue|brunch|company|visit(?:or|ing)?|hosting|host|people over|over for|birthday|celebrat)/i;
+
+export function guestsOnDate(events, date) {
+  return (events || []).some((e) => String(e.start || "").slice(0, 10) === date && GUEST_RE.test(e.subject || ""));
+}
+export function estimateServings(receipt, { perServing = 16 } = {}) {
+  const t = Number(receipt?.total);
+  if (!Number.isFinite(t) || t <= 0) return 0;
+  return Math.max(1, Math.round(t / perServing));
+}
+export function leftoverEstimate({ receipt, events = [], familySize = 3, perServing = 16 } = {}) {
+  if (!receipt || receipt.kind !== "prepared") return { likely: false, reason: "not a prepared-food order" };
+  const servings = estimateServings(receipt, { perServing });
+  if (guestsOnDate(events, receipt.date)) return { likely: false, servings, guests: true, reason: "guests on the calendar that day" };
+  const leftovers = servings - familySize;
+  return { likely: leftovers >= 1, servings, leftovers: Math.max(0, leftovers), guests: false };
+}
+
+/** Mark receipts as leftover-processed so the daily chef pass doesn't re-notify. */
+export async function markLeftoverProcessed(ids = []) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  const db = await load();
+  for (const it of db.items) if (set.has(it.id)) it.leftoverProcessed = true;
+  await save(db);
+}

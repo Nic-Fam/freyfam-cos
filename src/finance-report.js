@@ -12,6 +12,7 @@ import { notifyOwner } from "./channels/notify.js";
 import { sendMail } from "./channels/graph.js";
 import { localParts } from "./digest.js";
 import { listTransactions, summarizeSpend } from "./finance-log.js";
+import { listReceipts, reconcileReceipts, formatReconcile } from "./receipts.js";
 import { monthOverMonth, yearOverYear, setMonthly, formatDelta } from "./finance-baselines.js";
 
 const round2 = (x) => Math.round(Number(x) * 100) / 100;
@@ -87,6 +88,17 @@ export async function composeWeeklyReport({ now = new Date(), tz = FINANCE_REPOR
       if (week.notable.length) lines.push(`  Notable jumps: ${week.notable.map((n) => `${n.merchant} $${n.amount}`).join("; ")}`);
     }
   }
+
+  // Receipt reconciliation (double entry = the reconciliation): match the week's
+  // auto-forwarded receipts to card charges. Confirms + itemizes matched purchases,
+  // surfaces receipts with no charge yet, and flags amount mismatches to check.
+  try {
+    const weekReceipts = await listReceipts({ sinceDays: 7 }, now);
+    if (weekReceipts.length) {
+      const rline = formatReconcile(reconcileReceipts(weekReceipts, await listTransactions({ sinceDays: 10 })));
+      if (rline) lines.push(`\n${rline}`);
+    }
+  } catch { /* non-fatal: reconciliation is additive */ }
 
   if (firstSunday) {
     const prior = shiftYm(ym, -1);

@@ -1,7 +1,8 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, COO_REVIEW } from "./config.js";
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
 import { shouldAlert, recordAlerted } from "./heartbeat-alerts.js";
-import { recentMailSignals, recentShipmentMail } from "./channels/graph.js";
+import { recentMailSignals, recentShipmentMail, listEvents } from "./channels/graph.js";
+import { listReceipts, leftoverEstimate, markLeftoverProcessed } from "./receipts.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
@@ -405,6 +406,32 @@ async function maybeRunFinanceReport() {
 
 // Week-ahead scheduling-conflict scan (tracker 004): Sunday evening, once per day,
 // persisted like the finance report. Surfacing only (notifyOwner), never the gate.
+// Prepared-food leftovers -> next-day plan. For fresh prepared-food receipts, estimate
+// servings vs headcount (3 family + guests the calendar shows that day); if there are
+// likely leftovers and NO guest event, ask Carmine to adjust the NEXT day's plan. Each
+// receipt is examined once (marked processed) so a sitting receipt can't re-notify.
+async function maybeFactorLeftovers() {
+  try {
+    const prepared = (await listReceipts({ sinceDays: 2, kind: "prepared" })).filter((r) => !r.leftoverProcessed);
+    if (!prepared.length) return;
+    const events = await listEvents({ days: 2, back: 2 });
+    const hits = [];
+    for (const r of prepared) {
+      const est = leftoverEstimate({ receipt: r, events });
+      if (est.likely) hits.push(`${r.vendor} on ${r.date} (~${est.servings} servings, ~${est.leftovers} likely leftover)`);
+    }
+    await markLeftoverProcessed(prepared.map((r) => r.id)); // examined -> don't re-check
+    if (!hits.length) return;
+    await delegate({
+      agent: "chef",
+      task: `Prepared-food orders that likely left leftovers (family of 3, no guests on the calendar those days): ${hits.join("; ")}. Adjust the NEXT day's meal plan to use them up -- plan lighter or slot "leftovers from <vendor>". If the calendar shows guests that day, disregard.`,
+    });
+    log.info("leftover factoring delegated to chef", { orders: hits.length });
+  } catch (err) {
+    log.error("leftover factoring failed", { reason: err.message });
+  }
+}
+
 async function maybeRunWeekConflicts() {
   if (!WEEK_CONFLICTS.enabled) return;
   const last = await getLastConflictRun();
@@ -640,6 +667,7 @@ export async function tick() {
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
   await maybeRunWeekConflicts();
+  await maybeFactorLeftovers();
   await maybeRunTransferOutlook();
   await maybeRunPackageDigest();
   await maybeRunAmazonDigest();

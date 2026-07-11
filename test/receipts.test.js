@@ -32,6 +32,42 @@ test("parseReceipt: vendor + grocery/prepared classification", () => {
   assert.equal(food.total, 23.4);
 });
 
+test("reconcileReceipts matches a receipt to its card charge (incl. tip)", () => {
+  const receipts = [{ vendor: "doordash", total: 40.0, date: "2026-07-11" }];
+  const txns = [{ merchant: "DOORDASH*ORDER 55", amount: 46.0, date: "2026-07-11" }]; // +$6 tip
+  const { matched, pending, discrepancies } = r.reconcileReceipts(receipts, txns);
+  assert.equal(matched.length, 1);
+  assert.equal(pending.length, 0);
+  assert.equal(discrepancies.length, 0);
+  assert.equal(matched[0].tip, 6);
+});
+
+test("reconcileReceipts: no charge -> pending; wildly-off amount -> discrepancy", () => {
+  assert.equal(r.reconcileReceipts([{ vendor: "chipotle", total: 22, date: "2026-07-11" }], []).pending.length, 1);
+  const d = r.reconcileReceipts(
+    [{ vendor: "chipotle", total: 22, date: "2026-07-11" }],
+    [{ merchant: "CHIPOTLE 123", amount: 88.0, date: "2026-07-11" }] // $88 vs $22 -> out of tip range
+  );
+  assert.equal(d.discrepancies.length, 1);
+  assert.equal(d.matched.length, 0);
+});
+
+test("estimateServings scales with the order total", () => {
+  assert.equal(r.estimateServings({ total: 80 }), 5);
+  assert.equal(r.estimateServings({ total: 0 }), 0);
+});
+
+test("leftoverEstimate: big order for 3 -> leftovers; guest event suppresses; grocery skipped", () => {
+  const receipt = { kind: "prepared", total: 96, date: "2026-07-11" }; // ~6 servings
+  const none = r.leftoverEstimate({ receipt, events: [], familySize: 3 });
+  assert.equal(none.likely, true);
+  assert.equal(none.leftovers, 3);
+  const guests = r.leftoverEstimate({ receipt, events: [{ subject: "Dinner with the Kims", start: "2026-07-11T18:00:00" }], familySize: 3 });
+  assert.equal(guests.likely, false);
+  assert.equal(guests.guests, true);
+  assert.equal(r.leftoverEstimate({ receipt: { kind: "grocery", total: 96, date: "2026-07-11" } }).likely, false);
+});
+
 test("captureReceipt stores, dedups by sender+subject+day, and lists back", async () => {
   const row = await r.captureReceipt({ from: "no-reply@doordash.com", subject: "Your order", body: "Total $23.40", at: "2026-07-11T18:00:00Z" });
   assert.ok(row && row.vendor);
