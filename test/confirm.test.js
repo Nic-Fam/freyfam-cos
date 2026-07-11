@@ -116,6 +116,56 @@ test("a long prose message with an incidental yes + token is NOT treated as an a
   assert.deepEqual(ran, []); // nothing executed
 });
 
+test("YES ALL approves every pending code quoted in the thread", async () => {
+  const a = await requestConfirmation("event A", "test", { what: "A" });
+  const b = await requestConfirmation("event B", "test", { what: "B" });
+  const c = await requestConfirmation("event C", "test", { what: "C" });
+  const body = `YES ALL\n\nOn Fri Lloyd wrote:\n> Reply YES ${a.code}, ${b.code}, ${c.code} or YES ALL`;
+  const res = await tryResolveConfirmation(body);
+  assert.equal(res.handled, true);
+  assert.match(res.message, /Approved 3 of 3/);
+  assert.deepEqual(ran.map((r) => r.what).sort(), ["A", "B", "C"]);
+});
+
+test("a comma-separated YES resolves each code in the reply", async () => {
+  const a = await requestConfirmation("A", "test", { what: "A" });
+  const b = await requestConfirmation("B", "test", { what: "B" });
+  const res = await tryResolveConfirmation(`YES ${a.code}, ${b.code}`);
+  assert.equal(res.handled, true);
+  assert.match(res.message, /Approved 2 of 2/);
+  assert.deepEqual(ran.map((r) => r.what).sort(), ["A", "B"]);
+});
+
+test("YES ALL is scoped to the thread: an unrelated pending action is untouched", async () => {
+  const a = await requestConfirmation("A", "test", { what: "A" });
+  const b = await requestConfirmation("B", "test", { what: "B" });
+  const grocery = await requestConfirmation("grocery", "test", { what: "grocery" });
+  const body = `YES ALL\n\nOn Fri Lloyd wrote:\n> Reply YES ${a.code}, ${b.code} or YES ALL`; // does NOT quote grocery's code
+  const res = await tryResolveConfirmation(body);
+  assert.equal(res.handled, true);
+  assert.match(res.message, /Approved 2 of 2/);
+  assert.deepEqual(ran.map((r) => r.what).sort(), ["A", "B"]);
+  assert.equal((await resolveByCode(grocery.code, true)).found, true, "grocery was left pending, not blanket-approved");
+});
+
+test("an approval reply is consumed even when it resolves nothing (no re-ingest loop)", async () => {
+  // The Woodbury bug: a YES that resolved nothing fell through to the orchestrator,
+  // which re-ingested the quoted thread and re-prompted -> loop. Must be handled:true.
+  const res = await tryResolveConfirmation(`YES ALL\n\nOn Fri Lloyd wrote:\n> Reply YES abc123, def456 or YES ALL`);
+  assert.equal(res.handled, true);
+  assert.deepEqual(ran, []);
+});
+
+test("a duplicate YES ALL after the batch ran is reassured, not re-run", async () => {
+  const a = await requestConfirmation("A", "test", { what: "A" });
+  const body = `YES ALL\n\nOn Fri Lloyd wrote:\n> Reply YES ${a.code} or YES ALL`;
+  await tryResolveConfirmation(body);              // runs A
+  const dup = await tryResolveConfirmation(body);  // same reply arrives again
+  assert.equal(dup.handled, true);
+  assert.match(dup.message, /already handled/i);
+  assert.equal(ran.length, 1, "the batch does not run a second time");
+});
+
 test("a failing action surfaces as an error message, not a throw", async () => {
   const { code } = await requestConfirmation("flaky", "boom", {});
   const res = await tryResolveConfirmation(`yes ${code}`);

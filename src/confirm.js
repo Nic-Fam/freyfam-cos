@@ -166,42 +166,94 @@ export async function resolveByCode(code, approved, { now = Date.now() } = {}) {
  * SMS path: if the message is a "YES <code>" / "NO <code>" reply, resolve it
  * (running the staged action on YES) and return a result to relay to the family.
  * `handled:false` means it was not an approval reply (normal routing continues).
+ *
+ * Handles three reply shapes, all of which Lloyd's own approval prompt offers:
+ *   - "YES <code>"                    single approval (the original path)
+ *   - "YES <code>, <code>, <code>"    a comma-separated batch
+ *   - "YES ALL"                       every code from THIS thread still pending
+ *
+ * CRITICAL: once a reply is recognized as an approval (has yes/no intent AND either
+ * a code or "all"), it is ALWAYS consumed (`handled:true`) -- even when it resolves
+ * nothing. A reply that fell through to the orchestrator got the quoted approval
+ * thread re-ingested as a new task, which re-created the whole batch and re-prompted
+ * -> an amplifying loop (this is what hosed the Woodbury holiday calendar). Consuming
+ * it here is the one place that loop is cut.
  * @returns {Promise<{handled:boolean, message?:string}>}
  */
-export async function tryResolveConfirmation(messageBody) {
+export async function tryResolveConfirmation(messageBody, { now = Date.now() } = {}) {
   const raw = String(messageBody || "");
   // Strip quoted history / signature so an EMAIL reply ("YES 1234" above a quoted
   // thread, "On ... wrote:", "----", or "> ...") still parses as an approval.
   const head = raw.split(/\n\s*>|\nOn\b.+\bwrote:|\n-{2,}|\n_{2,}|\nSent from /i)[0].trim();
   // Approval replies are short. A long prose message that merely happens to
-  // contain "yes" + a 4-char token is NOT an approval -> let it route normally.
+  // contain "yes" + a token is NOT an approval -> let it route normally.
   if (!head || head.length > 200) return { handled: false };
 
-  // A 6-char code token (codes are uppercase hex) anywhere in the head, plus a
-  // clear yes/no intent. Tolerates punctuation and a few extra words ("Yes, 1a2b3c
-  // thanks", "approve 1a2b3c", "no 1a2b3c cancel that").
-  const code = (head.match(/\b([0-9a-f]{6})\b/i) || [])[1];
   const affirm = /\b(yes|yep|yeah|approve[d]?|confirm(?:ed)?|ok|okay|go ahead|do it|send it)\b/i.test(head);
   const negate = /\b(no|nope|deny|denied|cancel(?:led)?|don'?t|do not|stop|reject)\b/i.test(head);
-  if (!code || (!affirm && !negate)) return { handled: false }; // not an approval reply
+  if (!affirm && !negate) return { handled: false }; // no yes/no intent -> normal routing
 
-  const CODE = code.toUpperCase();
+  // 6-hex code tokens (codes are uppercase hex). Tolerates punctuation/extra words.
+  const codesIn = (s) => [...new Set([...String(s).matchAll(/\b([0-9a-f]{6})\b/gi)].map((m) => m[1].toUpperCase()))];
+  const isAll = /\ball\b/i.test(head);
+  const headCodes = codesIn(head);
+  // Bare "yes"/"no" with no code and no "all" is conversational ("yes please book
+  // the dentist") -> route to the chief normally, exactly as before.
+  if (!isAll && headCodes.length === 0) return { handled: false };
+
   if (affirm && negate) {
-    return { handled: true, message: `Did you mean yes or no for code ${CODE}? Reply just "YES ${CODE}" or "NO ${CODE}".` };
+    const which = headCodes[0] ? ` for code ${headCodes[0]}` : "";
+    return { handled: true, message: `Did you mean yes or no${which}? Reply "YES <code>" to confirm or "NO <code>" to cancel.` };
   }
-  const res = await resolveByCode(CODE, affirm);
-  if (!res.found) {
-    // Was this code JUST handled? Then a duplicate reply arrived -- reassure, don't alarm.
-    const prior = (await loadResolved()).get(CODE);
-    if (prior) {
-      return { handled: true, message: prior.approved === false
-        ? `You're all set -- ${CODE} was already cancelled a moment ago, nothing more to do.`
-        : `You're all set -- I already handled ${CODE} (${prior.action}). No need to approve again.` };
+
+  // Which codes to act on. "ALL" is scoped to codes quoted in THIS reply that are
+  // still pending, so a blanket yes can never approve an unrelated pending action
+  // (e.g. a grocery order sitting in the queue).
+  let targetCodes = headCodes;
+  if (isAll) {
+    const pending = await loadPending(now);
+    const inThread = new Set(codesIn(raw));
+    const scoped = [...pending.keys()].filter((c) => inThread.has(c));
+    // If nothing in the thread pins it (no quoted codes survived), fall back to
+    // every pending code -- the user explicitly said "all".
+    targetCodes = scoped.length ? scoped : [...pending.keys()];
+  }
+
+  if (targetCodes.length === 0) {
+    // "ALL" but nothing pending: a duplicate reply after the batch already went
+    // through, or it expired. Reassure, never alarm; still consumed (no fallthrough).
+    const resolved = await loadResolved(now);
+    if (codesIn(raw).some((c) => resolved.has(c))) {
+      return { handled: true, message: `You're all set -- I already handled those. No need to approve again.` };
     }
-    // Genuinely unknown: calm, never alarmist. This is our OWN code mechanism, not an attack.
-    return { handled: true, message: `I don't have a pending action for code ${CODE} -- it was likely already handled or has expired. Nothing to worry about; just ask me to redo it if you need it.` };
+    return { handled: true, message: `I don't see anything pending to ${affirm ? "approve" : "cancel"} right now -- it was likely already handled or expired. Just ask me to redo it if you need it.` };
   }
-  if (!affirm) return { handled: true, message: `Cancelled: ${res.action}` };
-  if (res.error) return { handled: true, message: `I tried, but it failed: ${res.error}` };
-  return { handled: true, message: res.result };
+
+  const results = [];
+  for (const code of targetCodes) results.push({ code, res: await resolveByCode(code, affirm, { now }) });
+
+  // Single code: keep the original, specific phrasing (and existing tests).
+  if (results.length === 1) {
+    const { code, res } = results[0];
+    if (!res.found) {
+      const prior = (await loadResolved(now)).get(code);
+      if (prior) return { handled: true, message: prior.approved === false
+        ? `You're all set -- ${code} was already cancelled a moment ago, nothing more to do.`
+        : `You're all set -- I already handled ${code} (${prior.action}). No need to approve again.` };
+      return { handled: true, message: `I don't have a pending action for code ${code} -- it was likely already handled or has expired. Nothing to worry about; just ask me to redo it if you need it.` };
+    }
+    if (!affirm) return { handled: true, message: `Cancelled: ${res.action}` };
+    if (res.error) return { handled: true, message: `I tried, but it failed: ${res.error}` };
+    return { handled: true, message: res.result };
+  }
+
+  // Batch: summarize instead of dumping every result line.
+  const ran = results.filter((r) => r.res.found && r.res.approved && !r.res.error).length;
+  const cancelled = results.filter((r) => r.res.found && r.res.approved === false).length;
+  const failed = results.filter((r) => r.res.error);
+  const missing = results.filter((r) => !r.res.found).length;
+  const parts = [affirm ? `Approved ${ran} of ${targetCodes.length}.` : `Cancelled ${cancelled} of ${targetCodes.length}.`];
+  if (missing) parts.push(`${missing} were already handled or expired.`);
+  if (failed.length) parts.push(`${failed.length} failed: ${failed.map((f) => f.res.error).join("; ").slice(0, 160)}`);
+  return { handled: true, message: parts.join(" ") };
 }
