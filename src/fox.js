@@ -3,7 +3,7 @@ import { AZURE, DIGEST } from "./config.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
-// Fox's day at Bright Horizons: today's activities + a derived WARDROBE HINT so
+// Fox's day at Woodbury Preschool: today's activities + a derived WARDROBE HINT so
 // Nic/Shelli can dress him right (old clothes on paint/messy days, a full change
 // on water days). Ported from the legacy assistant, SAME Azure table so existing
 // captured days carry over and either side can write it.
@@ -11,7 +11,7 @@ import { createLogger } from "./log.js";
 //   Table 'foxDailyContext'  PartitionKey 'fox'  RowKey 'YYYY-MM-DD' (LA day)
 //   fields: lessonPlan, themeOrUnit, activities, clothingHint, mealsJson
 //
-// Populated from Bright Horizons emails: under the cutover those arrive at the
+// Populated from Woodbury Preschool emails: under the cutover those arrive at the
 // daemon, so Lloyd parses them and calls set_fox_day (see the house rule). The
 // morning digest reads getFoxToday and renders the section.
 // ===========================================================================

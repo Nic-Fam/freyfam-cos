@@ -163,7 +163,7 @@ const MAX_FETCH_BYTES = Number(process.env.DOC_MAX_FETCH_BYTES || 15_000_000);
 
 /**
  * Fetch a document at a URL (PDF/.ics/.vcf) and parse it through the same path as
- * an attachment. For links that arrive in an email body — e.g. a Bright Horizons
+ * an attachment. For links that arrive in an email body — e.g. a Woodbury Preschool
  * curriculum PDF (those media URLs are public direct-fetch, no auth). Read-only:
  * http(s) only, timeout, size cap. Returns the same shape as extractDocuments.
  */

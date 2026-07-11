@@ -50,7 +50,7 @@ Gather what you need first:
   we know when the day starts; do not list the rest of that person's work events.
   Treat an event as a work event if it is on a work calendar or has an attendee at
   a work domain (flyerdefense.com for Nic, disney.com for Shelli).
-- Fox's day at Bright Horizons: call fox_today. Include his activities and the
+- Fox's day at Woodbury Preschool: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
 ${commuteLine}

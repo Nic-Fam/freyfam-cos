@@ -136,19 +136,19 @@ const tools = [
   {
     name: "fox_today",
     description:
-      "Get Fox's Bright Horizons day: activities, theme, and a wardrobe hint (e.g. old clothes on paint days, a change of clothes on water days). Read-only.",
+      "Get Fox's Woodbury Preschool day: activities, theme, and a wardrobe hint (e.g. old clothes on paint days, a change of clothes on water days). Read-only.",
     input_schema: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; defaults to today" } } },
   },
   {
     name: "ingest_fox_curriculum",
     description:
-      "Fetch a Bright Horizons WEEKLY curriculum PDF link and save Fox's activities PER DAY automatically (one entry per weekday, with a wardrobe hint each). Use this on a Bright Horizons email. Returns what was saved.",
+      "Fetch a Woodbury Preschool WEEKLY curriculum PDF link and save Fox's activities PER DAY automatically (one entry per weekday, with a wardrobe hint each). Use this on a Woodbury Preschool email. Returns what was saved.",
     input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
   {
     name: "set_fox_day",
     description:
-      "Save Fox's Bright Horizons activities for ONE day (fallback / manual correction; prefer ingest_fox_curriculum for a weekly PDF). A wardrobe hint is derived automatically from the activities (paint/messy -> old clothes; water -> a full change + towel). Operates only on the family's own data; no outbound.",
+      "Save Fox's Woodbury Preschool activities for ONE day (fallback / manual correction; prefer ingest_fox_curriculum for a weekly PDF). A wardrobe hint is derived automatically from the activities (paint/messy -> old clothes; water -> a full change + towel). Operates only on the family's own data; no outbound.",
     input_schema: {
       type: "object",
       properties: {
@@ -270,7 +270,7 @@ const tools = [
   {
     name: "fetch_document",
     description:
-      "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Bright Horizons curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
+      "Fetch a document at a URL and return its text. Handles PDF, .ics (calendar), and .vcf (contact). Read-only. Use for document LINKS in an email body — e.g. a Woodbury Preschool curriculum PDF link. For Fox's curriculum, then call set_fox_day with the activities.",
     input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
   {
@@ -743,7 +743,7 @@ function toolHandlers({ images, onDelegate, thread = null } = {}) {
     }),
     list_calendar: async ({ top, days, back } = {}) => JSON.stringify(await listEvents({ top, days, back })),
     fox_today: async ({ date } = {}) =>
-      JSON.stringify((await getFoxToday(date)) || { note: "no Bright Horizons context captured for that day yet" }),
+      JSON.stringify((await getFoxToday(date)) || { note: "no Woodbury Preschool context captured for that day yet" }),
     ingest_fox_curriculum: async ({ url }) => {
       let parsed;
       try {

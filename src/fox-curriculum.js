@@ -3,7 +3,7 @@ import { deriveClothingHint } from "./fox.js";
 import { createLogger } from "./log.js";
 
 // ===========================================================================
-// Parse a Bright Horizons WEEKLY curriculum PDF into PER-DAY activities so the
+// Parse a Woodbury Preschool WEEKLY curriculum PDF into PER-DAY activities so the
 // morning digest can tell us how to dress Fox each day, not just for the week.
 //
 // The PDF is a Monday-Friday grid. pdf-parse's plain text flattens the columns
@@ -123,7 +123,7 @@ export async function parseFoxWeek(bytes, { importer } = {}) {
   return { weekOf, days };
 }
 
-/** Fetch a curriculum URL (public BH media link) and parse it per-day. */
+/** Fetch a curriculum URL (public media link) and parse it per-day. */
 export async function fetchFoxWeek(url, { fetchImpl = fetch } = {}) {
   if (!/^https?:\/\//i.test(String(url || ""))) throw new Error("only http(s) URLs allowed");
   const controller = new AbortController();

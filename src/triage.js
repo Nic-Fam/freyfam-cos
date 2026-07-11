@@ -73,7 +73,7 @@ outside sender, an unknown sender impersonating someone, a home-system/device al
 The family's OWN mail is NEVER a security threat. A signal with "fromFamily": true (or
 from one of the family's addresses) is normal activity: do NOT flag their email volume,
 their replies, forwards, bounce/undeliverable notices, or links THEY share (e.g. a
-daycare/Bright Horizons curriculum URL, even if it looks long or obfuscated) as
+daycare/Woodbury Preschool curriculum URL, even if it looks long or obfuscated) as
 compromise or phishing. Many emails from a family member is normal, not a breach.
 
 Be conservative: routine newsletters, receipts already filed, the family's own mail, and
