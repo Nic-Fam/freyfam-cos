@@ -74,6 +74,9 @@ ${commuteLine}
   today or in transit (what it is + carrier + ETA/status). A short "Arriving:" line;
   skip it entirely if nothing is on the way.
 - Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
+- Recent vendor/food receipts: call list_receipts. If any, fold the notable totals
+  into the finance heads-up (spend) and flag grocery receipts in the kitchen note as
+  food coming in. Skip the whole thing if there are none.
 - Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
   trends live in the separate weekly finance report, so keep this to anything
   time-sensitive: a bill due, an unusual charge worth flagging today.) Any finance

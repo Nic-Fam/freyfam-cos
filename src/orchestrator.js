@@ -20,6 +20,7 @@ import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
 import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { calendarGateDecision } from "./calendar-gate.js";
 import { findConflicts } from "./week-conflicts.js";
+import { isReceipt, captureReceipt, listReceipts, formatReceipts } from "./receipts.js";
 import { synthesizeSpeech, ttsConfigured } from "./tts.js";
 import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
@@ -307,6 +308,11 @@ const tools = [
     name: "list_tasks",
     description: "List open family tasks (overdue and due-today flagged). Set includeDone true to include completed ones. Each line ends with the task id in braces, e.g. {a1b2c3d4}.",
     input_schema: { type: "object", properties: { includeDone: { type: "boolean" } } },
+  },
+  {
+    name: "list_receipts",
+    description: "List vendor/food receipts the family auto-forwarded to the mailbox (captured automatically), newest first: date, vendor, total, and whether it's a grocery receipt. Read-only. Use it for spend (delegate the totals to finance/Patrick) and for pantry (grocery receipts -> food coming into the kitchen, for chef/Carmine). `sinceDays` defaults 14; `kind` filters to 'grocery' or 'prepared'.",
+    input_schema: { type: "object", properties: { sinceDays: { type: "number" }, kind: { type: "string", enum: ["grocery", "prepared", "other"] } } },
   },
   {
     name: "complete_task",
@@ -926,6 +932,7 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
       }
     },
     list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
+    list_receipts: async ({ sinceDays, kind } = {}) => formatReceipts(await listReceipts({ sinceDays, kind })),
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
       return t ? `Marked done: "${t.title}"` : "No single matching open task — that phrase matched none or more than one. Call list_tasks and complete by the {id}, or be more specific.";
@@ -1305,6 +1312,20 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       log.info("verification code relayed", { from: msg.from });
       return;
     }
+  }
+
+  // 0a2. Vendor/food receipts auto-forwarded to the mailbox (Nic set this up):
+  //      capture silently and STOP -- never reject, never reply, no agent run. Only
+  //      for non-family senders (a family member's own note should reach the chief).
+  //      Runs before the auth gate so a receipt is kept no matter how it forwarded;
+  //      capture is storage-only, so it does not weaken that gate. See memory
+  //      vendor-receipts-intake.
+  if (msg.channel === "email" && !isSelfAddress(msg.from) && !isFamilyAddress(msg.from) && isReceipt({ subject: msg.subject, body: msg.body })) {
+    try {
+      const row = await captureReceipt({ from: msg.from, subject: msg.subject, body: msg.body, at: msg.receivedAt });
+      if (row) log.info("captured vendor receipt", { vendor: row.vendor, total: row.total, kind: row.kind });
+    } catch (e) { log.error("receipt capture failed", { reason: e.message }); }
+    return;
   }
 
   // 0b. Never auto-reply to machine senders (bounces, no-reply, marketing) or to
