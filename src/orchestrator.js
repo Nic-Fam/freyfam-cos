@@ -219,7 +219,7 @@ const tools = [
   {
     name: "draft_email",
     description:
-      "Write an email on a family member's behalf and SAVE IT AS A DRAFT in their OWN mailbox (default Nic's nic@freyfam.com). It is NEVER sent -- it lands in their Drafts folder so they can review, edit, and send it themselves. Use this whenever the family wants you to compose an email for them rather than send it, or when you'd otherwise propose sending but they'd rather send it personally. No approval needed, because nothing goes out. Use `cc`/`bcc` fields (comma-separated), not 'CC:' lines in the body.",
+      "Write an email on a family member's behalf and SAVE IT AS A DRAFT in their OWN mailbox (default Nic's nic@freyfam.com). It is NEVER sent -- it lands in their Drafts folder so they can review, edit, and send it themselves. VOICE: write the body in the ACCOUNT OWNER'S OWN first-person voice, as if Nic (or Shelli) wrote it themselves -- no Lloyd sign-off, no 'Lloyd here', no third person. ONLY write it in Lloyd's own voice if the family EXPLICITLY asks for an email FROM Lloyd/the assistant. Use this whenever the family wants you to compose an email for them rather than send it, or when you'd otherwise propose sending but they'd rather send it personally. No approval needed, because nothing goes out. Use `cc`/`bcc` fields (comma-separated), not 'CC:' lines in the body.",
     input_schema: {
       type: "object",
       properties: {
