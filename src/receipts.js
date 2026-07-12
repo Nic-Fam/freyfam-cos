@@ -8,6 +8,8 @@
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { complete as defaultComplete, textOf, parseJson } from "./claude.js";
+import { MODELS } from "./config.js";
 
 const STORE = () => process.env.RECEIPTS_PATH || "./data/receipts.json";
 
@@ -88,7 +90,12 @@ async function save(db) { await mkdir(dirname(STORE()), { recursive: true }); aw
 export async function captureReceipt({ from = "", subject = "", body = "", at } = {}, now = Date.now()) {
   const date = new Date(at || now).toISOString().slice(0, 10);
   const parsed = parseReceipt({ from, subject, body });
-  const row = { id: `${date}:${Math.random().toString(36).slice(2, 8)}`, from, subject, date, ...parsed, capturedAt: new Date(now).toISOString() };
+  // Keep a cleaned, truncated body so the daily Haiku pass can itemize + estimate
+  // servings precisely; it's dropped once extracted (keeps the store lean).
+  const bodyText = String(body || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim().slice(0, 2500);
+  const row = { id: `${date}:${Math.random().toString(36).slice(2, 8)}`, from, subject, date, ...parsed, servings: null, items: [], bodyText, extracted: false, capturedAt: new Date(now).toISOString() };
   const db = await load();
   if (db.items.some((it) => sig(it) === sig(row))) return null; // already captured
   db.items.push(row);
@@ -106,7 +113,12 @@ export async function listReceipts({ sinceDays = 14, kind } = {}, now = new Date
 
 export function formatReceipts(items) {
   if (!items || !items.length) return "No recent receipts.";
-  return items.map((r) => `- ${r.date} ${r.vendor}${r.total != null ? ` $${r.total.toFixed(2)}` : ""}${r.kind === "grocery" ? " (grocery)" : ""}`).join("\n");
+  return items.map((r) => {
+    const its = (r.items || []).slice(0, 6).map((i) => i.name).filter(Boolean).join(", ");
+    const svg = r.kind === "prepared" && r.servings ? ` (~${Math.round(r.servings)} servings)` : "";
+    const tail = its ? ` — ${its}${(r.items || []).length > 6 ? ", …" : ""}` : "";
+    return `- ${r.date} ${r.vendor}${r.total != null ? ` $${r.total.toFixed(2)}` : ""}${r.kind === "grocery" ? " (grocery)" : ""}${svg}${tail}`;
+  }).join("\n");
 }
 
 // --- Finance reconciliation (double entry = the reconciliation) ---------------
@@ -159,6 +171,10 @@ export function guestsOnDate(events, date) {
   return (events || []).some((e) => String(e.start || "").slice(0, 10) === date && GUEST_RE.test(e.subject || ""));
 }
 export function estimateServings(receipt, { perServing = 16 } = {}) {
+  // Prefer the Haiku-extracted serving count (counts actual entrees); fall back to
+  // the crude total/$-per-serving estimate when the receipt hasn't been itemized.
+  const s = Number(receipt?.servings);
+  if (Number.isFinite(s) && s > 0) return Math.round(s);
   const t = Number(receipt?.total);
   if (!Number.isFinite(t) || t <= 0) return 0;
   return Math.max(1, Math.round(t / perServing));
@@ -178,4 +194,80 @@ export async function markLeftoverProcessed(ids = []) {
   const db = await load();
   for (const it of db.items) if (set.has(it.id)) it.leftoverProcessed = true;
   await save(db);
+}
+
+// --- Haiku itemizer (upgrade over the light parse) --------------------------
+// A batched, cheap model pass that turns each raw receipt body into line items +
+// a precise serving count (real entrees, not total/$16). Mirrors finance-ingest:
+// capture stores the body, this drains + extracts in one call, then drops the body.
+const EXTRACT_SYSTEM = `You convert vendor/food ORDER RECEIPT emails into structured data.
+Given a numbered list of receipts, return ONLY JSON:
+{"receipts":[{"i":<index>,"vendor":<store/restaurant>,"total":<number>,"kind":"grocery"|"prepared"|"other","servings":<number|null>,"items":[{"name":<string>,"qty":<number|null>,"price":<number|null>}]}],"unparsed":[<index>,...]}
+Rules:
+- vendor = the STORE or RESTAURANT (e.g. Costco, Ralphs, the restaurant), NOT the delivery platform when a store is named, and NOT the person forwarding it.
+- total = the final order total actually charged (a number).
+- kind = "grocery" for a supermarket/grocery order (stocks the kitchen), "prepared" for restaurant/prepared-food delivery, "other" for general merchandise (e.g. Amazon non-food).
+- servings = for a PREPARED order ONLY, the number of adult meal-portions (count entrees/mains; sides, drinks, desserts are not servings). null for grocery/other.
+- items = the line items (name + qty + price when shown): grocery -> food items; prepared -> the dishes; other -> the products. Skip tax/tip/fee/delivery lines. Short names.
+- Put an index in "unparsed" if it is not a real order receipt or has no clear total.`;
+
+function renderReceipts(rows) {
+  return rows.map((r, i) => `[${i}] FROM: ${r.from || ""}\nSUBJECT: ${r.subject || ""}\n${String(r.body || "").slice(0, 1600)}`).join("\n---\n");
+}
+
+/** One Haiku call per chunk. Returns {updates:[{id,...fields}], unparsed:[id]}. `complete` injectable. */
+export async function extractReceipts(rows, { complete = defaultComplete, model = MODELS.triage, chunkSize = 6 } = {}) {
+  const updates = [], unparsed = [];
+  for (let s = 0; s < (rows || []).length; s += chunkSize) {
+    const chunk = rows.slice(s, s + chunkSize);
+    let out = {};
+    try {
+      const resp = await complete({ model, system: EXTRACT_SYSTEM, messages: [{ role: "user", content: renderReceipts(chunk) }], maxTokens: 2000 });
+      out = parseJson(textOf(resp)) || {};
+    } catch { out = {}; }
+    const recs = Array.isArray(out.receipts) ? out.receipts : [];
+    const used = new Set();
+    for (const r of recs) {
+      const row = chunk[r.i];
+      if (!row || typeof r.total !== "number" || !Number.isFinite(r.total)) continue;
+      used.add(r.i);
+      updates.push({
+        id: row.id,
+        vendor: r.vendor ? String(r.vendor).slice(0, 40) : row.vendor,
+        total: r.total,
+        kind: ["grocery", "prepared", "other"].includes(r.kind) ? r.kind : row.kind,
+        servings: Number.isFinite(r.servings) && r.servings > 0 ? r.servings : null,
+        items: Array.isArray(r.items) ? r.items.slice(0, 40).map((it) => ({ name: String(it?.name || "").slice(0, 60), qty: Number(it?.qty) || null, price: Number(it?.price) || null })).filter((it) => it.name) : [],
+      });
+    }
+    chunk.forEach((row, i) => { if (!used.has(i)) unparsed.push(row.id); });
+  }
+  return { updates, unparsed };
+}
+
+/** Receipts still needing itemization (have a stored body, not yet extracted). */
+export async function pendingExtraction({ limit = 12 } = {}) {
+  return (await load()).items.filter((r) => !r.extracted && r.bodyText).slice(0, limit);
+}
+
+/** Apply extraction results: enrich parsed rows, accept the light parse for unparsed
+ *  ones, and drop the raw body from both. Returns the number enriched. */
+export async function applyExtraction(updates = [], unparsedIds = []) {
+  const byId = new Map(updates.map((u) => [u.id, u]));
+  const unp = new Set(unparsedIds);
+  const db = await load();
+  let n = 0;
+  for (const it of db.items) {
+    if (byId.has(it.id)) {
+      const u = byId.get(it.id);
+      Object.assign(it, { vendor: u.vendor, total: u.total, kind: u.kind, servings: u.servings, items: u.items, extracted: true });
+      delete it.bodyText;
+      n++;
+    } else if (unp.has(it.id)) {
+      it.extracted = true; // accept the deterministic light parse; stop retrying
+      delete it.bodyText;
+    }
+  }
+  await save(db);
+  return n;
 }

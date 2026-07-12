@@ -2,7 +2,7 @@ import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DI
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
 import { shouldAlert, recordAlerted } from "./heartbeat-alerts.js";
 import { recentMailSignals, recentShipmentMail, listEvents } from "./channels/graph.js";
-import { listReceipts, leftoverEstimate, markLeftoverProcessed } from "./receipts.js";
+import { listReceipts, leftoverEstimate, markLeftoverProcessed, pendingExtraction, extractReceipts, applyExtraction } from "./receipts.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
 import { getExpiringSoon } from "./meals.js";
 import { runChief } from "./orchestrator.js";
@@ -410,6 +410,22 @@ async function maybeRunFinanceReport() {
 // servings vs headcount (3 family + guests the calendar shows that day); if there are
 // likely leftovers and NO guest event, ask Carmine to adjust the NEXT day's plan. Each
 // receipt is examined once (marked processed) so a sitting receipt can't re-notify.
+// Itemize captured receipts (one cheap Haiku call over the un-extracted ones) into
+// line items + a precise serving count. Runs BEFORE the leftover pass so leftovers
+// use real entree counts, not the total/$16 estimate. Only fires when work is pending.
+async function maybeExtractReceipts() {
+  try {
+    const pending = await pendingExtraction({ limit: 12 });
+    if (!pending.length) return;
+    const rows = pending.map((r) => ({ id: r.id, from: r.from, subject: r.subject, body: r.bodyText }));
+    const { updates, unparsed } = await extractReceipts(rows);
+    const n = await applyExtraction(updates, unparsed);
+    log.info("receipts itemized (Haiku)", { extracted: n, unparsed: unparsed.length });
+  } catch (err) {
+    log.error("receipt itemization failed", { reason: err.message });
+  }
+}
+
 async function maybeFactorLeftovers() {
   try {
     const prepared = (await listReceipts({ sinceDays: 2, kind: "prepared" })).filter((r) => !r.leftoverProcessed);
@@ -667,6 +683,7 @@ export async function tick() {
   await maybeRunFinanceIngest();
   await maybeRunFinanceReport();
   await maybeRunWeekConflicts();
+  await maybeExtractReceipts();
   await maybeFactorLeftovers();
   await maybeRunTransferOutlook();
   await maybeRunPackageDigest();

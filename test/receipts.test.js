@@ -69,6 +69,44 @@ test("estimateServings scales with the order total", () => {
   assert.equal(r.estimateServings({ total: 0 }), 0);
 });
 
+test("estimateServings prefers the Haiku-extracted serving count over the total estimate", () => {
+  assert.equal(r.estimateServings({ total: 200, servings: 4 }), 4); // 4 real entrees, not 200/16
+});
+
+test("extractReceipts itemizes via the model and maps fields back to rows", async () => {
+  const fakeComplete = async () => ({ content: [{ type: "text", text: JSON.stringify({
+    receipts: [
+      { i: 0, vendor: "DoorDash", total: 127.29, kind: "prepared", servings: 8, items: [{ name: "Pad Thai", qty: 2, price: 30 }, { name: "Green Curry", qty: 1 }] },
+      { i: 1, vendor: "Costco", total: 270.74, kind: "grocery", servings: null, items: [{ name: "Rotisserie Chicken", qty: 2 }] },
+    ],
+    unparsed: [2],
+  }) }] });
+  const rows = [
+    { id: "a", from: "x", subject: "Fwd: order", body: "..." },
+    { id: "b", from: "y", subject: "Fwd: costco", body: "..." },
+    { id: "c", from: "z", subject: "newsletter", body: "no total here" },
+  ];
+  const { updates, unparsed } = await r.extractReceipts(rows, { complete: fakeComplete });
+  assert.equal(updates.length, 2);
+  const dd = updates.find((u) => u.id === "a");
+  assert.equal(dd.servings, 8);
+  assert.equal(dd.kind, "prepared");
+  assert.equal(dd.items.length, 2);
+  assert.deepEqual(unparsed, ["c"]);
+});
+
+test("applyExtraction enriches parsed rows, accepts light parse for unparsed, drops bodies", async () => {
+  await r.captureReceipt({ from: "no-reply@doordash.com", subject: "Your order", body: "Total $50.00", at: "2026-07-12T18:00:00Z" });
+  const [row] = await r.pendingExtraction({});
+  assert.ok(row.bodyText, "body stored for extraction");
+  const n = await r.applyExtraction([{ id: row.id, vendor: "DoorDash", total: 50, kind: "prepared", servings: 3, items: [{ name: "Burrito", qty: 3 }] }], []);
+  assert.equal(n, 1);
+  const [after] = await r.listReceipts({ sinceDays: 3650 }, new Date("2026-07-13T00:00:00Z"));
+  assert.equal(after.servings, 3);
+  assert.equal(after.extracted, true);
+  assert.equal(after.bodyText, undefined, "raw body dropped after extraction");
+});
+
 test("leftoverEstimate: big order for 3 -> leftovers; guest event suppresses; grocery skipped", () => {
   const receipt = { kind: "prepared", total: 96, date: "2026-07-11" }; // ~6 servings
   const none = r.leftoverEstimate({ receipt, events: [], familySize: 3 });
