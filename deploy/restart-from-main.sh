@@ -39,5 +39,29 @@ if git fetch --quiet origin main && git reset --hard --quiet origin/main; then
 else
   echo "WARN: git refresh failed; restarting current code"
 fi
-launchctl kickstart -k "gui/$(id -u)/com.freyfam.cos"
-echo "kickstarted from $(git rev-parse --short HEAD)"
+UID_N=$(id -u)
+DOMAIN="gui/$UID_N/com.freyfam.cos"
+PLIST="$HOME/Library/LaunchAgents/com.freyfam.cos.plist"
+SHA=$(git rev-parse --short HEAD)
+
+# Kill any stray/orphan daemon first: a hand-started `node src/daemon.js` left over
+# an SSH session double-binds :8790/:1235 -> EADDRINUSE -> launchd crash-loops.
+# launchd re-spawns the managed one below. (Mirrors Frank's orphan guard, 2026-07-12.)
+pkill -f "src/daemon.js" 2>/dev/null && sleep 1
+
+# Bootstrap the service if it is not loaded. A prior bootout leaves `kickstart` with
+# no service to find -> it errors but the old script still printed "kickstarted",
+# SILENTLY leaving Lloyd DOWN (happened 2026-07-12). Self-heal instead.
+launchctl print "$DOMAIN" >/dev/null 2>&1 || launchctl bootstrap "gui/$UID_N" "$PLIST"
+launchctl kickstart -k "$DOMAIN"
+
+# Never claim success on a failed start: verify a live PID, fail LOUD otherwise so a
+# broken deploy is visible (nonzero exit) instead of a quietly-down sole Lloyd.
+sleep 4
+PID=$(pgrep -f "src/daemon.js" | head -1)
+if [ -n "$PID" ]; then
+  echo "restart OK: daemon up on $SHA (pid $PID)"
+else
+  echo "RESTART FAILED: no daemon process after kickstart on $SHA -- try: launchctl bootstrap gui/$UID_N $PLIST" >&2
+  exit 1
+fi
