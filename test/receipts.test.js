@@ -32,6 +32,18 @@ test("parseReceipt: vendor + grocery/prepared classification", () => {
   assert.equal(food.total, 23.4);
 });
 
+test("parseReceipt: forwards resolve vendor from subject/body (not the gmail forwarder); Amazon supported", () => {
+  const amz = r.parseReceipt({ from: "nfrey2@gmail.com", subject: "Fwd: Order Confirmed, Nicholas", body: "Your order from Amazon.com. Order total $208.18" });
+  assert.equal(amz.vendor, "Amazon");
+  assert.equal(amz.kind, "other"); // general Amazon is spend, not pantry
+  assert.equal(amz.total, 208.18);
+  const inst = r.parseReceipt({ from: "nfrey2@gmail.com", subject: "Fwd: Your Instacart order receipt", body: "Total $270.74" });
+  assert.equal(inst.vendor, "Instacart");
+  assert.equal(inst.kind, "grocery");
+  const unknown = r.parseReceipt({ from: "nfrey2@gmail.com", subject: "Fwd: Nic, we got your order!", body: "Total $127.29" });
+  assert.notEqual(unknown.vendor.toLowerCase(), "gmail"); // never the forwarding address
+});
+
 test("reconcileReceipts matches a receipt to its card charge (incl. tip)", () => {
   const receipts = [{ vendor: "doordash", total: 40.0, date: "2026-07-11" }];
   const txns = [{ merchant: "DOORDASH*ORDER 55", amount: 46.0, date: "2026-07-11" }]; // +$6 tip

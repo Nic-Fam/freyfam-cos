@@ -1314,13 +1314,15 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     }
   }
 
-  // 0a2. Vendor/food receipts auto-forwarded to the mailbox (Nic set this up):
-  //      capture silently and STOP -- never reject, never reply, no agent run. Only
-  //      for non-family senders (a family member's own note should reach the chief).
-  //      Runs before the auth gate so a receipt is kept no matter how it forwarded;
-  //      capture is storage-only, so it does not weaken that gate. See memory
-  //      vendor-receipts-intake.
-  if (msg.channel === "email" && !isSelfAddress(msg.from) && !isFamilyAddress(msg.from) && isReceipt({ subject: msg.subject, body: msg.body })) {
+  // 0a2. Vendor/food receipts arriving at the mailbox (Nic auto-forwards these):
+  //      capture silently and STOP -- never reject, never reply, no agent run. Fires
+  //      for a non-family sender (a standard auto-forward preserves the vendor's From)
+  //      OR a family member's "Fwd:" of a receipt (manual/rewritten forward). A
+  //      genuine non-forwarded family note still reaches the chief. Runs before the
+  //      auth gate; capture is storage-only, so it does not weaken that gate. See
+  //      memory vendor-receipts-intake.
+  const looksForwarded = /^\s*(fwd?|fw):/i.test(String(msg.subject || ""));
+  if (msg.channel === "email" && !isSelfAddress(msg.from) && isReceipt({ subject: msg.subject, body: msg.body }) && (!isFamilyAddress(msg.from) || looksForwarded)) {
     try {
       const row = await captureReceipt({ from: msg.from, subject: msg.subject, body: msg.body, at: msg.receivedAt });
       if (row) log.info("captured vendor receipt", { vendor: row.vendor, total: row.total, kind: row.kind });

@@ -13,9 +13,29 @@ const STORE = () => process.env.RECEIPTS_PATH || "./data/receipts.json";
 
 // Grocery vendors stock the pantry; prepared-food/delivery is spend only (a DoorDash
 // burrito is not inventory). Used to route items to Carmine vs just Patrick.
-const GROCERY = /(instacart|ralphs|kroger|whole ?foods|costco|trader ?joe|safeway|albertsons|sprouts|vons|gelson|amazon fresh|shipt|weee)/i;
-const PREPARED = /(doordash|uber ?eats|grubhub|postmates|caviar|chipotle|panera|sweetgreen|domino|pizza|restaurant|cafe|kitchen|grill|sushi|taco|burger)/i;
-const RECEIPTY = /(receipt|order confirmation|your order|thanks for (your )?order|order #|order number|order total|payment received|invoice|amount charged|subtotal)/i;
+// [matcher, canonical vendor (null = use the matched text), kind]. Scanned over the
+// subject AND body, so a FORWARD whose subject lacks the brand still resolves from
+// the receipt body. Order matters: specific (Amazon Fresh) before generic (Amazon).
+const BRANDS = [
+  // Specific STORES first, so a Costco/Ralphs order fulfilled by Instacart labels as
+  // the store (how Nic thinks of it), not the delivery platform.
+  [/ralphs/i, "Ralphs", "grocery"],
+  [/\bkroger\b/i, "Kroger", "grocery"],
+  [/whole ?foods/i, "Whole Foods", "grocery"],
+  [/trader ?joe'?s?/i, "Trader Joe's", "grocery"],
+  [/\b(safeway|vons|albertsons|sprouts|gelson'?s?|shipt|weee)\b/i, null, "grocery"],
+  [/\bcostco\b/i, "Costco", "grocery"],
+  [/amazon ?fresh/i, "Amazon Fresh", "grocery"],
+  [/instacart/i, "Instacart", "grocery"], // delivery platform: after the stores it fulfills for
+  [/door ?dash/i, "DoorDash", "prepared"],
+  [/uber ?eats/i, "Uber Eats", "prepared"],
+  [/grubhub/i, "Grubhub", "prepared"],
+  [/postmates/i, "Postmates", "prepared"],
+  [/caviar\b/i, "Caviar", "prepared"],
+  [/\b(chipotle|panera|sweetgreen|domino'?s?|pizza|sushi|taco|ramen|thai|bistro)\b/i, null, "prepared"],
+  [/amazon/i, "Amazon", "other"], // generic Amazon LAST (after Amazon Fresh)
+];
+const RECEIPTY = /(receipt|order confirm(ed|ation)|your order|\bordered\b|we got your order|thanks for (your )?order|order #|order number|order total|payment received|invoice|amount charged|subtotal)/i;
 const MONEY = /\$\s?\d[\d,]*\.\d{2}/;
 
 /** Conservative: a receipt-y phrase AND a currency amount. Content-only, no sender. */
@@ -41,13 +61,22 @@ export function parseTotal(text) {
   return all.length ? Math.max(...all) : null;
 }
 
-/** Light, deterministic parse. Vendor from subject brand-match or sender domain. */
+/** Light, deterministic parse. Vendor from a brand match in the subject/body (so it
+ *  works on forwards), else the sender domain — never a forwarding gmail/family one. */
 export function parseReceipt({ from = "", subject = "", body = "" } = {}) {
-  const hay = `${subject} ${from}`;
-  const brand = (hay.match(GROCERY) || hay.match(PREPARED) || [])[0];
-  const vendor = (brand || vendorFromAddress(from) || subject.split(/[-|:]/)[0] || "vendor").toString().trim().slice(0, 40);
-  const kind = GROCERY.test(hay) ? "grocery" : PREPARED.test(hay) ? "prepared" : "other";
-  return { vendor, total: parseTotal(`${subject}\n${body}`), kind };
+  const hay = `${subject}\n${body}\n${from}`; // include From: an auto-forward's sender IS the vendor
+  let vendor = null, kind = "other";
+  for (const [re, name, k] of BRANDS) {
+    const m = hay.match(re);
+    if (m) { vendor = name || m[0]; kind = k; break; }
+  }
+  if (!vendor) {
+    const dom = vendorFromAddress(from);
+    vendor = dom && !/^(gmail|outlook|yahoo|hotmail|icloud|me|freyfam|proton)$/i.test(dom)
+      ? dom
+      : (subject.replace(/^\s*fwd?:\s*/i, "").split(/[-|:,]/)[0] || "vendor").trim();
+  }
+  return { vendor: String(vendor).trim().slice(0, 40), total: parseTotal(hay), kind };
 }
 
 const sig = (r) => `${String(r.from || "").toLowerCase()}|${String(r.subject || "").toLowerCase().trim()}|${r.date}`;
