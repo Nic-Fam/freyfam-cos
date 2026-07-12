@@ -39,6 +39,12 @@ const BROWSER = {
 let _browser = null;   // ephemeral Browser (no profile configured)
 let _context = null;   // persistent BrowserContext (real Chrome profile)
 let _chromium = null;
+// Per-task headless override (null = use BROWSER.headless). Some sites (OpenTable,
+// Resy) bot-block the HEADLESS automation browser at the network layer
+// (ERR_HTTP2_PROTOCOL_ERROR) but load fine HEADED with the signed-in profile, so
+// reservations/authenticated-browsing run headed via withHeadedPage().
+let _headedOverride = null;
+const effectiveHeadless = () => (_headedOverride == null ? BROWSER.headless : _headedOverride);
 
 // macOS: opening a real Chrome profile otherwise blocks on the Keychain
 // "Chrome wants to use confidential information" prompt — with no GUI to answer
@@ -96,7 +102,7 @@ async function newPage() {
       await clearSingletonLocks(BROWSER.userDataDir);
       _context = await c.launchPersistentContext(BROWSER.userDataDir, {
         channel: BROWSER.channel || "chrome",
-        headless: BROWSER.headless,
+        headless: effectiveHeadless(),
         slowMo: BROWSER.slowMo,
         args: LAUNCH_ARGS,
         ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
@@ -106,7 +112,7 @@ async function newPage() {
     return _context.newPage();
   }
   if (!_browser || !_browser.isConnected()) {
-    _browser = await c.launch({ headless: BROWSER.headless, slowMo: BROWSER.slowMo, args: LAUNCH_ARGS, ignoreDefaultArgs: IGNORE_DEFAULT_ARGS, timeout: LAUNCH_TIMEOUT_MS, ...(BROWSER.channel ? { channel: BROWSER.channel } : {}) });
+    _browser = await c.launch({ headless: effectiveHeadless(), slowMo: BROWSER.slowMo, args: LAUNCH_ARGS, ignoreDefaultArgs: IGNORE_DEFAULT_ARGS, timeout: LAUNCH_TIMEOUT_MS, ...(BROWSER.channel ? { channel: BROWSER.channel } : {}) });
   }
   return _browser.newPage();
 }
@@ -143,6 +149,26 @@ export async function closeBrowser() {
   }
   _context = null;
   _browser = null;
+}
+
+/**
+ * Run `fn(page)` with the browser forced HEADED on the signed-in profile — for
+ * sites that bot-block the HEADLESS automation browser (OpenTable, Resy fail at
+ * the network layer headless but load fine headed). Closes any existing headless
+ * context first so the profile relaunches headed, then closes again after so the
+ * next normal (headless) task is unaffected. Needs an active GUI session on the
+ * host (Lloyd's mini runs under launchd gui/501, so headed Chrome renders even
+ * lid-closed on power). Reservations + authenticated browsing use this.
+ */
+export async function withHeadedPage(fn) {
+  await closeBrowser();     // drop any headless context on this profile
+  _headedOverride = false;  // force headed for the relaunch
+  try {
+    return await withPage(fn);
+  } finally {
+    _headedOverride = null;
+    await closeBrowser();   // leave the profile free for the next headless task
+  }
 }
 
 function hostOf(url) {
