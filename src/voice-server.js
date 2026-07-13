@@ -15,6 +15,7 @@ import { VOICE } from "./config.js";
 import { handleInbound } from "./orchestrator.js";
 import { transcribeAudio } from "./audio.js";
 import { synthesizeSpeech } from "./tts.js";
+import { addTodoTask } from "./channels/graph.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("voice-server");
@@ -242,6 +243,33 @@ async function handleVoice(req, res, url) {
   res.end(JSON.stringify({ ts, transcript, reply, audio: audio ? audio.bytes.toString("base64") : null, audioType: audio?.contentType || null }));
 }
 
+// Token-gated POST /list-add: a hands-free path into the same M365 shopping lists
+// the grocery order flow reads (gatherGroceryItems). Siri's "restock {item}"
+// Shortcut posts {store, item} here; Lloyd's add_todo_item tool is the same write.
+// This ONLY appends to a named list (no browser, no purchase, nothing irreversible),
+// so it does not need the confirmation gate. Store defaults to Ralphs and is
+// clamped to the known lists so a typo can't spawn a stray list.
+const LIST_STORES = new Set(["ralphs", "costco", "amazon shopping list"]);
+async function handleListAdd(req, res, url) {
+  const json = (code, obj) => { try { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); } catch {} };
+  if (!authed(req, url)) return json(401, { error: "unauthorized" });
+  let body;
+  try { body = JSON.parse((await readBody(req, 64 * 1024)).toString("utf8") || "{}"); }
+  catch { return json(400, { error: "bad json" }); }
+  const item = String(body.item ?? "").trim();
+  let store = String(body.store ?? "Ralphs").trim();
+  if (!item) return json(400, { error: "item is required" });
+  if (!LIST_STORES.has(store.toLowerCase())) store = "Ralphs";
+  try {
+    const t = await addTodoTask(store, item);
+    log.info("voice list-add", { store, item });
+    return json(200, { ok: true, store, item: t.title });
+  } catch (e) {
+    log.error("voice list-add failed", { reason: String(e?.message || e) });
+    return json(500, { error: "could not add the item" });
+  }
+}
+
 let _server = null;
 export function startVoiceServer() {
   if (!VOICE.enabled) { log.info("voice server disabled (set COS_VOICE_SERVER=true)"); return null; }
@@ -251,6 +279,10 @@ export function startVoiceServer() {
     try { url = new URL(req.url, "http://localhost"); } catch { res.writeHead(400).end(); return; }
     if (req.method === "POST" && url.pathname === "/voice") {
       handleVoice(req, res, url).catch((e) => { log.error("voice handler error", { reason: String(e?.message || e) }); try { res.writeHead(500).end(); } catch {} });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/list-add") {
+      handleListAdd(req, res, url).catch((e) => { log.error("list-add handler error", { reason: String(e?.message || e) }); try { res.writeHead(500).end(); } catch {} });
       return;
     }
     if (req.method === "GET" && url.pathname === "/filler") {
