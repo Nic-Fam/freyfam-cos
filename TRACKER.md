@@ -58,7 +58,8 @@ reverted by a parallel session's git reset — push after editing so it survives
 | 012 | Read image/scanned PDFs via sips → vision | `[x]` done | `1e25df7` / re-applied `524a2e1` (reverted twice). |
 | 013 | Proactive budget cap alerts | `[x]` done | `9353154`. |
 | 014 | Calendar recurrence support | `[x]` done | `72c90db`. |
-| 015 | Fox daycare switch → Woodbury (M–F 8–6) | `[~]` staged | Recurring 5:45p pickup + i9 soccer staged in the gate, awaiting Nic's YES. |
+| 015 | Fox daycare switch → Woodbury (M–F 8–6) | `[~]` staged | Recurring 5:45p pickup + i9 soccer staged in the gate, awaiting Nic's YES. Commute (house rule #6 + digest) now routes home→Woodbury (Altadena, 712 Mountain View St)→work, chained. |
+| 016 | Downsizing sale (one-off move, ~2wk) | `[~]` core done | `src/downsizing.js` store + lifecycle (draft→listed→sold→pulled, mark-sold auto-pulls others, verified 17/17). `src/listings.js` auto-fills CL/FB/Nextdoor on the signed-in profile, stops before publish, returns a resume link ("auto-fill, you confirm"). Tools: add_listing_item (saves turn photos), list_downsizing, update_listing_item, post_listing, mark_item_sold; gated `listing_pull`. Digest shows sale status. **Setup:** sign the 3 sites into the Chrome-cos profile (`deploy/setup/downsizing-listings.md`); tune FILLERS selectors on first live post. |
 
 Deeper build/infra open items are in the per-workstream sections below (Frank/Steve
 mini provisioning, per-specialist memory seeding, voice/media workstream I, COO S).

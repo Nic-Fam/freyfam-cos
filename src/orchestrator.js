@@ -30,6 +30,8 @@ import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, readPageHeaded, runOrder } from "./channels/browser.js";
 import { resyAvailability, slotsNear, resyBook, minutesOfDay, openTableAvailability, openTableBook, venuePlatform } from "./reservations.js";
+import * as downsizing from "./downsizing.js";
+import { postListing, pullListing, PLATFORM_LABEL } from "./listings.js";
 import { fetchAmazonOrders, summarizeNeeds } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
 import { ingestChaseCsv, isChaseCsvAttachment } from "./chase-csv.js";
@@ -458,6 +460,74 @@ const tools = [
     input_schema: { type: "object", properties: { restaurant: { type: "string", description: "restaurant name or a resy.com venue URL" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "desired time e.g. '7:00 PM'" }, partySize: { type: "number", description: "default 2" } }, required: ["restaurant", "date", "time"] },
   },
   {
+    name: "add_listing_item",
+    description:
+      "DOWNSIZING PROGRAM (one-off move sale). Add an item the family wants to sell across Craigslist / Facebook Marketplace / Nextdoor. Any PHOTOS attached to the current message are saved with the item automatically. Write a clean marketplace `title` and `description` yourself (you can see the photo), suggest a `priceAsk` (use the `search` tool for comps if unsure), and set `category`/`condition` when clear. `platforms` defaults to all three. Returns the created item with its id. Use this when Nic sends a picture + says to sell/list something for the move.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "short marketplace title, e.g. 'West Elm Mid-Century Sofa, Walnut'" },
+        description: { type: "string", description: "buyer-facing description: what it is, condition, size, why selling" },
+        priceAsk: { type: "number", description: "asking price in dollars" },
+        category: { type: "string", description: "e.g. furniture, appliances, kids, electronics" },
+        condition: { type: "string", description: "e.g. like new, good, fair" },
+        dimensions: { type: "string", description: "size/dimensions if relevant (furniture)" },
+        notes: { type: "string", description: "private notes (pickup only, firm price, etc.)" },
+        platforms: { type: "array", items: { type: "string", enum: ["craigslist", "facebook", "nextdoor"] }, description: "which platforms to list on (default all three)" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "list_downsizing",
+    description: "Show the downsizing sale items and their status (draft / active / sold / pulled) and which platforms each is live on. Optional `status` filter. Use for 'what are we selling', 'what's still up', 'move sale status'.",
+    input_schema: { type: "object", properties: { status: { type: "string", enum: ["draft", "active", "sold", "pulled"], description: "optional status filter" } } },
+  },
+  {
+    name: "update_listing_item",
+    description:
+      "Edit a downsizing item, or record that a platform listing went live/changed. Match by `item` (id or title). Change any of title/description/priceAsk/category/condition/notes. To record that Nic posted it: set `platform` plus `platformStatus` ('listed' when live, 'pulled' when removed) and the live `platformUrl`. Use when Nic says 'the sofa is up on Facebook, here's the link' or 'drop the price to 200'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "item id or title" },
+        title: { type: "string" }, description: { type: "string" }, priceAsk: { type: "number" },
+        category: { type: "string" }, condition: { type: "string" }, notes: { type: "string" },
+        platform: { type: "string", enum: ["craigslist", "facebook", "nextdoor"] },
+        platformStatus: { type: "string", enum: ["draft", "listed", "pending", "pulled"] },
+        platformUrl: { type: "string", description: "the live listing URL on that platform" },
+      },
+      required: ["item"],
+    },
+  },
+  {
+    name: "post_listing",
+    description:
+      "Auto-fill an item's listing on one platform (craigslist/facebook/nextdoor) on the signed-in browser, STOP before publishing, and return a resume link so Nic finishes and taps Post himself (the chosen 'auto-fill, you confirm' flow). It never publishes on its own. Runs HEADED on Lloyd's Mac; the platform must be signed in there. If a field can't be filled it says which, so Nic can complete it. After Nic posts, call update_listing_item with the live URL to track it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "item id or title" },
+        platform: { type: "string", enum: ["craigslist", "facebook", "nextdoor"] },
+      },
+      required: ["item", "platform"],
+    },
+  },
+  {
+    name: "mark_item_sold",
+    description:
+      "Mark a downsizing item SOLD. Records the sale (optional `platform` it sold on and `price`), then AUTO-PULLS it from every OTHER platform it is still live on by staging a take-down through the confirmation gate (Nic approves with YES). Use when Nic says 'the dresser sold' or 'mark the bikes sold on Facebook for 150'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "item id or title" },
+        platform: { type: "string", enum: ["craigslist", "facebook", "nextdoor"], description: "platform it sold on (optional)" },
+        price: { type: "number", description: "final sale price (optional)" },
+      },
+      required: ["item"],
+    },
+  },
+  {
     name: "leave_by",
     description:
       "Work out when to LEAVE to arrive on time, using live traffic (Azure Maps) plus a buffer. Pass origin, destination, and arriveBy (ISO datetime in the family tz). Set setReminder true to also arm a reminder at the leave-by time. Use for 'when do I need to leave for X?' or to set a leave-by nudge for an appointment.",
@@ -601,6 +671,26 @@ async function resolveReservationVenue(restaurant) {
   }
   return null;
 }
+// Auto-pull a sold downsizing item off the platforms it is still live on. Gated
+// because it modifies/removes public content. Best-effort per platform: opens the
+// listing's manage page (stops before the irreversible confirm) and reports a link
+// for Nic to finish the removal; records each as pulled locally.
+registerActionHandler("listing_pull", async ({ id, title, platforms }) => {
+  const item = await downsizing.getItem(id || title);
+  if (!item) throw new Error(`no downsizing item matching "${id || title}"`);
+  const results = [];
+  for (const platform of platforms || []) {
+    try {
+      const r = await pullListing({ platform, item });
+      await downsizing.markPulled(item.id, platform);
+      results.push(`${PLATFORM_LABEL[platform]}: marked pulled${r.manageUrl ? ` (finish removal: ${r.manageUrl})` : ""}`);
+    } catch (e) {
+      results.push(`${PLATFORM_LABEL[platform]}: could not open (${e.message})`);
+    }
+  }
+  await logAction("listing_pull", `Pulled "${item.title}" from ${(platforms || []).join(", ")}`);
+  return `Pulled "${item.title}":\n${results.join("\n")}`;
+});
 registerActionHandler("calendar_delete", async ({ refs, subject, start }) => {
   const { deleted, errors } = await deleteEvent({ refs });
   await logAction("calendar", `Deleted event "${subject}"${start ? ` at ${start}` : ""} (${deleted.length} calendar${deleted.length === 1 ? "" : "s"})`);
@@ -972,6 +1062,70 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         return `${r.venue} (${site}): ${exact ? `${pick.time} is open` : `nearest to ${time} is ${pick.time}`}${type ? ` (${type})` : ""} for ${partySize} on ${date}. ${instruction}`;
       } catch (e) {
         return `Could not set up the reservation: ${e.message}`;
+      }
+    },
+    add_listing_item: async (input = {}) => {
+      try {
+        const item = await downsizing.addItem(input, { images: images || [] });
+        const enabled = downsizing.PLATFORMS.filter((p) => item.platforms[p].status !== "n/a");
+        return `Added [${item.id}] "${item.title}"${item.priceAsk != null ? ` at $${item.priceAsk}` : ""} with ${item.photos.length} photo(s), for ${enabled.map((p) => PLATFORM_LABEL[p]).join(", ")}. Say "post it" and tell me which platform to auto-fill, or I can start with Facebook Marketplace.`;
+      } catch (e) {
+        return `Could not add the item: ${e.message}`;
+      }
+    },
+    list_downsizing: async ({ status } = {}) => {
+      try {
+        const items = await downsizing.listItems(status ? { status } : {});
+        const c = await downsizing.summary();
+        return `${downsizing.formatItems(items)}\n\nTotals: ${c.active} active, ${c.draft} draft, ${c.sold} sold${c.soldValue ? ` ($${c.soldValue} taken in)` : ""}, ${c.pulled} pulled.`;
+      } catch (e) {
+        return `Could not read the downsizing list: ${e.message}`;
+      }
+    },
+    update_listing_item: async ({ item, platform, platformStatus, platformUrl, ...patch } = {}) => {
+      try {
+        let updated;
+        const fields = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+        if (Object.keys(fields).length) updated = await downsizing.updateItem(item, fields);
+        if (platform && (platformStatus || platformUrl !== undefined)) {
+          updated = await downsizing.setPlatformStatus(item, platform, { status: platformStatus, url: platformUrl });
+          if (platformStatus === "listed") await logAction("listing", `Recorded "${updated.title}" live on ${platform}${platformUrl ? ` (${platformUrl})` : ""}`);
+        }
+        if (!updated) updated = await downsizing.getItem(item);
+        return `Updated: ${downsizing.formatItem(updated)}`;
+      } catch (e) {
+        return `Could not update the item: ${e.message}`;
+      }
+    },
+    post_listing: async ({ item, platform } = {}) => {
+      try {
+        const it = await downsizing.getItem(item);
+        if (!it) return `No downsizing item matching "${item}".`;
+        const r = await postListing({ platform, item: it });
+        if (!r.filled) {
+          return `${PLATFORM_LABEL[platform]} needs a one-time sign-in on my browser profile before I can auto-fill (couldn't fill: ${r.unfilled.join(", ")}). Once signed in I'll fill it and send you the link to post.`;
+        }
+        await downsizing.setPlatformStatus(it.id, platform, { status: "draft" });
+        const gaps = r.unfilled.length ? ` A few fields need your touch: ${r.unfilled.join(", ")}.` : "";
+        return `Auto-filled "${it.title}" on ${PLATFORM_LABEL[platform]} (photos${it.photos.length ? " uploaded" : ": none yet"}). I stopped before posting so you can review and hit Post.${gaps}\nFinish + post here: ${r.resumeUrl}\nAfter it's live, send me the link and I'll track it.`;
+      } catch (e) {
+        return `Could not auto-fill that listing: ${e.message}`;
+      }
+    },
+    mark_item_sold: async ({ item, platform, price } = {}) => {
+      try {
+        const { item: it, toPull } = await downsizing.markSold(item, { platform, price });
+        await logAction("listing", `Marked "${it.title}" sold${platform ? ` on ${platform}` : ""}${price != null ? ` for $${price}` : ""}`);
+        if (!toPull.length) return `Marked "${it.title}" sold${price != null ? ` for $${price}` : ""}. It wasn't live anywhere else, so nothing to pull.`;
+        const { instruction } = await requestConfirmation(
+          `Pull "${it.title}" (sold) off ${toPull.map((p) => PLATFORM_LABEL[p]).join(" + ")}`,
+          "listing_pull",
+          { id: it.id, title: it.title, platforms: toPull },
+          { thread }
+        );
+        return `Marked "${it.title}" sold${price != null ? ` for $${price}` : ""}. It is still live on ${toPull.map((p) => PLATFORM_LABEL[p]).join(", ")} — pull it everywhere? ${instruction}`;
+      } catch (e) {
+        return `Could not mark it sold: ${e.message}`;
       }
     },
     amazon_orders: async ({ pages, maxOrders } = {}) => {

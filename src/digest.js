@@ -64,6 +64,10 @@ Gather what you need first:
   a one-line why, and offer to check a table (find_reservation) or book (make_reservation).
   Keep it to a few lines. Skip entirely if the evening is free, plans are at home, or
   nothing is near dinnertime -- don't force it.
+- Move sale: call list_downsizing. If it shows any ACTIVE or DRAFT items, add one
+  short line: how many are live, how many sold, and how many drafts still need to be
+  posted (nudge to post the drafts, since the move is close). If there are none, skip
+  this entirely.
 ${commuteLine}
 - Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
