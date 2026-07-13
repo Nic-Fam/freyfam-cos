@@ -53,6 +53,14 @@ Gather what you need first:
 - Fox's day at Woodbury Preschool: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
+- Dinner out: check today's schedule for an event in the DINNER window (~4:30-8:30 PM)
+  at a location AWAY from home (the family lives in the La Crescenta area; a tour,
+  appointment, or plans in another neighborhood around that time counts). If there is
+  one, proactively suggest 2-3 well-reviewed dinner spots near that location: use
+  \`search\` (e.g. "best dinner restaurants near <place>") to find them, name each with
+  a one-line why, and offer to check a table (find_reservation) or book (make_reservation).
+  Keep it to a few lines. Skip entirely if the evening is free, plans are at home, or
+  nothing is near dinnertime -- don't force it.
 ${commuteLine}
 - Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
