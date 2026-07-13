@@ -28,16 +28,34 @@ LIVE=/Users/lloyd/freyfam-cos
 echo "=== nightly restart $(date) ==="
 cd "$LIVE" || { echo "cd freyfam-cos failed"; exit 1; }
 PREV=$(git rev-parse --short HEAD)
-if git fetch --quiet origin main && git reset --hard --quiet origin/main; then
-  npm install --no-audit --no-fund --silent || echo "WARN: npm hiccup"
-  if ! node src/daemon.js --preflight; then
-    echo "WARN: daemon failed preflight on $(git rev-parse --short HEAD); rolling back to $PREV"
-    git reset --hard --quiet "$PREV"
-    npm install --no-audit --no-fund --silent || echo "WARN: npm hiccup (rollback)"
-    node src/daemon.js --preflight || echo "WARN: rollback commit ALSO fails preflight; kickstarting anyway"
+if git fetch --quiet origin main; then
+  # GUARD (2026-07-13): the reset below is HARD, so any commit in THIS checkout
+  # that was never pushed to origin/main would vanish silently -- which is exactly
+  # how a session's committed work got lost repeatedly. Before resetting, if there
+  # are unpushed local commits, save them on a backup branch and warn LOUD so they
+  # are recoverable. (Normal case: zero unpushed commits, this is a no-op.) We do
+  # NOT auto-push -- dev belongs elsewhere; a human decides what to do with them.
+  UNPUSHED=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  if [ "${UNPUSHED:-0}" -gt 0 ]; then
+    BK="backup/unpushed-${PREV}-$(date +%Y%m%d-%H%M%S)"
+    git branch -f "$BK" HEAD 2>/dev/null
+    echo "WARN: ${UNPUSHED} local commit(s) NOT on origin/main -- saved to branch ${BK} before reset:"
+    git log --oneline origin/main..HEAD 2>/dev/null | sed 's/^/    /'
+    echo "    recover: git -C ${LIVE} cherry-pick <sha>   (list: git -C ${LIVE} log ${BK})"
+  fi
+  if git reset --hard --quiet origin/main; then
+    npm install --no-audit --no-fund --silent || echo "WARN: npm hiccup"
+    if ! node src/daemon.js --preflight; then
+      echo "WARN: daemon failed preflight on $(git rev-parse --short HEAD); rolling back to $PREV"
+      git reset --hard --quiet "$PREV"
+      npm install --no-audit --no-fund --silent || echo "WARN: npm hiccup (rollback)"
+      node src/daemon.js --preflight || echo "WARN: rollback commit ALSO fails preflight; kickstarting anyway"
+    fi
+  else
+    echo "WARN: git reset failed; restarting current code"
   fi
 else
-  echo "WARN: git refresh failed; restarting current code"
+  echo "WARN: git fetch failed; restarting current code"
 fi
 UID_N=$(id -u)
 DOMAIN="gui/$UID_N/com.freyfam.cos"
