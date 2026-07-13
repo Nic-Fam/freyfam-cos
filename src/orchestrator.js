@@ -29,7 +29,7 @@ import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
-import { resyAvailability, slotsNear, resyBook, minutesOfDay } from "./reservations.js";
+import { resyAvailability, slotsNear, resyBook, minutesOfDay, openTableAvailability, openTableBook, venuePlatform } from "./reservations.js";
 import { fetchAmazonOrders, summarizeNeeds } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
 import { ingestChaseCsv, isChaseCsvAttachment } from "./chase-csv.js";
@@ -572,13 +572,29 @@ registerActionHandler("calendar", async (input) => {
   await logAction("calendar", `Created event "${r.subject}"${input.start ? ` at ${input.start}` : ""}`);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
 });
-registerActionHandler("reservation", async ({ url, restaurant, date, partySize, time, type }) => {
-  const r = await resyBook({ url, date, partySize, time, type });
-  await logAction("reservation", `${r.booked ? "Booked" : "Attempted"} ${restaurant || r.venue} ${date} ${time}${type ? ` (${type})` : ""} for ${partySize}`);
+registerActionHandler("reservation", async ({ platform, url, restaurant, date, partySize, time, type }) => {
+  const book = platform === "opentable" ? openTableBook : resyBook;
+  const r = await book({ url, date, partySize, time, type });
+  await logAction("reservation", `${r.booked ? "Booked" : "Attempted"} ${restaurant || r.venue} ${date} ${time}${type ? ` (${type})` : ""} for ${partySize} (${platform})`);
   return r.booked
     ? `Booked: ${restaurant || r.venue}, ${date} at ${time}${type ? ` (${type})` : ""}, party of ${partySize}. ${r.note || ""}`.trim()
     : `Couldn't book that: ${r.note}`;
 });
+
+// Resolve a restaurant (name or a resy/opentable URL) to { url, platform }. A name
+// goes through web search; the first hit that is a real VENUE page (not a category
+// list) wins. Returns null if nothing bookable is found.
+async function resolveReservationVenue(restaurant) {
+  const s = String(restaurant || "").trim();
+  const direct = venuePlatform(s);
+  if (direct) return { url: s, platform: direct };
+  const hits = await webSearch(`${s} reservation resy OR opentable`, { count: 10 }).catch(() => []);
+  for (const h of Array.isArray(hits) ? hits : []) {
+    const p = venuePlatform(h?.url || "");
+    if (p) return { url: h.url, platform: p };
+  }
+  return null;
+}
 registerActionHandler("calendar_delete", async ({ refs, subject, start }) => {
   const { deleted, errors } = await deleteEvent({ refs });
   await logAction("calendar", `Deleted event "${subject}"${start ? ` at ${start}` : ""} (${deleted.length} calendar${deleted.length === 1 ? "" : "s"})`);
@@ -905,33 +921,27 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     },
     find_reservation: async ({ restaurant, date, time, partySize = 2 } = {}) => {
       try {
-        let url = /^https?:\/\/(www\.)?resy\.com\//i.test(String(restaurant || "")) ? restaurant : null;
-        if (!url) {
-          const hits = await webSearch(`${restaurant} resy reservation`, { count: 8 }).catch(() => []);
-          const hit = (Array.isArray(hits) ? hits : []).find((h) => /resy\.com\/cities\/[^/]+\/venues\//i.test(h?.url || ""));
-          if (!hit) return `I couldn't find "${restaurant}" on Resy. Send me the resy.com venue URL and I'll check availability.`;
-          url = hit.url;
-        }
-        const r = await resyAvailability({ url, date, partySize });
-        if (r.loginWall) return `Resy isn't signed in on my browser profile yet, so I can't read ${r.venue || "that venue"}'s availability. (One-time login needed.)`;
+        const v = await resolveReservationVenue(restaurant);
+        if (!v) return `I couldn't find "${restaurant}" on Resy or OpenTable. Send me the resy.com or opentable.com venue URL and I'll check it.`;
+        const avail = v.platform === "opentable" ? openTableAvailability : resyAvailability;
+        const r = await avail({ url: v.url, date, partySize, time });
+        const site = v.platform === "opentable" ? "OpenTable" : "Resy";
+        if (r.loginWall) return `${site} isn't signed in on my browser profile yet — a one-time login is needed before I can read availability.`;
         const slots = slotsNear(r.slots, time || null);
-        if (!slots.length) return JSON.stringify({ venue: r.venue, date, partySize, url: r.url, slots: [], note: "No availability for that date and party size." });
-        return JSON.stringify({ venue: r.venue, date, partySize, url: r.url, slots: slots.slice(0, 12).map((s) => ({ time: s.time, types: s.types })) });
+        if (!slots.length) return JSON.stringify({ venue: r.venue, platform: v.platform, date, partySize, url: r.url, slots: [], note: "No availability for that date and party size." });
+        return JSON.stringify({ venue: r.venue, platform: v.platform, date, partySize, url: r.url, slots: slots.slice(0, 12).map((s) => ({ time: s.time, types: s.types })) });
       } catch (e) {
         return `Could not check reservations: ${e.message}`;
       }
     },
     make_reservation: async ({ restaurant, date, time, partySize = 2 } = {}) => {
       try {
-        let url = /^https?:\/\/(www\.)?resy\.com\//i.test(String(restaurant || "")) ? restaurant : null;
-        if (!url) {
-          const hits = await webSearch(`${restaurant} resy reservation`, { count: 8 }).catch(() => []);
-          const hit = (Array.isArray(hits) ? hits : []).find((h) => /resy\.com\/cities\/[^/]+\/venues\//i.test(h?.url || ""));
-          if (!hit) return `I couldn't find "${restaurant}" on Resy. Send me the resy.com venue URL and I'll set it up.`;
-          url = hit.url;
-        }
-        const r = await resyAvailability({ url, date, partySize });
-        if (r.loginWall) return `Resy isn't signed in on my browser profile yet — a one-time login is needed before I can book.`;
+        const v = await resolveReservationVenue(restaurant);
+        if (!v) return `I couldn't find "${restaurant}" on Resy or OpenTable. Send me the venue URL and I'll set it up.`;
+        const site = v.platform === "opentable" ? "OpenTable" : "Resy";
+        const avail = v.platform === "opentable" ? openTableAvailability : resyAvailability;
+        const r = await avail({ url: v.url, date, partySize, time });
+        if (r.loginWall) return `${site} isn't signed in on my browser profile yet — a one-time login is needed before I can book.`;
         const near = slotsNear(r.slots, time);
         if (!near.length) {
           const open = slotsNear(r.slots, null).slice(0, 6).map((s) => s.time).join(", ");
@@ -940,13 +950,13 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         const pick = near[0];
         const type = pick.types?.[0] || null;
         const { instruction } = await requestConfirmation(
-          `Book ${r.venue}: ${date} at ${pick.time}${type ? ` (${type})` : ""}, party of ${partySize}`,
+          `Book ${r.venue} (${site}): ${date} at ${pick.time}${type ? ` (${type})` : ""}, party of ${partySize}`,
           "reservation",
-          { url: r.url, restaurant: r.venue, date, partySize, time: pick.time, type },
+          { platform: v.platform, url: r.url, restaurant: r.venue, date, partySize, time: pick.time, type },
           { thread }
         );
         const exact = minutesOfDay(pick.time) === minutesOfDay(time);
-        return `${r.venue}: ${exact ? `${pick.time} is open` : `nearest to ${time} is ${pick.time}`}${type ? ` (${type})` : ""} for ${partySize} on ${date}. ${instruction}`;
+        return `${r.venue} (${site}): ${exact ? `${pick.time} is open` : `nearest to ${time} is ${pick.time}`}${type ? ` (${type})` : ""} for ${partySize} on ${date}. ${instruction}`;
       } catch (e) {
         return `Could not set up the reservation: ${e.message}`;
       }

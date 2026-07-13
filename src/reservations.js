@@ -146,3 +146,96 @@ export function slotsNear(slots, desired, { window = 90 } = {}) {
   }
   return arr;
 }
+
+// "7:00 PM" -> "19:00" for OpenTable's dateTime query param.
+function to24h(label) {
+  const min = minutesOfDay(label);
+  if (min == null) return "19:00";
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Which platform a VENUE url is (resy | opentable | null). Also filters search hits
+ * to real venue pages: Resy = /cities/x/venues/y; OpenTable = /r/{slug} or a vanity
+ * /{slug} that isn't a known category/listing path (neighborhood, features, etc.).
+ */
+export function venuePlatform(u) {
+  const s = String(u || "");
+  if (/resy\.com\/cities\/[^/]+\/venues\//i.test(s)) return "resy";
+  const m = s.match(/opentable\.com\/(r\/)?([a-z0-9][a-z0-9-]*)(?:[/?#]|$)/i);
+  if (m) {
+    if (m[1]) return "opentable"; // /r/{slug} is always a venue
+    const deny = new Set(["neighborhood", "features", "cuisine", "food-near-me", "nearby", "landmark", "private-dining", "diners-choice", "booking", "restaurant", "restaurants", "ca", "tx", "ny", "us", "m", "blog", "promo", "start", "experiences", "gift-cards", "cmp"]);
+    if (!deny.has(m[2].toLowerCase())) return "opentable";
+  }
+  return null;
+}
+
+/** OpenTable venue URL with party (covers) + date/time (dateTime) applied. */
+export function openTableUrl({ url, slug, date, partySize = 2, time }) {
+  const u = url ? new URL(url) : new URL(`https://www.opentable.com/${slug}`);
+  if (partySize) u.searchParams.set("covers", String(partySize));
+  if (date) u.searchParams.set("dateTime", `${date}T${to24h(time)}`);
+  return u.toString();
+}
+
+/** Read OpenTable availability. Slots live in <ul data-test="time-slots"> as
+ *  <li data-test="time-slot-N"> with a booking <a>. READ-ONLY. */
+export async function openTableAvailability({ url, slug, date, partySize = 2, time, timeoutMs = 45000 } = {}) {
+  const venueUrl = openTableUrl({ url, slug, date, partySize, time });
+  return withHeadedPage(async (page) => {
+    await page.goto(venueUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    await page.waitForSelector('[data-test="time-slots"] [data-test^="time-slot-"], [data-test="time-slots"]', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    const data = await page.evaluate(() => {
+      const body = document.body?.innerText || "";
+      const venue = (document.querySelector("h1")?.innerText || "").trim();
+      const loginWall = /\b(sign in|log in|create account)\b/i.test(body) && !/\b(sign out|my profile|account)\b/i.test(body);
+      const slots = []; const seen = new Set();
+      for (const li of document.querySelectorAll('[data-test="time-slots"] [data-test^="time-slot-"]')) {
+        const t = ((li.querySelector("a")?.innerText || li.innerText || "").match(/\d{1,2}:\d{2}\s?(AM|PM)/i) || [])[0];
+        if (t && !seen.has(t)) { seen.add(t); slots.push({ time: t, type: null }); }
+      }
+      return { venue, loginWall, slots };
+    });
+    if (data.loginWall) log.warn("opentable availability hit a login wall", { venueUrl });
+    return { url: venueUrl, date, partySize, venue: data.venue, loginWall: data.loginWall, slots: data.slots };
+  });
+}
+
+/** Book an OpenTable slot. HIGH-STAKES (gated upstream). Clicks the slot, lands on
+ *  /booking/details, and clicks "Complete reservation". NEVER enters card details:
+ *  aborts if creditCardRequired=true. `dryRun` stops before the final click. */
+export async function openTableBook({ url, slug, date, partySize = 2, time, dryRun = false, timeoutMs = 45000 } = {}) {
+  if (!time) throw new Error("time is required to book");
+  const venueUrl = openTableUrl({ url, slug, date, partySize, time });
+  const wantMin = minutesOfDay(time);
+  return withHeadedPage(async (page) => {
+    await page.goto(venueUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    await page.waitForSelector('[data-test="time-slots"] [data-test^="time-slot-"]', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    const venue = (await page.evaluate(() => (document.querySelector("h1")?.innerText || "").trim()).catch(() => "")) || null;
+    const clicked = await page.evaluate(({ wantMin }) => {
+      const mins = (t) => { const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i); if (!m) return null; let h = Number(m[1]) % 12; if (/pm/i.test(m[3] || "")) h += 12; return h * 60 + Number(m[2]); };
+      for (const li of document.querySelectorAll('[data-test="time-slots"] [data-test^="time-slot-"]')) {
+        const a = li.querySelector("a"); const t = (a?.innerText || "").trim();
+        if (a && mins(t) === wantMin) { a.scrollIntoView(); a.click(); return true; }
+      }
+      return false;
+    }, { wantMin });
+    if (!clicked) return { booked: false, venue, time, note: `No ${time} slot available to book.` };
+    await page.waitForURL(/\/booking\/details/, { timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    if (/creditCardRequired=true/i.test(page.url())) {
+      return { booked: false, venue, time, note: "This reservation requires a credit card — I don't enter card details. Please book it manually." };
+    }
+    const btn = await page.$('[data-test="complete-reservation-button"]');
+    if (!btn) return { booked: false, venue, time, note: "Couldn't find the Complete-reservation button on the booking page." };
+    if (dryRun) return { booked: false, ready: true, venue, time, note: "Slot open and booking page ready (dry run — did NOT book)." };
+    await btn.click();
+    await page.waitForTimeout(4500);
+    const confirm = await page.evaluate(() => ((document.body?.innerText || "").replace(/\s+/g, " ").match(/reservation confirmed|you'?re confirmed|confirmed for|see you|upcoming reservation/i) || [])[0] || null).catch(() => null);
+    log.info("opentable booking clicked", { venue, time });
+    return { booked: true, venue, time, note: confirm || "Complete reservation clicked; reservation submitted." };
+  });
+}
