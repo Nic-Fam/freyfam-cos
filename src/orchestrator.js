@@ -27,6 +27,7 @@ import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
+import { resyAvailability, slotsNear } from "./reservations.js";
 import { fetchAmazonOrders, summarizeNeeds } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
 import { ingestChaseCsv, isChaseCsvAttachment } from "./chase-csv.js";
@@ -430,6 +431,12 @@ const tools = [
     description:
       "Search the web (read-only) and get back ranked results as {title, url, snippet}. Use it to find an address, hours, a fact, or a listing; then read the best hit with browse_page. Acting on a result (email/buy) still routes through the confirmation gate.",
     input_schema: { type: "object", properties: { query: { type: "string" }, count: { type: "number" } }, required: ["query"] },
+  },
+  {
+    name: "find_reservation",
+    description:
+      "Check restaurant reservation availability on Resy (READ-ONLY; never books). Give `restaurant` (a name like \"Union Pasadena\", or a resy.com venue URL), a `date` (YYYY-MM-DD), `partySize`, and optionally a target `time` like \"7:00 PM\". Returns { venue, date, partySize, url, slots:[{time, types}] }, nearest the target time first when given. Runs the signed-in browser HEADED on Lloyd's Mac. Actually BOOKING a slot is a separate high-stakes step that goes through the confirmation gate — this tool only reports what's open.",
+    input_schema: { type: "object", properties: { restaurant: { type: "string", description: "restaurant name or a resy.com venue URL" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "desired time e.g. '7:00 PM' (optional)" }, partySize: { type: "number", description: "default 2" } }, required: ["restaurant", "date"] },
   },
   {
     name: "leave_by",
@@ -874,6 +881,24 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         return JSON.stringify(await readPage(url, { maxChars }));
       } catch (e) {
         return `Could not read page: ${e.message}`;
+      }
+    },
+    find_reservation: async ({ restaurant, date, time, partySize = 2 } = {}) => {
+      try {
+        let url = /^https?:\/\/(www\.)?resy\.com\//i.test(String(restaurant || "")) ? restaurant : null;
+        if (!url) {
+          const hits = await webSearch(`${restaurant} resy reservation`, { count: 8 }).catch(() => []);
+          const hit = (Array.isArray(hits) ? hits : []).find((h) => /resy\.com\/cities\/[^/]+\/venues\//i.test(h?.url || ""));
+          if (!hit) return `I couldn't find "${restaurant}" on Resy. Send me the resy.com venue URL and I'll check availability.`;
+          url = hit.url;
+        }
+        const r = await resyAvailability({ url, date, partySize });
+        if (r.loginWall) return `Resy isn't signed in on my browser profile yet, so I can't read ${r.venue || "that venue"}'s availability. (One-time login needed.)`;
+        const slots = slotsNear(r.slots, time || null);
+        if (!slots.length) return JSON.stringify({ venue: r.venue, date, partySize, url: r.url, slots: [], note: "No availability for that date and party size." });
+        return JSON.stringify({ venue: r.venue, date, partySize, url: r.url, slots: slots.slice(0, 12).map((s) => ({ time: s.time, types: s.types })) });
+      } catch (e) {
+        return `Could not check reservations: ${e.message}`;
       }
     },
     amazon_orders: async ({ pages, maxOrders } = {}) => {
