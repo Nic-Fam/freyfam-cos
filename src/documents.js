@@ -1,6 +1,14 @@
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import { createLogger } from "./log.js";
 import { assertPublicUrl } from "./net-guard.js";
+
+const execFileP = promisify(execFile);
 
 // ===========================================================================
 // Inbound document intake (workstream L). Email attachments -> text the agent
@@ -20,6 +28,9 @@ const log = createLogger("documents");
 
 const MAX_DOCS = Number(process.env.DOC_MAX_DOCS || 5);
 const MAX_CHARS = Number(process.env.DOC_MAX_CHARS || 8000); // per doc; keeps token cost bounded
+// Below this many extracted chars, treat a PDF as image-only (scanned / no text
+// layer) and rasterize it for the vision path instead of handing over blank text.
+const MIN_PDF_TEXT = Number(process.env.DOC_MIN_PDF_TEXT || 20);
 
 const norm = (ct) => String(ct || "").toLowerCase().split(";")[0].trim();
 
@@ -123,6 +134,26 @@ export async function parsePdf(bytes, { importer } = {}) {
   return { kind: "pdf", text: out.text || "", summary: `PDF${out.numpages ? `, ${out.numpages}pp` : ""}` };
 }
 
+// Rasterize a PDF's first page to a PNG via macOS `sips` (zero-dependency; Lloyd
+// runs on a Mac). Fallback for image/scanned PDFs that have no extractable text
+// layer, so the vision path can still read them. Returns a PNG Buffer, or null if
+// sips is unavailable or fails (caller then skips, non-fatal).
+export async function rasterizePdf(bytes) {
+  const base = join(tmpdir(), `cos-pdf-${randomUUID()}`);
+  const pdfPath = `${base}.pdf`, pngPath = `${base}.png`;
+  try {
+    await writeFile(pdfPath, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+    await execFileP("sips", ["-s", "format", "png", "--resampleHeightWidthMax", "2200", pdfPath, "--out", pngPath], { timeout: 20000 });
+    return await readFile(pngPath);
+  } catch (err) {
+    log.warn("pdf rasterize failed", { reason: err.message });
+    return null;
+  } finally {
+    await unlink(pdfPath).catch(() => {});
+    await unlink(pngPath).catch(() => {});
+  }
+}
+
 /**
  * Turn email attachments into text content blocks for the agent loop.
  * @param {{name?:string, contentType?:string, bytes:Buffer|Uint8Array}[]} attachments
@@ -138,13 +169,32 @@ export async function extractDocuments(attachments = [], { pdfImporter } = {}) {
     const ct = norm(att?.contentType);
     const name = att?.name || "attachment";
     try {
+      if (ct === "application/pdf") {
+        const parsed = await parsePdf(att.bytes, { importer: pdfImporter });
+        const text = parsed ? String(parsed.text || "").trim() : "";
+        if (text.length >= MIN_PDF_TEXT) {
+          blocks.push({ type: "text", text: `[Attachment: ${name}]\n${cap(text)}` });
+          summaries.push(`${name}: ${parsed.summary}`);
+        } else {
+          // No usable text layer (scanned/image PDF). Render to an image so the
+          // vision path can read it instead of handing over a blank text block.
+          const png = await rasterizePdf(att.bytes);
+          if (png) {
+            blocks.push({ type: "text", text: `[Attachment: ${name} — image PDF with no text layer; rendered page follows]` });
+            blocks.push({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
+            summaries.push(`${name}: image PDF (rendered for vision)`);
+          } else {
+            skipped.push({ name, contentType: ct, reason: parsed ? "image PDF, no text layer; rasterize unavailable" : "pdf parser unavailable" });
+          }
+        }
+        continue;
+      }
       let parsed = null;
-      if (ct === "application/pdf") parsed = await parsePdf(att.bytes, { importer: pdfImporter });
-      else if (ct === "text/calendar") parsed = parseIcs(Buffer.from(att.bytes).toString("utf8"));
+      if (ct === "text/calendar") parsed = parseIcs(Buffer.from(att.bytes).toString("utf8"));
       else if (ct === "text/vcard" || ct === "text/x-vcard") parsed = parseVcard(Buffer.from(att.bytes).toString("utf8"));
 
       if (!parsed) {
-        skipped.push({ name, contentType: ct, reason: ct === "application/pdf" ? "pdf parser not installed" : "unsupported type" });
+        skipped.push({ name, contentType: ct, reason: "unsupported type" });
         continue;
       }
       blocks.push({ type: "text", text: `[Attachment: ${name}]\n${cap(parsed.text)}` });
