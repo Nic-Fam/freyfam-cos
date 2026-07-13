@@ -515,6 +515,20 @@ const tools = [
     },
   },
   {
+    name: "price_item",
+    description:
+      "Have Shey (resale specialist) recommend a price for something you're selling. Give an `item` (id or title from the downsizing list) OR describe it with `title` plus optional `description`/`condition`/`category`. Shey pulls comparable sold + active listings (eBay, marketplaces) and returns a suggested ASKING price, a low/target/high range tuned for a QUICK local sale (the family is moving soon), and a short rationale. Set `apply:true` to also save the suggested price onto that downsizing item. Use for 'what should I ask for the sofa?', 'price this', or pricing help during the move sale.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "downsizing item id or title (optional if you describe it)" },
+        title: { type: "string", description: "what it is, if not already an item" },
+        description: { type: "string" }, condition: { type: "string" }, category: { type: "string" },
+        apply: { type: "boolean", description: "save the suggested price onto the item (default false)" },
+      },
+    },
+  },
+  {
     name: "mark_item_sold",
     description:
       "Mark a downsizing item SOLD. Records the sale (optional `platform` it sold on and `price`), then AUTO-PULLS it from every OTHER platform it is still live on by staging a take-down through the confirmation gate (Nic approves with YES). Use when Nic says 'the dresser sold' or 'mark the bikes sold on Facebook for 150'.",
@@ -1148,6 +1162,42 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         return `Auto-filled "${it.title}" on ${PLATFORM_LABEL[platform]} (photos${it.photos.length ? " uploaded" : ": none yet"}). I stopped before posting so you can review and hit Post.${gaps}\nFinish + post here: ${r.resumeUrl}\nAfter it's live, send me the link and I'll track it.`;
       } catch (e) {
         return `Could not auto-fill that listing: ${e.message}`;
+      }
+    },
+    price_item: async ({ item, title, description, condition, category, apply } = {}) => {
+      try {
+        const it = item ? await downsizing.getItem(item) : null;
+        const name = title || it?.title;
+        if (!name) return "Tell me what to price: an item id/title from the list, or a short description.";
+        const desc = description || it?.description || "";
+        const cond = condition || it?.condition || "";
+        const cat = category || it?.category || "";
+        // Comps: general marketplace listings + eBay sold prices (Shey's usual signals).
+        const [live, sold] = await Promise.all([
+          webSearch(`${name} ${cat} used for sale price`, { count: 6 }).catch(() => []),
+          webSearch(`${name} sold price ebay`, { count: 6 }).catch(() => []),
+        ]);
+        const comps = [...(live || []), ...(sold || [])].slice(0, 10)
+          .map((h) => `- ${h.title}: ${h.snippet || ""} (${h.url})`).join("\n") || "(no comps found)";
+        const task =
+          `Price a used item for a QUICK local sale — the family is moving in ~2 weeks, so lean toward moving it fast, not top dollar. ` +
+          `Item: "${name}"${cond ? `, condition ${cond}` : ""}${cat ? `, category ${cat}` : ""}.${desc ? ` Details: ${desc}.` : ""}\n\n` +
+          `Comparable listings / sold prices:\n${comps}\n\n` +
+          `Reply in exactly three short lines: "Asking: $N", "Range: $low-$high", and one line of rationale (what the comps show + the quick-sale adjustment).`;
+        let rec = "";
+        try { rec = await delegate({ agent: "resale", task }); } catch { rec = ""; }
+        if (!rec || !rec.trim()) {
+          return `Shey couldn't be reached to price "${name}", but here are the comps I found so you can set a price:\n${comps}`;
+        }
+        let applied = "";
+        if (apply && it) {
+          const m = rec.match(/asking[^$]*\$\s?([\d,]+)/i) || rec.match(/\$\s?([\d,]+)/);
+          const price = m ? Number(m[1].replace(/,/g, "")) : NaN;
+          if (price > 0) { await downsizing.updateItem(it.id, { priceAsk: price }); applied = `\n\nSaved $${price} as the asking price on [${it.id}].`; }
+        }
+        return `Shey's pricing for "${name}":\n${rec.trim()}${applied}`;
+      } catch (e) {
+        return `Could not price that: ${e.message}`;
       }
     },
     mark_item_sold: async ({ item, platform, price } = {}) => {
