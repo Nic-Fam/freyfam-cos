@@ -27,7 +27,7 @@ import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, runOrder } from "./channels/browser.js";
-import { resyAvailability, slotsNear } from "./reservations.js";
+import { resyAvailability, slotsNear, resyBook, minutesOfDay } from "./reservations.js";
 import { fetchAmazonOrders, summarizeNeeds } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
 import { ingestChaseCsv, isChaseCsvAttachment } from "./chase-csv.js";
@@ -439,6 +439,12 @@ const tools = [
     input_schema: { type: "object", properties: { restaurant: { type: "string", description: "restaurant name or a resy.com venue URL" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "desired time e.g. '7:00 PM' (optional)" }, partySize: { type: "number", description: "default 2" } }, required: ["restaurant", "date"] },
   },
   {
+    name: "make_reservation",
+    description:
+      "BOOK a restaurant reservation on Resy. HIGH-STAKES — always goes through the confirmation gate; it never books without the owner's YES. Give `restaurant` (name or resy.com URL), `date` (YYYY-MM-DD), `time` (e.g. '7:00 PM'), and `partySize`. It verifies a slot is open near that time, then STAGES the booking for approval; on YES it completes it headed on Lloyd's Mac and reports the confirmation. It NEVER enters card details — if a deposit/card is required it says so. Use find_reservation first to just see what's open.",
+    input_schema: { type: "object", properties: { restaurant: { type: "string", description: "restaurant name or a resy.com venue URL" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "desired time e.g. '7:00 PM'" }, partySize: { type: "number", description: "default 2" } }, required: ["restaurant", "date", "time"] },
+  },
+  {
     name: "leave_by",
     description:
       "Work out when to LEAVE to arrive on time, using live traffic (Azure Maps) plus a buffer. Pass origin, destination, and arriveBy (ISO datetime in the family tz). Set setReminder true to also arm a reminder at the leave-by time. Use for 'when do I need to leave for X?' or to set a leave-by nudge for an appointment.",
@@ -558,6 +564,13 @@ registerActionHandler("calendar", async (input) => {
   const r = await createEvent(input);
   await logAction("calendar", `Created event "${r.subject}"${input.start ? ` at ${input.start}` : ""}`);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
+});
+registerActionHandler("reservation", async ({ url, restaurant, date, partySize, time, type }) => {
+  const r = await resyBook({ url, date, partySize, time, type });
+  await logAction("reservation", `${r.booked ? "Booked" : "Attempted"} ${restaurant || r.venue} ${date} ${time}${type ? ` (${type})` : ""} for ${partySize}`);
+  return r.booked
+    ? `Booked: ${restaurant || r.venue}, ${date} at ${time}${type ? ` (${type})` : ""}, party of ${partySize}. ${r.note || ""}`.trim()
+    : `Couldn't book that: ${r.note}`;
 });
 registerActionHandler("calendar_delete", async ({ refs, subject, start }) => {
   const { deleted, errors } = await deleteEvent({ refs });
@@ -899,6 +912,36 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         return JSON.stringify({ venue: r.venue, date, partySize, url: r.url, slots: slots.slice(0, 12).map((s) => ({ time: s.time, types: s.types })) });
       } catch (e) {
         return `Could not check reservations: ${e.message}`;
+      }
+    },
+    make_reservation: async ({ restaurant, date, time, partySize = 2 } = {}) => {
+      try {
+        let url = /^https?:\/\/(www\.)?resy\.com\//i.test(String(restaurant || "")) ? restaurant : null;
+        if (!url) {
+          const hits = await webSearch(`${restaurant} resy reservation`, { count: 8 }).catch(() => []);
+          const hit = (Array.isArray(hits) ? hits : []).find((h) => /resy\.com\/cities\/[^/]+\/venues\//i.test(h?.url || ""));
+          if (!hit) return `I couldn't find "${restaurant}" on Resy. Send me the resy.com venue URL and I'll set it up.`;
+          url = hit.url;
+        }
+        const r = await resyAvailability({ url, date, partySize });
+        if (r.loginWall) return `Resy isn't signed in on my browser profile yet — a one-time login is needed before I can book.`;
+        const near = slotsNear(r.slots, time);
+        if (!near.length) {
+          const open = slotsNear(r.slots, null).slice(0, 6).map((s) => s.time).join(", ");
+          return `No table at ${r.venue} near ${time} on ${date} for ${partySize}.${open ? ` Open times: ${open}.` : ""}`;
+        }
+        const pick = near[0];
+        const type = pick.types?.[0] || null;
+        const { instruction } = await requestConfirmation(
+          `Book ${r.venue}: ${date} at ${pick.time}${type ? ` (${type})` : ""}, party of ${partySize}`,
+          "reservation",
+          { url: r.url, restaurant: r.venue, date, partySize, time: pick.time, type },
+          { thread }
+        );
+        const exact = minutesOfDay(pick.time) === minutesOfDay(time);
+        return `${r.venue}: ${exact ? `${pick.time} is open` : `nearest to ${time} is ${pick.time}`}${type ? ` (${type})` : ""} for ${partySize} on ${date}. ${instruction}`;
+      } catch (e) {
+        return `Could not set up the reservation: ${e.message}`;
       }
     },
     amazon_orders: async ({ pages, maxOrders } = {}) => {
