@@ -390,7 +390,7 @@ const tools = [
   {
     name: "add_to_store_list",
     description:
-      "Add an item to a store's Microsoft To Do shopping list — the SAME lists the Alexa skills fill and the Friday Ralphs order reads. This is the reliable backup to Alexa: use it when the family says 'add milk to the Ralphs list', 'put paper towels on the Costco list', etc. store is 'Ralphs', 'Costco', or 'Amazon Shopping List'. Does not order anything.",
+      "Add an item to a store's Microsoft To Do shopping list — the SAME lists the Friday grocery order reads (and the Siri 'restock' shortcut fills). 'restock' is the family's standard phrase for this, so treat it as the trigger: use this tool when the family says 'restock milk on the Ralphs list', 'restock paper towels for Costco', 'add eggs to the Ralphs list', 'put butter on the Costco list', etc. store is 'Ralphs', 'Costco', or 'Amazon Shopping List' (default Ralphs if unspecified). Does not order anything.",
     input_schema: { type: "object", properties: { store: { type: "string", enum: ["Ralphs", "Costco", "Amazon Shopping List"] }, item: { type: "string" } }, required: ["store", "item"] },
   },
   {
