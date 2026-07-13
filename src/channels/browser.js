@@ -245,6 +245,23 @@ export async function readPage(url, { maxChars = 4000, timeoutMs = 30000, resolv
 }
 
 /**
+ * READ-ONLY like readPage, but HEADED on the signed-in profile — for authenticated
+ * pages or ones that bot-block the headless reader (portals, dashboards, an account
+ * or reservations page). Never clicks/fills/buys. Uses withHeadedPage so the profile
+ * relaunches headed and restores after. SSRF-guarded (a URL can arrive via injection).
+ */
+export async function readPageHeaded(url, { maxChars = 6000, timeoutMs = 40000, resolve } = {}) {
+  await assertPublicUrl(url, resolve ? { resolve } : {});
+  return withHeadedPage(async (page) => {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    await page.waitForTimeout(1500);
+    const title = await page.title();
+    const text = (await page.evaluate(() => document.body?.innerText || "")).trim();
+    return { url, finalUrl: page.url(), title, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+  });
+}
+
+/**
  * READ-ONLY: read a product LISTING feed (a grid/new-arrivals page) into structured
  * rows. Cards are identified by their product anchor (`anchorPrefix`); for each
  * unique anchor we climb to the smallest ancestor that still contains only that one

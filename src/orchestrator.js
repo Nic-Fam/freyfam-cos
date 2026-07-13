@@ -28,7 +28,7 @@ import { persona } from "./persona.js";
 import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
-import { readPage, runOrder } from "./channels/browser.js";
+import { readPage, readPageHeaded, runOrder } from "./channels/browser.js";
 import { resyAvailability, slotsNear, resyBook, minutesOfDay, openTableAvailability, openTableBook, venuePlatform } from "./reservations.js";
 import { fetchAmazonOrders, summarizeNeeds } from "./amazon-orders.js";
 import { budgetStatus, formatBudget } from "./budget.js";
@@ -238,6 +238,12 @@ const tools = [
       },
       required: ["to", "subject", "body"],
     },
+  },
+  {
+    name: "browse_and_report",
+    description:
+      "Open a page in Lloyd's SIGNED-IN browser (HEADED on the Mac) and report its visible text — for authenticated sites or ones that block the plain reader (account pages, portals, dashboards, reservation/booking pages). READ-ONLY: never clicks, fills, submits, or buys. Give the URL and optionally what you're checking; answer from the returned text. For a plain public page, prefer browse_page (faster, headless).",
+    input_schema: { type: "object", properties: { url: { type: "string" }, looking_for: { type: "string", description: "what to check/answer (optional)" } }, required: ["url"] },
   },
   {
     name: "browse_page",
@@ -911,6 +917,13 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
       const { blocks, summaries, skipped } = await fetchDocument(url);
       if (!blocks.length) return `Could not read document: ${skipped?.[0]?.reason || "unsupported type"}`;
       return JSON.stringify({ summary: summaries.join("; "), text: blocks.map((b) => b.text).join("\n\n") });
+    },
+    browse_and_report: async ({ url }) => {
+      try {
+        return JSON.stringify(await readPageHeaded(url));
+      } catch (e) {
+        return `Could not open that page: ${e.message}`;
+      }
     },
     browse_page: async ({ url, maxChars }) => {
       try {
