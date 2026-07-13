@@ -35,6 +35,34 @@ in the per-workstream sections and the topology section below.
 Run it anytime with `node _smoke.mjs` (no creds needed). `npm test` runs the full
 suite (~300 tests).
 
+## Improvement Backlog (re-merged from cos-tracker.md, 2026-07-13)
+
+Tweaks / fixes / features. Status verified against git on 2026-07-13 (the old
+`cos-tracker.md` Status column had drifted). NOTE: this section keeps getting
+reverted by a parallel session's git reset — push after editing so it survives.
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| 001 | Chef + Shey on dedicated LOCAL hardware | `[ ]` long-term | They run REMOTE on Azure now, not local nodes. |
+| 002 | Revive CVS pharmacy ordering/routing | `[ ]` not started | Port from the old Assistant. |
+| 003 | Lloyd authenticated browsing — reservations + checks | `[~]` reservations + browse DONE | Resy + OpenTable availability + GATED booking (`find_reservation` / `make_reservation`), name→venue via web search, HEADED on the signed-in profile, payment-required guard. `browse_and_report` (headed signed-in reader) done. Dinner-out suggestions live in the digest. Remaining: broader authenticated flows as they come up. |
+| 004 | Weekly-digest scheduling conflicts | `[x]` done | `8286921`. |
+| 005a | Bright Horizons → "daycare"/Woodbury in the digest | `[x]` done | `f54f9fc` + parallel session's Woodbury specialization. |
+| 005b | Load Woodbury curriculum + menu | `[ ]` parked on Nic | Send a sample schedule/menu. |
+| 006 | Frank ↔ Ring ecosystem | `[ ]` long-term / research | Ring has no solid API. |
+| 007 | iMessage channel (BlueBubbles) | `[ ]` not started | Outbound is Slack + email today. |
+| 008 | Grocery ordering & planning | `[ ]` not started | Ties to 003 (no cart API). |
+| 009 | Email drafts in Nic's first-person voice | `[x]` done | `a4b4d38`. |
+| 010 | In-app mute actually mutes the mic | `[x]` done | `21f6303`. |
+| 011 | Reduce calendar-approval friction | `[x]` done | `1c89997`. |
+| 012 | Read image/scanned PDFs via sips → vision | `[x]` done | `1e25df7` / re-applied `524a2e1` (reverted twice). |
+| 013 | Proactive budget cap alerts | `[x]` done | `9353154`. |
+| 014 | Calendar recurrence support | `[x]` done | `72c90db`. |
+| 015 | Fox daycare switch → Woodbury (M–F 8–6) | `[~]` staged | Recurring 5:45p pickup + i9 soccer staged in the gate, awaiting Nic's YES. |
+
+Deeper build/infra open items are in the per-workstream sections below (Frank/Steve
+mini provisioning, per-specialist memory seeding, voice/media workstream I, COO S).
+
 **Real-time email cutover + mini hardening (2026-06-29, later session):**
 - **Inbound email is now REAL-TIME via the Graph webhook front door** (supersedes the
   15-min daemon reconcile below). Re-enabled the **cloud trio** in `freyfam-assistant`
