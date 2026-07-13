@@ -8,7 +8,9 @@ import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
 import { watchItem, listWatched, unwatchItem } from "./watch.js";
 import { dismissBoutiqueListings } from "./boutique-feed.js";
-import { placeRalphsOrder } from "./grocery.js";
+import { placeRalphsOrder, gatherGroceryItems } from "./grocery.js";
+import { buildGroceryPlaybook } from "./grocery-order-playbook.js";
+import { buildCvsOtcPlaybook } from "./pharmacy-order-playbook.js";
 import { planRxSync, formatRxPlan } from "./rx.js";
 import { triageInbound } from "./triage.js";
 import { recall, remember } from "./memory.js";
@@ -314,6 +316,11 @@ const tools = [
     name: "list_receipts",
     description: "List vendor/food receipts the family auto-forwarded to the mailbox (captured automatically), newest first: date, vendor, total, and whether it's a grocery receipt. Read-only. Use it for spend (delegate the totals to finance/Patrick) and for pantry (grocery receipts -> food coming into the kitchen, for chef/Carmine). `sinceDays` defaults 14; `kind` filters to 'grocery' or 'prepared'.",
     input_schema: { type: "object", properties: { sinceDays: { type: "number" }, kind: { type: "string", enum: ["grocery", "prepared", "other"] } } },
+  },
+  {
+    name: "order_playbook",
+    description: "Get the Claude-in-Chrome operator playbook to place a store order, prefilled with the current shopping-list items. `store` = 'ralphs' | 'costco' | 'cvs' (OTC). READ-ONLY: it returns step-by-step instructions to run in the family's signed-in Chrome (fill cart, apply the Friday 4x-fuel coupon for Ralphs, drop out-of-stock, STOP at review). It does NOT open a browser or buy anything — a Claude Code session runs it, and the order is placed only after the family approves the reviewed cart (confirm.js).",
+    input_schema: { type: "object", properties: { store: { type: "string", enum: ["ralphs", "costco", "cvs"] } }, required: ["store"] },
   },
   {
     name: "complete_task",
@@ -1001,6 +1008,22 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     },
     list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
     list_receipts: async ({ sinceDays, kind } = {}) => formatReceipts(await listReceipts({ sinceDays, kind })),
+    order_playbook: async ({ store } = {}) => {
+      const s = String(store || "").toLowerCase();
+      if (s === "ralphs") {
+        const items = await gatherGroceryItems({ store: "Ralphs", local: await listShopping() });
+        return items.length ? `${items.length} items from the Ralphs list.\n\n${buildGroceryPlaybook({ store: "ralphs", phase: "fill", items, applyFuelCoupon: true })}` : "The Ralphs list is empty — nothing to order.";
+      }
+      if (s === "costco") {
+        const items = await gatherGroceryItems({ store: "Costco" });
+        return items.length ? `${items.length} items from the Costco list.\n\n${buildGroceryPlaybook({ store: "costco", phase: "fill", items })}` : "The Costco list is empty — nothing to order.";
+      }
+      if (s === "cvs") {
+        const items = await gatherGroceryItems({ store: "CVS" });
+        return items.length ? `${items.length} items from the CVS list.\n\n${buildCvsOtcPlaybook({ phase: "fill", items })}` : "The CVS list is empty — nothing to order.";
+      }
+      return "Unknown store — use ralphs, costco, or cvs.";
+    },
     complete_task: async ({ task }) => {
       const t = await completeTask(task);
       return t ? `Marked done: "${t.title}"` : "No single matching open task — that phrase matched none or more than one. Call list_tasks and complete by the {id}, or be more specific.";
