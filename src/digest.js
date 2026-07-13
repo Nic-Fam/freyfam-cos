@@ -32,11 +32,14 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz) {
   // destinations as the commute, so the two share one bullet.
   const commuteLine =
     `- Commute + weather: the house rules list home plus each person's destination
-  and that Shelli keeps her own schedule. For each route (home to Nic's work,
-  home to Shelli's work, home to Fox's Glendale drop-off) call commute_time for
-  the precise ETA and any traffic delay, and call get_weather for that
-  destination's weather today. Give a one-line per-person heads-up. Skip anyone
-  who is not heading out today (e.g. on a weekend, skip work commutes).`;
+  and that Shelli keeps her own schedule. Nic's morning drive is a CHAINED trip
+  through Fox's daycare: home to Woodbury Preschool (Altadena) to drop Fox off,
+  then Woodbury to Nic's work. Call commute_time for BOTH legs (home->Woodbury
+  and Woodbury->Nic's work) and give Nic's total morning drive, not a straight
+  home->work number. For Shelli, call commute_time home to her work. Call
+  get_weather at each destination (Woodbury/Altadena and each workplace) today.
+  Give a one-line per-person heads-up. Skip anyone not heading out today (e.g. on
+  a weekend, skip work commutes; on a daycare day include the Woodbury leg).`;
   return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
 
 Compose a brief MORNING DIGEST for the family.
