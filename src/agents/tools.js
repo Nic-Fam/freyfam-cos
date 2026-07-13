@@ -108,6 +108,7 @@ export const CHIEF_ONLY_TOOLS = new Set([
   "send_email", "send_sms", "send_imessage", "reply_email", "reply_to_message",
   "draft_email", // chief-only (writes into a family mailbox); ungated since it never sends
   "place_order", "run_grocery_order", "create_calendar_event",
+  "order_food", // spends money via the local browser; only the chief may order + gate it
 ]);
 
 // Memory tools, scoped to the calling agent so finance memories don't pollute

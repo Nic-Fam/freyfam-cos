@@ -28,7 +28,8 @@ per-agent tool allowlist K#4 is enforced). What remains is mostly **hardware** �
 stand up the Mac fleet, and stand up the **BlueBubbles iMessage server** (Twilio SMS
 was closed 2026-06-23; iMessage is the replacement text channel, code-ready and
 disabled pending that server). Plus a few **live verifies** (G browser, now partly
-captured) and **future features** (voice M, image-gen/printer, CVS Rx live). Details
+captured) and **future features** (voice M, image-gen/printer, CVS Rx live, food-delivery
+ordering T). Details
 in the per-workstream sections and the topology section below.
 
 `_smoke.mjs` covers guards + confirm parser + memory round-trip with zero network.
@@ -1325,6 +1326,90 @@ Schedule/project tracking (reuse `tasks.js`/`reminders.js`/calendar reads), comm
   and `agentLoop`/`complete` (usage tagging) — coordinate those edits. Builds directly on
   E (memory), F (specialist tools), J (cost watchdog), O (personas), and Q (Steve, now
   API-only — heavy lifting is a human-driven session, never an agent on the subscription).
+
+---
+
+### T. Food delivery ordering (DoorDash / Postmates)  `[~]`  — STARTED 2026-07-13: transport-agnostic core + chief tools + tests built (full suite 606/606, preflight ok); LIVE browser capture pending
+
+The "order me dinner" capability: Nic tells Lloyd in natural language and Lloyd finds a
+past order, rebuilds the cart, and places it for home delivery — THROUGH the confirmation
+gate. Target phrasings:
+- "Find our last Postmates order from <restaurant>." (read-only lookup)
+- "Order what we had last time from <restaurant>, delivered home." (reorder-last)
+- "Order me dinner." (open-ended → propose from recent/favorite orders, then reorder)
+
+**BUILT 2026-07-13** (`src/food-delivery.js` + tools + `test/food-delivery.test.js`, 13 tests):
+the pure/injectable core and both chief tools are done and green; what remains is the
+hands-on browser capture (order-history parse + checkout selectors + Uber 2FA). Code that
+landed: `PROVIDERS` registry (doordash/postmates + uber/ubereats aliases), `findFoodOrders`
+(read-only, fuzzy restaurant match, newest-first), `resolveReorder` (last / Nth), `formatFoodOrders`
+/ `formatReorder`, `placeFoodOrder` (loads `data/<provider>-steps.json`; reports for MANUAL
+placement until steps are captured — never a fake checkout), `readOrderHistory` (browser-backed,
+best-effort -> [] until selectors exist). Chief tools `find_food_order` (no gate) and `order_food`
+(gated) wired in `orchestrator.js`; `food_order` action executor added; `order_food` added to
+`CHIEF_ONLY_TOOLS`. The `data/<provider>-steps.json` files are gitignored and created LIVE during
+the capture session (same convention as `ralphs-steps.json`); `placeFoodOrder` handles their
+absence gracefully (manual-placement fallback), so nothing is committed for them yet.
+
+This is a browser-ordering flow, a sibling of the Ralphs grocery order (workstream G +
+`deploy/live-ordering-setup.md`): same signed-in-Chrome-profile pattern on Lloyd's local
+Mac (residential IP, never Azure), and the same "reorder from history" idea as the grocery
+`Buy It Again` matcher (`src/grocery-match.js`).
+
+Owns: new `src/food-delivery.js` (transport-agnostic core: find-order / rebuild-cart /
+place), per-provider step files `data/doordash-steps.json` + `data/postmates-steps.json`
+(site-specific selectors, captured live, commit to repo), reusing `src/channels/browser.js`
+(G) and `src/confirm.js`; additive tools in `orchestrator.js`.
+
+- [x] **Chief tools (the natural-language surface).** BUILT + tested.
+  - `find_food_order({ provider?, restaurant? })` — READ-ONLY: list / look up past orders
+    (restaurant, items, date, total). No gate (surfacing only). Backs "find our last order
+    from X."
+  - `order_food({ provider, restaurant, reorder: "last" | items[], address: "home" })` —
+    HIGH-STAKES: rebuild the cart from a past order, then `requestConfirmation` showing the
+    itemized cart + subtotal + fees + tip + ETA + delivery address, and place ONLY on YES.
+    Same gate pattern as `place_order`. Never auto-order (constraint 2).
+- [x] **Reorder-from-history core.** BUILT: `findFoodOrders` fuzzy-matches the restaurant
+  name (reuses `grocery-match.scoreMatch`) and sorts newest-first; `resolveReorder` picks the
+  most recent (or Nth) and returns its exact items. REMAINING (capture-time): out-of-stock /
+  substitution handling once the live cart parse exists — surface any substitution in the
+  approval prompt, never silently swap.
+- [~] **"Order me dinner" (no restaurant named).** The tools already support it —
+  `find_food_order`/`order_food` with no `restaurant` return all past orders newest-first — so
+  Lloyd can propose from them. REMAINING: the "propose + ask Nic to pick" is a persona/flow
+  nicety (optionally with Carmine's dietary context, below), not more tool code.
+- [~] **Providers.** Registry + aliases BUILT (doordash, postmates, uber/ubereats -> postmates).
+  DoorDash first (largest coverage). **Postmates is now Uber Eats'
+  backend** — decide the target: `postmates.com` (still live, shares the Uber account) vs
+  `ubereats.com`. Note Uber's SMS-OTP 2FA: may need a hands-on login step or a kept-warm
+  session, same risk class as TheRealReal First Look. Payment = each account's saved method;
+  the agent never enters card data (no money movement beyond the order Nic approved).
+- [x] **Delivery address = home** by default (mail policy: home for deliveries; the PO box
+  is mail-only); `order_food`'s `address` param defaults to `home`, override in the request.
+- [x] **Hard constraints (by construction).** DONE: `order_food` routes through `confirm.js`
+  (the `food_order` kind, same gate pattern as `place_order`) and is in `CHIEF_ONLY_TOOLS`, so
+  no specialist can spend; `find_food_order` is read-only (no gate). NOTE: the confirmation gate
+  is the protection — `runOrder` has no per-`goto` work-domain guard today (only SSRF
+  `assertPublicUrl` on read paths), and restaurant hosts are not work domains anyway. Carmine
+  (chef) may SURFACE dinner suggestions and flag dietary constraints (Fox is nuts-free at
+  daycare; no true family allergies), but the ORDER action + confirmation stay on Lloyd.
+- [ ] **Live capture session** (like Ralphs/TRR): sign Chrome in to DoorDash + Postmates/
+  Uber on the mini, point `BROWSER_USER_DATA_DIR` at that profile, capture the reorder +
+  checkout selectors into the `*-steps.json`, then do ONE gated end-to-end run with a real
+  (small) order before trusting it unattended.
+
+Staged: (1) `find_food_order` read-only history lookup (safe, no gate). (2) reorder-last +
+gate on DoorDash. (3) Postmates / Uber Eats. (4) open-ended "order me dinner." (5) optional
+Carmine dietary/inventory cross-check.
+
+Open questions: postmates.com vs ubereats.com target; Uber 2FA handling; default tip policy
+(confirm the tip in the gate); a restaurant that is closed or an item unavailable at order
+time; multiple saved addresses.
+
+- Parallel-safe: mostly new files (`food-delivery.js`, `data/*-steps.json`); the serial
+  touch-point is the chief tool list in `orchestrator.js`. Builds on G (browser + ordering
+  gate), the grocery close-the-loop (reorder-from-history), and `deploy/live-ordering-setup.md`
+  (capture runbook); relates to Nic's reservations / authenticated-browsing item (003).
 
 ---
 

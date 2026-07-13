@@ -29,6 +29,7 @@ import { delegate } from "./delegate.js";
 import { cooRoster, companyAgent } from "./companies.js";
 import { fulfillCooRequests } from "./coo-requests.js";
 import { readPage, readPageHeaded, runOrder } from "./channels/browser.js";
+import { findFoodOrders, resolveReorder, formatFoodOrders, formatReorder, placeFoodOrder } from "./food-delivery.js";
 import { resyAvailability, slotsNear, resyBook, minutesOfDay, openTableAvailability, openTableBook, venuePlatform } from "./reservations.js";
 import * as downsizing from "./downsizing.js";
 import { postListing, pullListing, PLATFORM_LABEL } from "./listings.js";
@@ -614,6 +615,33 @@ const tools = [
     },
   },
   {
+    name: "find_food_order",
+    description:
+      "READ-ONLY: look up past food-delivery orders (DoorDash / Postmates). Use for 'find our last order from <restaurant>'. Returns matching past orders (restaurant, items, date, total), newest first. Does not order anything and needs no approval.",
+    input_schema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "doordash or postmates (optional; omit to search all)" },
+        restaurant: { type: "string", description: "restaurant name to filter to (optional)" },
+      },
+    },
+  },
+  {
+    name: "order_food",
+    description:
+      "HIGH-STAKES: reorder a past food-delivery order for home delivery. Spends money, so it always requires owner approval first. Use for 'order what we had last time from <restaurant>' or 'order me dinner'. It reconstructs the most recent (or chosen) past order from that restaurant and places it only after approval.",
+    input_schema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "doordash or postmates (optional; omit to search all)" },
+        restaurant: { type: "string", description: "restaurant to reorder from" },
+        which: { type: "string", description: "'last' (default) for the most recent order, or a number N for the Nth most recent" },
+        address: { type: "string", description: "delivery address; defaults to home" },
+      },
+      required: ["restaurant"],
+    },
+  },
+  {
     name: "plan_rx_sync",
     description:
       "Plan a synced monthly CVS prescription delivery. Given each regular med's next ready date and its return-to-stock deadline, it picks ONE delivery date, says which early refills to hold until then, and flags any that can't wait (would be returned to stock first). PLANNING ONLY — it surfaces the plan; it does not contact CVS, change a fill, or order anything. Use when the family wants to consolidate refills onto one monthly delivery.",
@@ -708,6 +736,16 @@ registerActionHandler("order", async ({ url, steps }) => {
   const r = await runOrder({ url, steps }); // guard inside blocks read-only domains
   await logAction("order", `Ran order flow at ${r.finalUrl}`);
   return `Order flow ran. Final URL: ${r.finalUrl}\nSteps: ${r.transcript.join(", ")}`;
+});
+// Food delivery reorder (workstream T). Runs on Lloyd's local Mac (real IP, signed-in
+// Chrome profile) only after the family approves; placeFoodOrder handles the checkout
+// (live steps pending -> reports for manual placement until captured). Params are the
+// serialized past order (restaurant/items/total/url/provider/address), so it is
+// restart-safe like the other gated executors.
+registerActionHandler("food_order", async (order) => {
+  const r = await placeFoodOrder(order);
+  await logAction("order", `Food delivery: ${order?.restaurant || "?"} via ${order?.provider || "?"}`);
+  return r;
 });
 // The weekly Ralphs grocery order (assembled Friday from the shopping list). Runs
 // on Lloyd's local Mac (real IP) only after the family approves; placeRalphsOrder
@@ -1375,6 +1413,19 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         { thread }
       );
       return `Ready to place this order: ${summary}. ${instruction}`;
+    },
+    find_food_order: async ({ provider, restaurant } = {}) =>
+      formatFoodOrders(await findFoodOrders({ provider, restaurant })),
+    order_food: async ({ provider, restaurant, which = "last", address = "home" } = {}) => {
+      const { order, reason } = await resolveReorder({ provider, restaurant, which });
+      if (!order) return reason || "I couldn't find a past order to reorder.";
+      const { instruction } = await requestConfirmation(
+        `Order dinner:\n${formatReorder(order, { address })}`,
+        "food_order",
+        { ...order, address },
+        { thread }
+      );
+      return `Ready to place this order from ${order.restaurant}. ${instruction}`;
     },
   };
 }
