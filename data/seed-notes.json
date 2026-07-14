@@ -4,7 +4,7 @@
     { "text": "The family timezone is America/Los_Angeles.", "meta": {} },
     { "text": "Household members: Nic, Shelli, and Fox. Nic is the primary owner the assistant texts.", "meta": {} },
     { "text": "User-facing copy should be warm, direct, brief, and never use em dashes (family preference).", "meta": {} },
-    { "text": "flyerdefense.com and disney.com are read-only work domains: read their mail but never send to them.", "meta": {} },
+    { "text": "flyerdefense.com and disney.com are the family's work domains. Read their mail freely and add work addresses as calendar invitees freely; sending email TO a work domain is allowed but high-stakes, so it goes through the confirmation gate (policy changed 2026-06-20: no longer an absolute block).", "meta": {} },
     { "text": "Shelli prefers oat milk.", "meta": { "agent": "chef" } },
     { "text": "Fox has no food allergy; the no-nuts rule is the daycare's policy, not an allergy.", "meta": { "agent": "chef" } },
     { "text": "Resale hunting is across Poshmark, eBay, Vestiaire, The RealReal, and 1stDibs.", "meta": { "agent": "resale" } },
