@@ -157,12 +157,14 @@ export function textMatchesHunt(text, hunt) {
 }
 
 /**
- * True when the text matches ANY active hunt. With NO hunts configured this returns
- * true: there is nothing to hone to, so we do not silently drop the whole feed. Pure.
+ * True when the text matches at least one active hunt. The explicit hunt list is
+ * the ONLY source of scope: with no hunts, nothing is being tracked, so nothing
+ * matches and the feeds stay silent. We never infer scope from anything else (a
+ * favorites list, browsing history, memory) -- only pieces the family explicitly
+ * registered via add_saved_search count. Pure.
  */
 export function matchesAnyHunt(text, hunts) {
-  if (!Array.isArray(hunts) || !hunts.length) return true;
-  return hunts.some((h) => textMatchesHunt(text, h));
+  return Array.isArray(hunts) && hunts.some((h) => textMatchesHunt(text, h));
 }
 
 /** Human "hunt list" with each item's number. Pure. */

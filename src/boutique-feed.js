@@ -128,8 +128,9 @@ export function formatBoutiqueFeed(results, { max = 10 } = {}) {
  *
  * `hunts` hones the feed to the specific pieces the family is tracking: a new
  * listing only surfaces if it matches one of the saved searches. Every seen href is
- * still recorded (so a non-match never re-surfaces later either). With no hunts
- * configured the feed is unfiltered. `read` injectable for tests.
+ * still recorded (so a non-match never re-surfaces later either). The hunt list is
+ * the ONLY source of scope, so with NO hunts the feed surfaces nothing. `read`
+ * injectable for tests.
  * @returns {Promise<Array<{name, newItems, totalFound, seeded, error}>>}
  */
 export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new Date().toISOString(), boutiques = BOUTIQUES, hunts = [] } = {}) {

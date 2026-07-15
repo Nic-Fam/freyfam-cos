@@ -49,27 +49,38 @@ test("formatFeedItems renders a scannable list and caps with a more-count", () =
   assert.match(f.formatFeedItems(many, { max: 12 }), /\.\.\.and 3 more/);
 });
 
-test("runFirstLookFeed seeds silently on first run, then surfaces only NEW items", async () => {
+test("runFirstLookFeed seeds silently on first run, then surfaces only NEW matching items", async () => {
+  const hunts = [{ query: "Hermès Birkin" }];
   const read = async () => ({ items: RAW });
   // First run: store empty -> seed everything, surface nothing (no giant dump).
-  let r = await f.runFirstLookFeed({ read, now: () => "t0" });
+  let r = await f.runFirstLookFeed({ read, hunts, now: () => "t0" });
   assert.equal(r.seeded, true);
   assert.equal(r.newItems.length, 0);
   assert.equal(r.totalFound, 2);
 
   // Second run, same feed -> nothing new.
-  r = await f.runFirstLookFeed({ read, now: () => "t1" });
+  r = await f.runFirstLookFeed({ read, hunts, now: () => "t1" });
   assert.equal(r.seeded, false);
   assert.equal(r.newItems.length, 0);
 
-  // A genuinely new arrival appears -> surfaced once.
+  // A genuinely new arrival that matches the hunt -> surfaced once.
   const read2 = async () => ({ items: [...RAW, { href: "/products/new-bag", brand: "Hermès", description: "Hermès Birkin", price: "$9,500.00" }] });
-  r = await f.runFirstLookFeed({ read: read2, now: () => "t2" });
+  r = await f.runFirstLookFeed({ read: read2, hunts, now: () => "t2" });
   assert.deepEqual(r.newItems.map((i) => i.brand), ["Hermès"]);
 
   // And not again on the next run.
-  r = await f.runFirstLookFeed({ read: read2, now: () => "t3" });
+  r = await f.runFirstLookFeed({ read: read2, hunts, now: () => "t3" });
   assert.equal(r.newItems.length, 0);
+});
+
+test("runFirstLookFeed with NO hunts surfaces nothing (the list is the only scope)", async () => {
+  // Seed silently, then a genuinely new arrival appears -- but with no hunts
+  // configured the feed must NOT fall back to dumping the grid.
+  await f.runFirstLookFeed({ read: async () => ({ items: RAW }), now: () => "t0" });
+  const read = async () => ({ items: [...RAW, { href: "/products/new-bag", brand: "Hermès", description: "Hermès Birkin", price: "$9,500.00" }] });
+  const r = await f.runFirstLookFeed({ read, now: () => "t1" });
+  assert.equal(r.newItems.length, 0, "no hunts -> nothing surfaces");
+  assert.equal(r.totalFound, 3);
 });
 
 test("runFirstLookFeed hones to the hunt list: only arrivals matching a hunt surface", async () => {

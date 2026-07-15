@@ -58,17 +58,18 @@ test("runBoutiqueFeeds does NOT re-surface a seen item whose only change is sess
   assert.equal(run2[0].newItems.length, 0, "an already-seen dress must not resurface just because its session id changed");
 });
 
-test("first run per boutique seeds silently; new items surface only afterward", async () => {
+test("first run per boutique seeds silently; new matching items surface only afterward", async () => {
   const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  const hunts = [{ query: "three" }]; // the family is tracking a piece whose name matches "three"
   const read1 = async () => ({ items: [{ href: "/products/one" }, { href: "/products/two" }] });
-  const seed = await runBoutiqueFeeds({ read: read1, boutiques: B });
+  const seed = await runBoutiqueFeeds({ read: read1, boutiques: B, hunts });
   assert.equal(seed[0].seeded, true);
   assert.equal(seed[0].newItems.length, 0, "first run surfaces nothing (seeds)");
   assert.equal(seed[0].totalFound, 2);
 
-  // second run: one repeat, one genuinely new -> only the new one surfaces
+  // second run: one repeat, one genuinely new that matches the hunt -> only it surfaces
   const read2 = async () => ({ items: [{ href: "/products/two" }, { href: "/products/three" }] });
-  const run2 = await runBoutiqueFeeds({ read: read2, boutiques: B });
+  const run2 = await runBoutiqueFeeds({ read: read2, boutiques: B, hunts });
   assert.equal(run2[0].seeded, false);
   assert.deepEqual(run2[0].newItems.map((i) => i.href), ["/products/three"]);
 });
@@ -85,6 +86,14 @@ test("runBoutiqueFeeds hones to the hunt list: only listings matching a hunt sur
   ] });
   const run = await runBoutiqueFeeds({ read: read2, boutiques: B, hunts });
   assert.deepEqual(run[0].newItems.map((i) => i.href), ["/products/dsquared2-fw2014-feather-top"], "only the hunted piece surfaces");
+});
+
+test("runBoutiqueFeeds with NO hunts surfaces nothing (the list is the only scope)", async () => {
+  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  // Seed, then a genuinely new listing appears -- with no hunts it must not surface.
+  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/seed" }] }), boutiques: B });
+  const run = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/brand-new" }] }), boutiques: B });
+  assert.equal(run[0].newItems.length, 0, "no hunts -> nothing surfaces");
 });
 
 test("a boutique whose read throws degrades to error, never crashes", async () => {
@@ -114,6 +123,7 @@ test("a dismissed listing never surfaces, even on a fresh (unseen) run", async (
   const run = await runBoutiqueFeeds({
     read: async () => ({ items: [{ href: "/products/rejected-dress?_pos=2&_sid=BBB&_ss=r" }, { href: "/products/allowed" }] }),
     boutiques: B,
+    hunts: [{ query: "allowed" }, { query: "rejected dress" }], // both tracked; dismissal must still win
   });
   const hrefs = run[0].newItems.map((i) => i.href);
   assert.ok(!hrefs.includes("/products/rejected-dress"), "dismissed dress must never surface");

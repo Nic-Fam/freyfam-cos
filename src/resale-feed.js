@@ -91,8 +91,9 @@ export function formatFeedItems(items, { max = 12 } = {}) {
  * `hunts` hones the feed to the specific pieces the family is tracking: a new
  * arrival only surfaces if it matches one of the saved searches. Every seen href is
  * still recorded (so a non-match never re-surfaces later either); we just don't
- * ALERT on arrivals that aren't one of the hunted items. With no hunts configured
- * the feed is unfiltered (nothing to hone to). `read` is injectable for tests.
+ * ALERT on arrivals that aren't one of the hunted items. The hunt list is the ONLY
+ * source of scope, so with NO hunts the feed surfaces nothing (it never falls back
+ * to dumping the whole grid). `read` is injectable for tests.
  * Returns {newItems, totalFound, seeded, error}.
  */
 export async function runFirstLookFeed({ read = readListingFeed, hunts = [], now = () => new Date().toISOString() } = {}) {

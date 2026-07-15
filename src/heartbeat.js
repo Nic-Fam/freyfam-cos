@@ -546,8 +546,10 @@ async function maybeRunResale() {
         });
         if (resText && !/^\s*NONE\s*\.?\s*$/i.test(resText)) await notifyOwner(`New resale finds:\n${resText}`);
         // Load the active hunt list ONCE so the whole-grid feeds below hone to the
-        // specific pieces the family is tracking instead of dumping every new
-        // arrival. Remote: pull from resale's own store over the delegate seam
+        // specific pieces the family EXPLICITLY registered, never dumping the grid.
+        // This list is the single source of resale scope; if it fails to load we
+        // leave it empty, and the feeds then surface nothing (safe: under-alert, not
+        // firehose). Remote: pull from resale's own store over the delegate seam
         // (Lloyd has no direct access to it); local: read the shared store directly.
         let hunts = [];
         try {

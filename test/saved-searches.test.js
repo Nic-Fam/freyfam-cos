@@ -123,12 +123,13 @@ test("textMatchesHunt hones: needs >=2 hunt tokens (or the sole token)", () => {
   assert.equal(textMatchesHunt("Gucci loafers", { query: "Chanel" }), false);
 });
 
-test("matchesAnyHunt matches across hunts; no hunts -> unfiltered (matches all)", () => {
+test("matchesAnyHunt matches across hunts; no hunts -> matches nothing (list is the only scope)", () => {
   const hunts = [{ query: "Margiela Tabi" }, { query: "Chanel flap" }];
   assert.equal(matchesAnyHunt("Maison Margiela Tabi boots", hunts), true);
   assert.equal(matchesAnyHunt("Chanel Classic Flap bag", hunts), true);
   assert.equal(matchesAnyHunt("Bottega Veneta Cabat", hunts), false);
-  assert.equal(matchesAnyHunt("anything at all", []), true, "no hunts -> nothing to hone to");
+  assert.equal(matchesAnyHunt("anything at all", []), false, "no hunts -> nothing is being tracked, so nothing matches");
+  assert.equal(matchesAnyHunt("anything at all", undefined), false, "missing hunts -> no scope");
 });
 
 test("formatSavedSearchList shows the number, price cap, and sites", async () => {
