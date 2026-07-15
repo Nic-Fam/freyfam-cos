@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
 import { readListingFeed } from "./channels/browser.js";
+import { matchesAnyHunt } from "./saved-searches.js";
 
 // ===========================================================================
 // TheRealReal First Look feed. First Look is Shelli's paid early-access tier:
@@ -86,9 +87,15 @@ export function formatFeedItems(items, { max = 12 } = {}) {
  * the last run (deduped against the hit store). On the FIRST ever run the store is
  * empty, so we seed it silently (record everything, surface nothing) instead of
  * dumping the whole grid; only genuinely new arrivals surface thereafter.
- * `read` is injectable for tests. Returns {newItems, totalFound, seeded, error}.
+ *
+ * `hunts` hones the feed to the specific pieces the family is tracking: a new
+ * arrival only surfaces if it matches one of the saved searches. Every seen href is
+ * still recorded (so a non-match never re-surfaces later either); we just don't
+ * ALERT on arrivals that aren't one of the hunted items. With no hunts configured
+ * the feed is unfiltered (nothing to hone to). `read` is injectable for tests.
+ * Returns {newItems, totalFound, seeded, error}.
  */
-export async function runFirstLookFeed({ read = readListingFeed, now = () => new Date().toISOString() } = {}) {
+export async function runFirstLookFeed({ read = readListingFeed, hunts = [], now = () => new Date().toISOString() } = {}) {
   let raw = [];
   try {
     const res = await read(TRR.feedUrl, { anchorPrefix: TRR.anchorPrefix, fields: TRR.fields, max: 60 });
@@ -105,7 +112,9 @@ export async function runFirstLookFeed({ read = readListingFeed, now = () => new
     const id = hitId(it.href);
     if (known.has(id)) continue;
     await col.add({ id, href: it.href, brand: it.brand, price: it.price, at: now() });
-    if (!firstRun) fresh.push(it);
+    // Hone to the hunt list: alert only on arrivals matching a tracked piece, not
+    // the whole grid. (The href is recorded above regardless, so it never resurfaces.)
+    if (!firstRun && matchesAnyHunt(`${it.brand || ""} ${it.item || ""}`, hunts)) fresh.push(it);
   }
   return { newItems: fresh, totalFound: all.length, seeded: firstRun, error: false };
 }

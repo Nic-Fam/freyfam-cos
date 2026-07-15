@@ -72,6 +72,28 @@ test("runFirstLookFeed seeds silently on first run, then surfaces only NEW items
   assert.equal(r.newItems.length, 0);
 });
 
+test("runFirstLookFeed hones to the hunt list: only arrivals matching a hunt surface", async () => {
+  const hunts = [{ query: "Bottega Veneta Cabat" }];
+  // Seed silently.
+  await f.runFirstLookFeed({ read: async () => ({ items: RAW }), hunts, now: () => "t0" });
+  // New arrivals: one matches the hunt, one (Hermès Birkin) does not.
+  const read = async () => ({
+    items: [
+      ...RAW,
+      { href: "/products/new-cabat", brand: "Bottega Veneta", description: "Bottega Veneta Intrecciato Cabat Tote", price: "$3,000.00" },
+      { href: "/products/new-birkin", brand: "Hermès", description: "Hermès Birkin", price: "$9,500.00" },
+    ],
+  });
+  const r = await f.runFirstLookFeed({ read, hunts, now: () => "t1" });
+  assert.deepEqual(r.newItems.map((i) => i.brand), ["Bottega Veneta"], "only the hunted piece surfaces");
+  assert.equal(r.totalFound, 4);
+
+  // The un-surfaced Birkin was still RECORDED, so it never resurfaces later (even
+  // if the family later widens their hunts).
+  const r2 = await f.runFirstLookFeed({ read, hunts: [{ query: "Hermès Birkin" }], now: () => "t2" });
+  assert.equal(r2.newItems.length, 0, "a recorded-but-unsurfaced item does not resurface");
+});
+
 test("runFirstLookFeed degrades gracefully when the read throws (e.g. not signed in)", async () => {
   const read = async () => { throw new Error("redirected to sign-in"); };
   const r = await f.runFirstLookFeed({ read });

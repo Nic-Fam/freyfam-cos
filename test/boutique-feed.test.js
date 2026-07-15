@@ -73,6 +73,20 @@ test("first run per boutique seeds silently; new items surface only afterward", 
   assert.deepEqual(run2[0].newItems.map((i) => i.href), ["/products/three"]);
 });
 
+test("runBoutiqueFeeds hones to the hunt list: only listings matching a hunt surface", async () => {
+  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  const hunts = [{ query: "Dsquared2 feather top" }];
+  // Seed silently.
+  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/seed" }] }), boutiques: B, hunts });
+  // Two new listings: one matches the hunt, one does not.
+  const read2 = async () => ({ items: [
+    { href: "/products/dsquared2-fw2014-feather-top" },
+    { href: "/products/gucci-horsebit-loafer" },
+  ] });
+  const run = await runBoutiqueFeeds({ read: read2, boutiques: B, hunts });
+  assert.deepEqual(run[0].newItems.map((i) => i.href), ["/products/dsquared2-fw2014-feather-top"], "only the hunted piece surfaces");
+});
+
 test("a boutique whose read throws degrades to error, never crashes", async () => {
   const B = [{ name: "LAL Vintage", url: "https://lalvintage.com/search?q=dsquared" }];
   const res = await runBoutiqueFeeds({ read: async () => { throw new Error("navigation timeout"); }, boutiques: B });

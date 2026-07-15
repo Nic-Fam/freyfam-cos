@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
 import { readListingFeed } from "./channels/browser.js";
+import { matchesAnyHunt } from "./saved-searches.js";
 
 // ===========================================================================
 // Archive-boutique new-arrivals feed. Small curated vintage/archive shops (e.g.
@@ -123,10 +124,15 @@ export function formatBoutiqueFeed(results, { max = 10 } = {}) {
 /**
  * Scan each boutique's storefront for NEW listings since the last run (deduped by
  * boutique+href). First run for a given boutique SEEDS SILENTLY (records all,
- * surfaces none) so it never dumps the whole shop. `read` injectable for tests.
+ * surfaces none) so it never dumps the whole shop.
+ *
+ * `hunts` hones the feed to the specific pieces the family is tracking: a new
+ * listing only surfaces if it matches one of the saved searches. Every seen href is
+ * still recorded (so a non-match never re-surfaces later either). With no hunts
+ * configured the feed is unfiltered. `read` injectable for tests.
  * @returns {Promise<Array<{name, newItems, totalFound, seeded, error}>>}
  */
-export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new Date().toISOString(), boutiques = BOUTIQUES } = {}) {
+export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new Date().toISOString(), boutiques = BOUTIQUES, hunts = [] } = {}) {
   const col = feedHits();
   const existing = await col.list();
   const known = new Set(existing.map((h) => h.id));
@@ -156,7 +162,8 @@ export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new
       if (known.has(id)) continue;
       known.add(id);
       await col.add({ id, name: b.name, href: it.href, at: now() });
-      if (!firstRun) fresh.push(it);
+      // Hone to the hunt list: alert only on listings matching a tracked piece.
+      if (!firstRun && matchesAnyHunt(it.name, hunts)) fresh.push(it);
     }
     results.push({ name: b.name, newItems: fresh, totalFound: all.length, seeded: firstRun, error: false });
   }
