@@ -8,7 +8,7 @@ const TMP = join(os.tmpdir(), "cos-boutique-hits-test.json");
 const DIS = join(os.tmpdir(), "cos-boutique-dismissed-test.json");
 process.env.BOUTIQUE_FEED_HITS_PATH = TMP;
 process.env.BOUTIQUE_DISMISSED_PATH = DIS;
-const { slugToName, canonicalHref, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds, dismissBoutiqueListings, listDismissedBoutique } = await import("../src/boutique-feed.js");
+const { slugToName, canonicalHref, normalizeBoutiqueItems, formatBoutiqueFeed, runBoutiqueFeeds, dismissBoutiqueListings, listDismissedBoutique, buildBoutiqueSearchUrl } = await import("../src/boutique-feed.js");
 
 const clean = () => Promise.all([rm(TMP, { force: true }), rm(DIS, { force: true })]);
 beforeEach(clean);
@@ -17,6 +17,19 @@ after(clean);
 test("slugToName makes a readable name from a /products/ handle", () => {
   assert.equal(slugToName("/products/dsquared2-fw2014-feather-top"), "Dsquared2 Fw2014 Feather Top");
   assert.equal(slugToName("/collections/x"), null);
+});
+
+test("buildBoutiqueSearchUrl drives the search from the hunt query", () => {
+  // {q} placeholder is filled with the url-encoded hunt query
+  assert.equal(
+    buildBoutiqueSearchUrl({ search: "https://allisonsarchive.shop/search?q={q}" }, "Dior feather sandals"),
+    "https://allisonsarchive.shop/search?q=Dior%20feather%20sandals"
+  );
+  // a legacy static ?q= is OVERRIDDEN by the hunt query (no more baked-in scope)
+  assert.equal(
+    buildBoutiqueSearchUrl({ url: "https://lalvintage.com/search?q=dsquared" }, "Dsquared2 feather top"),
+    "https://lalvintage.com/search?q=Dsquared2+feather+top"
+  );
 });
 
 test("normalizeBoutiqueItems dedupes by href and absolutizes urls", () => {
@@ -49,12 +62,13 @@ test("normalizeBoutiqueItems collapses the SAME product carrying different sessi
 });
 
 test("runBoutiqueFeeds does NOT re-surface a seen item whose only change is session params (the repeat-dress bug)", async () => {
-  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  const B = [{ name: "Allison's Archive", search: "https://allisonsarchive.shop/search?q={q}" }];
+  const hunts = [{ query: "dsquared nude dress" }];
   // Seed run records the dress under a session id.
-  const seed = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=1&_sid=AAA&_ss=r" }] }), boutiques: B });
+  const seed = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=1&_sid=AAA&_ss=r" }] }), boutiques: B, hunts });
   assert.equal(seed[0].seeded, true);
   // Next run: SAME dress, different _sid/_pos. Pre-fix this re-alerted every run.
-  const run2 = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=4&_sid=BBB&_ss=r" }] }), boutiques: B });
+  const run2 = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/dsquared-nude-dress?_pos=4&_sid=BBB&_ss=r" }] }), boutiques: B, hunts });
   assert.equal(run2[0].newItems.length, 0, "an already-seen dress must not resurface just because its session id changed");
 });
 
@@ -88,17 +102,18 @@ test("runBoutiqueFeeds hones to the hunt list: only listings matching a hunt sur
   assert.deepEqual(run[0].newItems.map((i) => i.href), ["/products/dsquared2-fw2014-feather-top"], "only the hunted piece surfaces");
 });
 
-test("runBoutiqueFeeds with NO hunts surfaces nothing (the list is the only scope)", async () => {
-  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
-  // Seed, then a genuinely new listing appears -- with no hunts it must not surface.
-  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/seed" }] }), boutiques: B });
-  const run = await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/brand-new" }] }), boutiques: B });
+test("runBoutiqueFeeds with NO hunts does not even search (the list is the only scope)", async () => {
+  const B = [{ name: "Allison's Archive", search: "https://allisonsarchive.shop/search?q={q}" }];
+  let reads = 0;
+  const read = async () => { reads += 1; return { items: [{ href: "/products/brand-new" }] }; };
+  const run = await runBoutiqueFeeds({ read, boutiques: B }); // no hunts
+  assert.equal(reads, 0, "with no hunts, no shop is searched at all");
   assert.equal(run[0].newItems.length, 0, "no hunts -> nothing surfaces");
 });
 
 test("a boutique whose read throws degrades to error, never crashes", async () => {
-  const B = [{ name: "LAL Vintage", url: "https://lalvintage.com/search?q=dsquared" }];
-  const res = await runBoutiqueFeeds({ read: async () => { throw new Error("navigation timeout"); }, boutiques: B });
+  const B = [{ name: "LAL Vintage", search: "https://lalvintage.com/search?q={q}" }];
+  const res = await runBoutiqueFeeds({ read: async () => { throw new Error("navigation timeout"); }, boutiques: B, hunts: [{ query: "dsquared feather top" }] });
   assert.equal(res[0].error, true);
   assert.equal(res[0].newItems.length, 0);
 });
@@ -115,11 +130,12 @@ test("dismissBoutiqueListings canonicalizes + dedupes and reports what was added
 });
 
 test("a dismissed listing never surfaces, even on a fresh (unseen) run", async () => {
-  const B = [{ name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared" }];
+  const B = [{ name: "Allison's Archive", search: "https://allisonsarchive.shop/search?q={q}" }];
   // Family rejects the dress by URL (as it appeared in the alert).
   await dismissBoutiqueListings(["https://allisonsarchive.shop/products/rejected-dress?_pos=1&_sid=AAA&_ss=r"]);
-  // Seed run so it's not first-run, then it appears in the grid again with a new session id.
-  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/other" }] }), boutiques: B });
+  // Seed run (with a hunt so it actually reads + registers the shop as seen), then
+  // the dress appears again with a new session id on the next run.
+  await runBoutiqueFeeds({ read: async () => ({ items: [{ href: "/products/other" }] }), boutiques: B, hunts: [{ query: "other piece" }] });
   const run = await runBoutiqueFeeds({
     read: async () => ({ items: [{ href: "/products/rejected-dress?_pos=2&_sid=BBB&_ss=r" }, { href: "/products/allowed" }] }),
     boutiques: B,
