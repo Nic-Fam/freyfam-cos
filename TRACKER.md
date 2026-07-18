@@ -206,6 +206,15 @@ mini provisioning, per-specialist memory seeding, voice/media workstream I, COO 
   auto-reply suppressor + a proactive heartbeat scan records tracking numbers; plus
   **owner attribution + pickup-location detection** and **auto-proposed pickup calendar
   events** (Shelli ASAP, Nic next free slot; through the confirmation gate).
+  - **Migration note (2026-07-18):** the tracking brain is fully ported and tested
+    (`packages.js`, `package-digest.js`, heartbeat scan/schedule/digest, morning
+    "Arriving:" line, `list_packages`/`track_shipment` tools). The one legacy piece
+    NOT carried over is the **Gmail-side hookup**: COS reads only `cos@freyfam.com`,
+    but carrier/UPS mail lands in the family Gmail accounts. Remaining step is a
+    Gmail auto-forward filter in each family account → `cos@freyfam.com` (same
+    forwarding dependency as finance ingestion). Until that forward exists, nothing
+    is tracked and nothing surfaces in the digest or on the calendar. See
+    `.env.example` package section for the filter details.
 - **Email CC/BCC** — real `ccRecipients`/`bccRecipients` (was body-text only, so CCs
   never sent).
 - **Calendar weekday fix** — `list_calendar` attaches an authoritative `day` label so
