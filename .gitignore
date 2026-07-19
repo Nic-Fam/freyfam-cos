@@ -10,5 +10,6 @@ data/*
 !data/house-rules.example.json
 !data/companies.json
 !data/seed-coo-sasshey.mjs
+!data/seed-hunts.mjs
 *.log
 .DS_Store

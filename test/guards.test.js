@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress, isAuthorizedSender } from "../src/guards.js";
+import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender } from "../src/guards.js";
 
 test("isFamilyAddress recognizes the family's own addresses (case-insensitive), not outsiders", () => {
   assert.equal(isFamilyAddress("Nic@Freyfam.com"), true);
@@ -8,6 +8,24 @@ test("isFamilyAddress recognizes the family's own addresses (case-insensitive), 
   assert.equal(isFamilyAddress("nfrey2@gmail.com"), true);
   assert.equal(isFamilyAddress("julie@some-realty.com"), false);
   assert.equal(isFamilyAddress(""), false);
+});
+
+test("isFamilySelfEmail: all-family-personal recipients skip approval; work/outside do not", () => {
+  // Every recipient a family personal inbox -> exempt (no approval)
+  assert.equal(isFamilySelfEmail("nic@freyfam.com"), true);
+  assert.equal(isFamilySelfEmail("Nic@Freyfam.com"), true); // case-insensitive
+  assert.equal(isFamilySelfEmail("nic@freyfam.com, shelli@freyfam.com"), true); // comma list
+  assert.equal(isFamilySelfEmail(["nic@freyfam.com", "nfrey2@gmail.com"]), true); // array
+  // A work-domain family address still needs approval (constraint #1)
+  assert.equal(isFamilySelfEmail("shelli.frey@disney.com"), false);
+  assert.equal(isFamilySelfEmail("nicholas.frey@flyerdefense.com"), false);
+  // Any outsider in the mix -> not exempt, even alongside a family address
+  assert.equal(isFamilySelfEmail("julie@some-realty.com"), false);
+  assert.equal(isFamilySelfEmail(["nic@freyfam.com", "julie@some-realty.com"]), false);
+  assert.equal(isFamilySelfEmail(["nic@freyfam.com", "shelli.frey@disney.com"]), false);
+  // Nothing to send -> not exempt
+  assert.equal(isFamilySelfEmail(""), false);
+  assert.equal(isFamilySelfEmail([]), false);
 });
 
 test("isAutomatedSender flags bounce/no-reply/notification/marketing senders", () => {

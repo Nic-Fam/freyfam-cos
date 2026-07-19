@@ -123,6 +123,50 @@ export async function removeHunt(term) {
   return { count: labels.length, labels };
 }
 
+// --- hunt matching (honing the whole-grid feeds) ---------------------------
+// The First Look and boutique feeds read a WHOLE new-arrivals grid, so on their
+// own they surface every fresh listing, not the specific pieces the family is
+// hunting. These pure helpers let those feeds hone to the active hunts: an arrival
+// only surfaces if it matches one of the saved searches (the "2 specific items").
+
+/**
+ * Significant search tokens for a hunt: alphanumeric terms >= 3 chars drawn from
+ * its query and label, lowercased and deduped. These are what an arrival's text
+ * must contain to count as a match for this specific hunt. Pure.
+ */
+export function huntTokens(hunt) {
+  const text = `${hunt?.query || ""} ${hunt?.label || ""}`.toLowerCase();
+  return [...new Set((text.match(/[a-z0-9]+/g) || []).filter((t) => t.length >= 3))];
+}
+
+/**
+ * True when a piece of listing text (brand + description/name) matches a SPECIFIC
+ * hunt. A specific piece is a brand plus a descriptor, so we require at least TWO
+ * of the hunt's tokens to appear (or the sole token, for a one-word hunt). That
+ * keeps the match tight enough to hone the feed without demanding an exact,
+ * word-for-word title (grid titles rarely carry a hunt's season code, etc). Pure.
+ */
+export function textMatchesHunt(text, hunt) {
+  const hay = String(text || "").toLowerCase();
+  const toks = huntTokens(hunt);
+  if (!toks.length) return false;
+  const need = Math.min(2, toks.length);
+  let have = 0;
+  for (const t of toks) if (hay.includes(t) && ++have >= need) return true;
+  return false;
+}
+
+/**
+ * True when the text matches at least one active hunt. The explicit hunt list is
+ * the ONLY source of scope: with no hunts, nothing is being tracked, so nothing
+ * matches and the feeds stay silent. We never infer scope from anything else (a
+ * favorites list, browsing history, memory) -- only pieces the family explicitly
+ * registered via add_saved_search count. Pure.
+ */
+export function matchesAnyHunt(text, hunts) {
+  return Array.isArray(hunts) && hunts.some((h) => textMatchesHunt(text, h));
+}
+
 /** Human "hunt list" with each item's number. Pure. */
 export function formatSavedSearchList(items) {
   if (!items || !items.length) return "No saved searches yet.";

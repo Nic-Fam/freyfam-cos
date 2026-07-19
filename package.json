@@ -11,6 +11,7 @@
     "dev": "node --watch src/daemon.js",
     "once": "node src/daemon.js --heartbeat-once",
     "seed": "node data/seed.mjs",
+    "seed:hunts": "node data/seed-hunts.mjs",
     "reembed": "node data/reembed.mjs",
     "restore": "node --env-file=.env data/restore-backup.mjs",
     "specialist": "node deploy/specialists/local-server.mjs",

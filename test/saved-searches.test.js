@@ -10,7 +10,7 @@ const BRAIN = join(os.tmpdir(), "cos-saved-brain-test.json");
 process.env.SAVED_SEARCHES_PATH = TMP;
 process.env.SAVED_SEARCH_HITS_PATH = HITS; // isolate the removal cascade from real data
 process.env.BRAIN_PATH = BRAIN;
-const { addSavedSearch, listSavedSearches, removeSavedSearch, removeHunt, formatSavedSearchList } = await import("../src/saved-searches.js");
+const { addSavedSearch, listSavedSearches, removeSavedSearch, removeHunt, formatSavedSearchList, huntTokens, textMatchesHunt, matchesAnyHunt } = await import("../src/saved-searches.js");
 
 const clean = () => Promise.all([rm(TMP, { force: true }), rm(HITS, { force: true }), rm(BRAIN, { force: true })]);
 beforeEach(clean);
@@ -103,6 +103,33 @@ test("removeHunt clears ALL per-site searches for a piece at once", async () => 
   assert.equal(res.count, 2);
   const left = await listSavedSearches();
   assert.deepEqual(left.map((s) => s.label), ["Gucci loafers - eBay"], "the unrelated hunt is untouched");
+});
+
+test("huntTokens pulls significant terms (>=3 chars) from query + label, deduped", () => {
+  assert.deepEqual(huntTokens({ query: "Dsquared2 FW2014 feather top", label: "Feather Top" }),
+    ["dsquared2", "fw2014", "feather", "top"]);
+  // short tokens like a size "39" are dropped as too noisy to hone on
+  assert.deepEqual(huntTokens({ query: "Margiela Tabi 39" }), ["margiela", "tabi"]);
+});
+
+test("textMatchesHunt hones: needs >=2 hunt tokens (or the sole token)", () => {
+  const hunt = { query: "Dsquared2 FW2014 feather top" };
+  // grid title carries brand + descriptors but not the season code -> still matches
+  assert.equal(textMatchesHunt("Dsquared2 Feather Top", hunt), true);
+  // brand alone is not enough to count as the specific piece
+  assert.equal(textMatchesHunt("Dsquared2 denim jacket", hunt), false);
+  // a one-word hunt matches on that single token
+  assert.equal(textMatchesHunt("Chanel classic flap", { query: "Chanel" }), true);
+  assert.equal(textMatchesHunt("Gucci loafers", { query: "Chanel" }), false);
+});
+
+test("matchesAnyHunt matches across hunts; no hunts -> matches nothing (list is the only scope)", () => {
+  const hunts = [{ query: "Margiela Tabi" }, { query: "Chanel flap" }];
+  assert.equal(matchesAnyHunt("Maison Margiela Tabi boots", hunts), true);
+  assert.equal(matchesAnyHunt("Chanel Classic Flap bag", hunts), true);
+  assert.equal(matchesAnyHunt("Bottega Veneta Cabat", hunts), false);
+  assert.equal(matchesAnyHunt("anything at all", []), false, "no hunts -> nothing is being tracked, so nothing matches");
+  assert.equal(matchesAnyHunt("anything at all", undefined), false, "missing hunts -> no scope");
 });
 
 test("formatSavedSearchList shows the number, price cap, and sites", async () => {
