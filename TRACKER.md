@@ -206,6 +206,14 @@ mini provisioning, per-specialist memory seeding, voice/media workstream I, COO 
   auto-reply suppressor + a proactive heartbeat scan records tracking numbers; plus
   **owner attribution + pickup-location detection** and **auto-proposed pickup calendar
   events** (Shelli ASAP, Nic next free slot; through the confirmation gate).
+  - **Trackingless retailer notices (2026-07-19):** many retailer shipping emails
+    (e.g. The RealReal's "Your package is on the way") carry only an ETA and NO
+    carrier tracking number, and used the phrasing "on **the** way" that the old
+    `on its way`-only check missed — so they were invisible. Detection now covers
+    on-the/your-way, arriving, estimated/expected delivery; `extractEta` +
+    `extractRetailer` pull the ETA and brand; and a shipment with no number is
+    recorded under a stable synthetic id (deduped on re-scan) so it still surfaces
+    in the digest's "Arriving:" line and the active list.
   - **Migration note (2026-07-18):** the tracking brain is fully ported and tested
     (`packages.js`, `package-digest.js`, heartbeat scan/schedule/digest, morning
     "Arriving:" line, `list_packages`/`track_shipment` tools). The one legacy piece

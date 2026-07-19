@@ -85,6 +85,43 @@ test("processShipmentEmail records owner + pickup + location; pickup queue and m
   assert.equal(queue.length, 0, "a proposed pickup is not re-queued");
 });
 
+test("extractEta pulls a human ETA; extractRetailer names the brand", () => {
+  const body = "Estimated to Arrive on or Before\nMonday 07/27/2026\nby 9:00 PM";
+  assert.equal(pkg.extractEta("Your package is on the way.", body), "Monday 07/27/2026 by 9:00 PM");
+  assert.equal(pkg.extractEta("", "Arriving Monday, July 27"), "Monday, July 27");
+  assert.equal(pkg.extractEta("", "no dates here"), "");
+  assert.equal(pkg.extractRetailer("Your package is on the way.", "Your THE REALREAL package now has an estimated delivery date"), "The Realreal");
+});
+
+test("a retailer 'on the way' notice with NO tracking number is still tracked via ETA", async () => {
+  // Real The RealReal email: says "on the way", carries only an ETA, no number.
+  const subject = "Your package is on the way.";
+  const body =
+    "Your THE REALREAL package now has an estimated delivery date, and may be delivered by our trusted delivery partner.\n" +
+    "Estimated to Arrive on or Before\nMonday 07/27/2026\nby 9:00 PM";
+  assert.equal(pkg.isShippingEmail(subject, body), true, "on-the-way phrasing is a shipping notice");
+  const r = await pkg.processShipmentEmail({ subject, body });
+  assert.equal(r.found.length, 0, "no carrier tracking number in the email");
+  assert.equal(r.tracked.length, 1, "recorded anyway, keyed by a synthetic id");
+  assert.equal(r.eta, "Monday 07/27/2026 by 9:00 PM");
+
+  const [p] = await pkg.listActivePackages();
+  assert.equal(p.hasTracking, false);
+  assert.equal(p.retailer, "The Realreal");
+  assert.equal(p.eta, "Monday 07/27/2026 by 9:00 PM");
+  assert.match(pkg.formatPackages([p]), /arriving Monday 07\/27\/2026 by 9:00 PM/);
+
+  // Re-scanning the same notice must not create a duplicate.
+  await pkg.processShipmentEmail({ subject, body });
+  assert.equal((await pkg.listActivePackages()).length, 1, "trackingless notice dedupes on re-scan");
+});
+
+test("a plain marketing email with no ETA and no shipping subject mints no package", async () => {
+  const r = await pkg.processShipmentEmail({ subject: "Weekend sale", body: "Enjoy free shipping on all orders!" });
+  assert.equal(r.tracked.length, 0);
+  assert.deepEqual(await pkg.listActivePackages(), []);
+});
+
 test("a home-delivery package is tracked but never enters the pickup queue", async () => {
   await pkg.processShipmentEmail({ subject: "Shipped", body: "On its way to your home. Tracking TBA303384950001", description: "Soap" });
   assert.equal((await pkg.listActivePackages()).length, 1);
