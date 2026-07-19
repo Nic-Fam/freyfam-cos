@@ -12,3 +12,4 @@ data/*
 !data/seed-coo-sasshey.mjs
 *.log
 .DS_Store
+test/fixtures/food-steps.json
