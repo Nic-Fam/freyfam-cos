@@ -211,10 +211,13 @@ mini provisioning, per-specialist memory seeding, voice/media workstream I, COO 
     "Arriving:" line, `list_packages`/`track_shipment` tools). The one legacy piece
     NOT carried over is the **Gmail-side hookup**: COS reads only `cos@freyfam.com`,
     but carrier/UPS mail lands in the family Gmail accounts. Remaining step is a
-    Gmail auto-forward filter in each family account → `cos@freyfam.com` (same
-    forwarding dependency as finance ingestion). Until that forward exists, nothing
-    is tracked and nothing surfaces in the digest or on the calendar. See
-    `.env.example` package section for the filter details.
+    Gmail auto-forward reaching this mailbox (same forwarding dependency as finance
+    ingestion). `assistant@freyfam.com` is an ALIAS of the `cos@` mailbox, so legacy
+    forwards already pointed at `assistant@` need NO repoint — they land in the same
+    scanned inbox; just confirm the alias survived migration and the forward keeps
+    the carrier as the From (a forward rewriting From to `assistant@` is skipped as
+    self). Until a forward reaches the mailbox, nothing is tracked and nothing
+    surfaces in the digest or on the calendar. See `.env.example` package section.
 - **Email CC/BCC** — real `ccRecipients`/`bccRecipients` (was body-text only, so CCs
   never sent).
 - **Calendar weekday fix** — `list_calendar` attaches an authoritative `day` label so
