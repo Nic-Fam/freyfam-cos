@@ -209,7 +209,7 @@ const hitId = (searchId, url) => createHash("sha1").update(`${searchId}|${url}`)
  * remote specialist over the delegate seam). `search`/`runSites` injectable.
  * Returns [{ id, label, maxPrice, newHits:[{title,url,snippet,price?}], totalFound }].
  */
-export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch, scope = "all", searches = null } = {}) {
+export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch, scope = "all", searches = null, hone = false } = {}) {
   const list = searches || (await listSavedSearches());
   if (!list.length) return [];
   const seen = new Set((await hits().list()).map((h) => h.id));
@@ -238,6 +238,11 @@ export async function runSavedSearches({ search = webSearch, count, runSites = r
     const newHits = [];
     for (const r of results) {
       if (!r.url) continue;
+      // Hone to THIS hunt: a site query for "Dior feather sandal" still returns
+      // loosely-related listings, so when honing is on we surface only results that
+      // actually read like the tracked piece (>=2 shared terms), same bar the
+      // boutique/First Look feeds use. Keeps the one feed to the pieces we asked for.
+      if (hone && !textMatchesHunt(`${r.title || ""} ${r.snippet || ""}`, s)) continue;
       const id = hitId(s.id, r.url);
       if (seen.has(id)) continue;
       seen.add(id);

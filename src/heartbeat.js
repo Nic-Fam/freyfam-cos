@@ -21,13 +21,12 @@ import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLas
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate, chooseTransport } from "./delegate.js";
-import { runSavedSearches, fetchHuntsViaDelegate, formatSavedSearchRun, listSavedSearches } from "./saved-searches.js";
+import { fetchHuntsViaDelegate, listSavedSearches } from "./saved-searches.js";
 import { cooRoster } from "./companies.js";
 import { runCooReview, shouldRunReview, getReviewState, setReviewRan } from "./coo-review.js";
 import { budgetState } from "./cost-ledger.js";
 import { checkWatched, formatWatchFlags } from "./watch.js";
-import { runFirstLookFeed, formatFeedItems } from "./resale-feed.js";
-import { runBoutiqueFeeds, formatBoutiqueFeed } from "./boutique-feed.js";
+import { runHuntSearch, formatHuntFinds } from "./resale-hunt.js";
 import { shouldRunGroceryOrder, assembleOrder, formatOrder, getLastGroceryRun, setLastGroceryRun, gatherGroceryItems, resolveGroceryOrder } from "./grocery.js";
 import { formatResolution } from "./grocery-match.js";
 import { listShopping } from "./shopping.js";
@@ -542,19 +541,10 @@ async function maybeRunResale() {
     for (const slot of due) {
       await setSlotRan(slot.label, date); // record before running so a slow run can't double-fire
       try {
-        // delegate returns {text, requests} (workstream S step 2); a specialist
-        // like resale emits no requests, so read its text.
-        const { text: resText } = await delegate({
-          agent: "resale",
-          task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
-        });
-        if (resText && !/^\s*NONE\s*\.?\s*$/i.test(resText)) await notifyOwner(`New resale finds:\n${resText}`);
-        // Load the active hunt list ONCE so the whole-grid feeds below hone to the
-        // specific pieces the family EXPLICITLY registered, never dumping the grid.
-        // This list is the single source of resale scope; if it fails to load we
-        // leave it empty, and the feeds then surface nothing (safe: under-alert, not
-        // firehose). Remote: pull from resale's own store over the delegate seam
-        // (Lloyd has no direct access to it); local: read the shared store directly.
+        // Load the active hunt list ONCE. It is the SINGLE source of resale scope:
+        // if it fails to load we leave it empty and surface nothing (safe: under-
+        // alert, never a firehose). Remote resale: pull from its own store over the
+        // delegate seam (Lloyd has no direct access); local: read the store directly.
         let hunts = [];
         try {
           hunts = chooseTransport("resale") === "remote"
@@ -563,52 +553,22 @@ async function maybeRunResale() {
         } catch (e) {
           log.error("resale hunt list load failed", { reason: e.message });
         }
-        // TheRealReal First Look feed: read the early-access new-arrivals grid via
-        // the LOCAL signed-in browser (Shelli's profile) and surface NEW items that
-        // match a hunt. Generic web search can't see member-only early access, so
-        // this is its own feed. No-ops gracefully (empty) if the profile isn't
-        // signed in.
-        let feedNew = 0;
+        // ONE avenue: search every source -- resale sites + vintage boutiques +
+        // First Look -- for the tracked pieces, honed to the hunts and deduped across
+        // sources into a SINGLE "New resale finds" ping. Runs here on Lloyd, who has
+        // the local browser, the eBay API, and Brave, so no per-source split.
+        let finds = { newItems: [], counts: { site: 0, boutique: 0, firstlook: 0 } };
         try {
-          const feed = await runFirstLookFeed({ hunts });
-          feedNew = feed.newItems.length;
-          if (feedNew) await notifyOwner(`First Look new arrivals:\n${formatFeedItems(feed.newItems)}`);
+          finds = await runHuntSearch({ hunts, scope: "all" });
+          if (finds.newItems.length) await notifyOwner(`New resale finds:\n${formatHuntFinds(finds.newItems)}`);
         } catch (e) {
-          log.error("first-look feed failed", { reason: e.message });
+          log.error("resale hunt search failed", { reason: e.message });
         }
-        // Archive-boutique feeds: read public curated-shop storefronts (Allison's
-        // Archive, LAL Vintage, ...) via the LOCAL browser for NEW listings a web
-        // search would miss, honed to the hunt list. No login needed; seeds silently
-        // per shop on first run.
-        let boutiqueNew = 0;
-        try {
-          const feeds = await runBoutiqueFeeds({ hunts });
-          boutiqueNew = feeds.reduce((n, r) => n + (r.newItems ? r.newItems.length : 0), 0);
-          if (boutiqueNew) await notifyOwner(`Archive boutique new arrivals:\n${formatBoutiqueFeed(feeds)}`);
-        } catch (e) {
-          log.error("boutique feed failed", { reason: e.message });
-        }
-        // Price-watch: re-check watched listings via the LOCAL browser (Lloyd) and
-        // flag any drops / target hits. Done here on Lloyd, not the remote resale.
+        // Price-watch is a SEPARATE feature (watched specific listings for drops),
+        // not the hunt feed -- keep it as its own check and ping.
         const flagged = await checkWatched();
         if (flagged.length) await notifyOwner(`Price drop:\n${formatWatchFlags(flagged)}`);
-        // Browser-only saved-search sites (Poshmark/Depop/Grailed/TheRealReal):
-        // the REMOTE (Azure) resale specialist has no browser, so its
-        // run_saved_searches above only covered eBay + Brave. Pull the hunt list
-        // back over the delegate seam and run the browser-only sites here on
-        // Lloyd. Skipped when resale is LOCAL (the in-process specialist already
-        // ran every site, so this would just duplicate it).
-        let browserNew = 0;
-        if (chooseTransport("resale") === "remote") {
-          try {
-            const browserRun = await runSavedSearches({ scope: "local", searches: hunts });
-            browserNew = browserRun.reduce((n, r) => n + r.newHits.length, 0);
-            if (browserNew) await notifyOwner(`New resale finds (browser sites):\n${formatSavedSearchRun(browserRun)}`);
-          } catch (e) {
-            log.error("local browser saved-search run failed", { reason: e.message });
-          }
-        }
-        log.info("resale run complete", { slot: slot.label, priceFlags: flagged.length, firstLookNew: feedNew, boutiqueNew, browserNew });
+        log.info("resale run complete", { slot: slot.label, finds: finds.newItems.length, ...finds.counts, priceFlags: flagged.length });
       } catch (err) {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
