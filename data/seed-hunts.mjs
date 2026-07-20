@@ -8,14 +8,41 @@
 // exactly two pieces; edit HUNTS and re-run to change the list, or use
 // add_saved_search / remove_saved_search through Shey for one-offs.
 //
+// WHERE IT WRITES (read before running): this writes to whatever store the env
+// points at. When resale runs REMOTE (COS_SPECIALIST_MODE=remote + a resale
+// endpoint), Shey reads her OWN Azure Table, not local JSON. Running this on
+// Lloyd without COS_TABLE_* then seeds ./data/saved-searches.json, which the
+// remote Shey never reads -- the hunts look "added" but never search. In that
+// case, either set resale's COS_TABLE_* before running, or (simpler) add through
+// Shey directly ("hunt the <piece>") so add_saved_search writes to her store.
+// The guard below refuses this footgun unless SEED_HUNTS_FORCE_LOCAL=1.
+//
 // Usage:
-//   node data/seed-hunts.mjs
+//   node data/seed-hunts.mjs                        # local store (or COS_TABLE_* table)
+//   COS_TABLE_ENDPOINT=... node data/seed-hunts.mjs # seed resale's remote table
+//   SEED_HUNTS_FORCE_LOCAL=1 node data/seed-hunts.mjs  # force local write anyway
 //
 // Each hunt's `query` doubles as the search term sent to every source (platforms
 // AND the archive boutiques) and as the text the new-arrival feeds hone against, so
 // keep it a good, specific search phrase: brand + the distinctive descriptor.
 
 import { addSavedSearch, listSavedSearches, formatSavedSearchList } from "../src/saved-searches.js";
+import { usingTableStore } from "../src/stores/collection.js";
+
+// Guard the footgun: resale remote + no table configured means we'd seed the local
+// JSON store that the remote Shey never reads. Refuse with an actionable message
+// unless the caller opts into a local write explicitly (dev/local-mode seeding).
+if (process.env.COS_SPECIALIST_MODE === "remote" && !usingTableStore() && process.env.SEED_HUNTS_FORCE_LOCAL !== "1") {
+  console.error(
+    "Refusing to seed: resale runs REMOTE (COS_SPECIALIST_MODE=remote) but no COS_TABLE_* is set,\n" +
+    "so this would write ./data/saved-searches.json -- a store the remote Shey never reads.\n" +
+    "Do one of:\n" +
+    "  - add through Shey directly:  text \"hunt the <piece>\" (writes to her own store), or\n" +
+    "  - set resale's COS_TABLE_ENDPOINT / COS_TABLE_CONNECTION_STRING + COS_TABLE_NAME, then re-run, or\n" +
+    "  - SEED_HUNTS_FORCE_LOCAL=1 to write the local store anyway (local/dev only)."
+  );
+  process.exit(1);
+}
 
 const HUNTS = [
   {
