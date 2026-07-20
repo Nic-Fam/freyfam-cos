@@ -374,7 +374,7 @@ const REGISTRY = {
       searchToolDef,
       {
         name: "add_saved_search",
-        description: "Register a designer piece to hunt across resale sites.",
+        description: "Register a designer piece to hunt across resale sites. Use this ONLY when a family member (Shelli or Nic) explicitly asks to hunt/track/watch for a specific piece. NEVER infer a hunt from a favorites list, wishlist, browsing history, memory, or chatter -- if you think something is worth hunting, suggest it and let them confirm. The hunt list is the single source of resale scope.",
         input_schema: obj({
           query: { type: "string" },
           label: { type: "string" },

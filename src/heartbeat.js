@@ -21,7 +21,7 @@ import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLas
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate, chooseTransport } from "./delegate.js";
-import { runSavedSearches, fetchHuntsViaDelegate, formatSavedSearchRun } from "./saved-searches.js";
+import { runSavedSearches, fetchHuntsViaDelegate, formatSavedSearchRun, listSavedSearches } from "./saved-searches.js";
 import { cooRoster } from "./companies.js";
 import { runCooReview, shouldRunReview, getReviewState, setReviewRan } from "./coo-review.js";
 import { budgetState } from "./cost-ledger.js";
@@ -545,13 +545,28 @@ async function maybeRunResale() {
           task: "Run all saved searches now (run_saved_searches) and report ONLY new matches since last time. If there are no new matches, reply with exactly: NONE",
         });
         if (resText && !/^\s*NONE\s*\.?\s*$/i.test(resText)) await notifyOwner(`New resale finds:\n${resText}`);
+        // Load the active hunt list ONCE so the whole-grid feeds below hone to the
+        // specific pieces the family EXPLICITLY registered, never dumping the grid.
+        // This list is the single source of resale scope; if it fails to load we
+        // leave it empty, and the feeds then surface nothing (safe: under-alert, not
+        // firehose). Remote: pull from resale's own store over the delegate seam
+        // (Lloyd has no direct access to it); local: read the shared store directly.
+        let hunts = [];
+        try {
+          hunts = chooseTransport("resale") === "remote"
+            ? await fetchHuntsViaDelegate(delegate)
+            : await listSavedSearches();
+        } catch (e) {
+          log.error("resale hunt list load failed", { reason: e.message });
+        }
         // TheRealReal First Look feed: read the early-access new-arrivals grid via
-        // the LOCAL signed-in browser (Shelli's profile) and surface NEW items.
-        // Generic web search can't see member-only early access, so this is its
-        // own feed. No-ops gracefully (empty) if the profile isn't signed in.
+        // the LOCAL signed-in browser (Shelli's profile) and surface NEW items that
+        // match a hunt. Generic web search can't see member-only early access, so
+        // this is its own feed. No-ops gracefully (empty) if the profile isn't
+        // signed in.
         let feedNew = 0;
         try {
-          const feed = await runFirstLookFeed();
+          const feed = await runFirstLookFeed({ hunts });
           feedNew = feed.newItems.length;
           if (feedNew) await notifyOwner(`First Look new arrivals:\n${formatFeedItems(feed.newItems)}`);
         } catch (e) {
@@ -559,10 +574,11 @@ async function maybeRunResale() {
         }
         // Archive-boutique feeds: read public curated-shop storefronts (Allison's
         // Archive, LAL Vintage, ...) via the LOCAL browser for NEW listings a web
-        // search would miss. No login needed; seeds silently per shop on first run.
+        // search would miss, honed to the hunt list. No login needed; seeds silently
+        // per shop on first run.
         let boutiqueNew = 0;
         try {
-          const feeds = await runBoutiqueFeeds();
+          const feeds = await runBoutiqueFeeds({ hunts });
           boutiqueNew = feeds.reduce((n, r) => n + (r.newItems ? r.newItems.length : 0), 0);
           if (boutiqueNew) await notifyOwner(`Archive boutique new arrivals:\n${formatBoutiqueFeed(feeds)}`);
         } catch (e) {
@@ -581,7 +597,6 @@ async function maybeRunResale() {
         let browserNew = 0;
         if (chooseTransport("resale") === "remote") {
           try {
-            const hunts = await fetchHuntsViaDelegate(delegate);
             const browserRun = await runSavedSearches({ scope: "local", searches: hunts });
             browserNew = browserRun.reduce((n, r) => n + r.newHits.length, 0);
             if (browserNew) await notifyOwner(`New resale finds (browser sites):\n${formatSavedSearchRun(browserRun)}`);

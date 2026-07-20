@@ -50,7 +50,7 @@ import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
-import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isAuthorizedSender } from "./guards.js";
+import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
@@ -212,7 +212,7 @@ const tools = [
   {
     name: "send_email",
     description:
-      "Send an email from the assistant mailbox. High-stakes: requires owner approval. To copy people, use the `cc`/`bcc` fields (comma-separated) -- do NOT write 'CC:'/'BCC:' lines in the body, those are just text and do not actually copy anyone. To loop Nic/Shelli in, CC their address here so they really receive it.",
+      "Send an email from the assistant mailbox. High-stakes: requires owner approval -- EXCEPT when every recipient is one of the family's own personal inboxes (e.g. emailing Nic or Shelli something), which sends immediately with no approval. Any outside or work-domain (flyerdefense/disney) recipient still needs approval. To copy people, use the `cc`/`bcc` fields (comma-separated) -- do NOT write 'CC:'/'BCC:' lines in the body, those are just text and do not actually copy anyone. To loop Nic/Shelli in, CC their address here so they really receive it.",
     input_schema: {
       type: "object",
       properties: {
@@ -1038,11 +1038,23 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
       // Flag if ANY recipient (to/cc/bcc) is on a work domain. Split first so a
       // comma-separated string is classified per-address, not as one blob.
       const split = (v) => String(v ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-      const flag = isWorkDomain([...split(to), ...split(cc), ...split(bcc)]) ? " [WORK DOMAIN]" : "";
+      const recipients = [...split(to), ...split(cc), ...split(bcc)];
+      const flag = isWorkDomain(recipients) ? " [WORK DOMAIN]" : "";
       // Append Lloyd's signature so every outbound email is signed consistently
       // (he's told not to add his own sign-off). Stored on the staged action so
       // the approved send matches the preview.
       const signed = `${String(body).trimEnd()}\n\n${GRAPH.signature}`;
+      const copies = [cc ? `cc ${cc}` : "", bcc ? `bcc ${bcc}` : ""].filter(Boolean).join(", ");
+      // Self-email carve-out (policy 2026-07): when every recipient is one of the
+      // family's OWN non-work inboxes, this isn't acting on their behalf to an
+      // outsider, so send it directly — no approval. Any outside or work-domain
+      // recipient still routes through the confirmation gate below (constraints #1, #2).
+      if (isFamilySelfEmail(recipients)) {
+        await sendMail({ to, cc, bcc, subject, body: signed });
+        await recordEmailContact(to);
+        await logAction("email", `Sent email to ${to}${subject ? ` re: "${subject}"` : ""}`);
+        return `Sent your email to ${to}${copies ? ` (${copies})` : ""} (subject: ${subject}). No approval needed — it only went to your own inbox.`;
+      }
       // Show cc/bcc in the approval preview so the owner sees exactly who is copied.
       const ccLine = cc ? `\nCc: ${cc}` : "";
       const bccLine = bcc ? `\nBcc: ${bcc}` : "";
@@ -1052,7 +1064,6 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         { to, cc, bcc, subject, body: signed },
         { thread }
       );
-      const copies = [cc ? `cc ${cc}` : "", bcc ? `bcc ${bcc}` : ""].filter(Boolean).join(", ");
       return `Ready to email ${to}${copies ? ` (${copies})` : ""}${flag} (subject: ${subject}). ${instruction}`;
     },
     fetch_document: async ({ url }) => {

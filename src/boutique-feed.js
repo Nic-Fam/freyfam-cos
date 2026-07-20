@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createCollection } from "./stores/collection.js";
 import { readListingFeed } from "./channels/browser.js";
+import { matchesAnyHunt } from "./saved-searches.js";
 
 // ===========================================================================
 // Archive-boutique new-arrivals feed. Small curated vintage/archive shops (e.g.
@@ -9,9 +10,13 @@ import { readListingFeed } from "./channels/browser.js";
 // (no login), so the local headless browser can read them directly — like the TRR
 // First Look feed but for public shops, and safe to run autonomously on the daemon.
 //
-// Most are Shopify (/products/ links), so readListingFeed's default anchor works.
-// Read-only; nothing acts or spends. Configure via BOUTIQUE_FEEDS (JSON array of
-// {name, url, anchorPrefix?, fields?}); the default hunts the Dsquared2 feather top.
+// The SHOPS are configured; WHAT we look for is the hunt list. Each run searches
+// every shop for each active hunt (the family's registered pieces), so a boutique
+// only ever surfaces the pieces they explicitly asked to hunt, and searching a new
+// piece is just adding a saved search — no code change. Configure the shops via
+// BOUTIQUE_FEEDS (JSON array of {name, search, anchorPrefix?, fields?}), where
+// `search` is a URL template with a {q} placeholder for the hunt query; most are
+// Shopify (/products/ links), so the default is `<origin>/search?q={q}`.
 // SELECTOR CAVEAT: field selectors vary per shop, so we key on the product href
 // (always present) and derive a name from the slug; add `fields` per boutique after
 // a live capture if you want richer titles. Degrades to "no finds", never crashes.
@@ -20,10 +25,29 @@ import { readListingFeed } from "./channels/browser.js";
 export const BOUTIQUES = (() => {
   try { const j = JSON.parse(process.env.BOUTIQUE_FEEDS || ""); if (Array.isArray(j) && j.length) return j; } catch { /* fall through */ }
   return [
-    { name: "Allison's Archive", url: "https://allisonsarchive.shop/search?q=dsquared", anchorPrefix: "/products/" },
-    { name: "LAL Vintage", url: "https://lalvintage.com/search?q=dsquared", anchorPrefix: "/products/" },
+    { name: "Allison's Archive", search: "https://allisonsarchive.shop/search?q={q}", anchorPrefix: "/products/" },
+    { name: "LAL Vintage", search: "https://lalvintage.com/search?q={q}", anchorPrefix: "/products/" },
   ];
 })();
+
+/**
+ * Build a shop's search URL for one hunt query. Prefers the `{q}` placeholder in
+ * `search` (or a legacy `url`); if there's no placeholder, sets/overrides the `q`
+ * query param (so a legacy static `?q=dsquared` becomes hunt-driven too). Pure.
+ */
+export function buildBoutiqueSearchUrl(boutique, query) {
+  const template = String(boutique?.search || boutique?.url || "");
+  const q = String(query || "");
+  if (template.includes("{q}")) return template.replace(/\{q\}/g, encodeURIComponent(q));
+  try {
+    const u = new URL(template);
+    u.searchParams.set("q", q);
+    return u.toString();
+  } catch {
+    const sep = template.includes("?") ? "&" : "?";
+    return `${template}${sep}q=${encodeURIComponent(q)}`;
+  }
+}
 
 const feedHits = () =>
   createCollection({ file: process.env.BOUTIQUE_FEED_HITS_PATH || "./data/boutique-feed-hits.json", partition: "boutiquefeedhit" });
@@ -121,12 +145,16 @@ export function formatBoutiqueFeed(results, { max = 10 } = {}) {
 }
 
 /**
- * Scan each boutique's storefront for NEW listings since the last run (deduped by
- * boutique+href). First run for a given boutique SEEDS SILENTLY (records all,
- * surfaces none) so it never dumps the whole shop. `read` injectable for tests.
+ * Search each configured shop for each active hunt and report NEW listings since the
+ * last run (deduped by boutique+href). The hunt list drives WHAT we search for: with
+ * NO hunts nothing is searched and nothing surfaces. First run for a given boutique
+ * SEEDS SILENTLY (records all, surfaces none) so it never dumps the whole shop. A
+ * shop's on-site search is fuzzy, so results are still honed against the hunt list
+ * before surfacing; every seen href is recorded so a non-match never resurfaces
+ * later either. `read` injectable for tests.
  * @returns {Promise<Array<{name, newItems, totalFound, seeded, error}>>}
  */
-export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new Date().toISOString(), boutiques = BOUTIQUES } = {}) {
+export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new Date().toISOString(), boutiques = BOUTIQUES, hunts = [] } = {}) {
   const col = feedHits();
   const existing = await col.list();
   const known = new Set(existing.map((h) => h.id));
@@ -134,31 +162,44 @@ export async function runBoutiqueFeeds({ read = readListingFeed, now = () => new
   // Listings the family rejected via email ("not right"): never surface these,
   // regardless of seen-history. Matched on canonical href.
   const dismissed = new Set(await listDismissedBoutique());
+  const queries = (Array.isArray(hunts) ? hunts : []).map((h) => h?.query).filter(Boolean);
   const results = [];
   for (const b of boutiques) {
-    let raw = [];
-    try {
-      const res = await read(b.url, { anchorPrefix: b.anchorPrefix || "/products/", fields: b.fields || {}, max: 60 });
-      raw = res.items || [];
-    } catch {
-      results.push({ name: b.name, newItems: [], totalFound: 0, seeded: false, error: true });
-      continue;
-    }
-    const base = (() => { try { return new URL(b.url).origin; } catch { return ""; } })();
-    const all = normalizeBoutiqueItems(raw, base);
     const firstRun = !boutiquesSeen.has(b.name);
     const fresh = [];
-    for (const it of all) {
-      // Match dismissals on the absolute canonical URL: alerts (hence rejects) carry
-      // absolute urls, feed items carry relative hrefs, and it.url reconciles both.
-      if (dismissed.has(it.url)) continue; // family said "not right" -> never surface
-      const id = hitId(b.name, it.href);
-      if (known.has(id)) continue;
-      known.add(id);
-      await col.add({ id, name: b.name, href: it.href, at: now() });
-      if (!firstRun) fresh.push(it);
+    const seenHref = new Set(); // dedup within this run across the shop's per-hunt searches
+    let totalFound = 0;
+    let attempted = false;
+    let anyOk = false;
+    // Search the shop once per hunt (the hunt list is what we look for).
+    for (const query of queries) {
+      attempted = true;
+      let raw = [];
+      const url = buildBoutiqueSearchUrl(b, query);
+      try {
+        const res = await read(url, { anchorPrefix: b.anchorPrefix || "/products/", fields: b.fields || {}, max: 60 });
+        raw = res.items || [];
+        anyOk = true;
+      } catch {
+        continue; // one query failing must not sink the shop's other searches
+      }
+      const base = (() => { try { return new URL(url).origin; } catch { return ""; } })();
+      for (const it of normalizeBoutiqueItems(raw, base)) {
+        if (seenHref.has(it.href)) continue; // same piece returned by two hunt searches
+        seenHref.add(it.href);
+        totalFound += 1;
+        // Match dismissals on the absolute canonical URL: alerts (hence rejects) carry
+        // absolute urls, feed items carry relative hrefs, and it.url reconciles both.
+        if (dismissed.has(it.url)) continue; // family said "not right" -> never surface
+        const id = hitId(b.name, it.href);
+        if (known.has(id)) continue;
+        known.add(id);
+        await col.add({ id, name: b.name, href: it.href, at: now() });
+        // Hone: a shop's search is fuzzy, so confirm the item matches a tracked piece.
+        if (!firstRun && matchesAnyHunt(it.name, hunts)) fresh.push(it);
+      }
     }
-    results.push({ name: b.name, newItems: fresh, totalFound: all.length, seeded: firstRun, error: false });
+    results.push({ name: b.name, newItems: fresh, totalFound, seeded: firstRun, error: attempted && !anyOk });
   }
   return results;
 }

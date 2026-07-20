@@ -94,20 +94,26 @@ test("placeFoodOrder falls back to manual placement when no steps are captured",
 });
 
 test("placeFoodOrder runs steps when provided (injected run + steps path)", async () => {
-  process.env.DOORDASH_STEPS_PATH = new URL("./fixtures/food-steps.json", import.meta.url).pathname;
-  const { writeFile, mkdir } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
-  await mkdir(dirname(process.env.DOORDASH_STEPS_PATH), { recursive: true });
-  await writeFile(process.env.DOORDASH_STEPS_PATH, JSON.stringify({ steps: [{ action: "goto", url: "https://www.doordash.com/orders/ccc" }] }));
-  let calledWith = null;
-  const msg = await placeFoodOrder(
-    { provider: "doordash", restaurant: "Pizzana", url: "https://www.doordash.com/orders/ccc", items: [] },
-    { run: async (a) => { calledWith = a; return { transcript: ["goto https://www.doordash.com/orders/ccc"] }; } }
-  );
-  assert.ok(calledWith, "run was called");
-  assert.equal(calledWith.url, "https://www.doordash.com/orders/ccc");
-  assert.match(msg, /DoorDash order placed for Pizzana/);
-  delete process.env.DOORDASH_STEPS_PATH;
+  // Write the steps fixture to a temp file (not into the repo tree) and clean it up.
+  const { writeFile, rm } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const { join } = await import("node:path");
+  const stepsPath = join(os.tmpdir(), "cos-food-steps-test.json");
+  process.env.DOORDASH_STEPS_PATH = stepsPath;
+  await writeFile(stepsPath, JSON.stringify({ steps: [{ action: "goto", url: "https://www.doordash.com/orders/ccc" }] }));
+  try {
+    let calledWith = null;
+    const msg = await placeFoodOrder(
+      { provider: "doordash", restaurant: "Pizzana", url: "https://www.doordash.com/orders/ccc", items: [] },
+      { run: async (a) => { calledWith = a; return { transcript: ["goto https://www.doordash.com/orders/ccc"] }; } }
+    );
+    assert.ok(calledWith, "run was called");
+    assert.equal(calledWith.url, "https://www.doordash.com/orders/ccc");
+    assert.match(msg, /DoorDash order placed for Pizzana/);
+  } finally {
+    await rm(stepsPath, { force: true });
+    delete process.env.DOORDASH_STEPS_PATH;
+  }
 });
 
 test("placeFoodOrder rejects an unknown provider without ordering", async () => {

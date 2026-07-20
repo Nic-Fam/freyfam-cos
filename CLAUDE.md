@@ -112,6 +112,10 @@ inside the specialist runner, not a caller change.
    the family's behalf (including to work domains), creating calendar invites, and
    anything irreversible require approval via `confirm.js`. Every outbound path that
    can act on the family's behalf MUST route through it. Never auto-approve.
+   **Self-email carve-out (policy 2026-07):** a `send_email` whose recipients are ALL
+   family-own NON-work inboxes (`guards.isFamilySelfEmail`) sends directly, no
+   approval — emailing the family themselves isn't acting on their behalf to an
+   outsider. Any outside or work-domain recipient still routes through the gate.
 3. **No money movement.** Finance agent surfaces actions; humans execute them.
 
 ## Model routing = the cost strategy

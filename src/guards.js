@@ -62,6 +62,24 @@ export function isFamilyAddress(from) {
 }
 
 /**
+ * True when EVERY recipient is one of the family's OWN NON-WORK addresses (and
+ * there is at least one). Emailing the family's own inboxes is not "acting on the
+ * family's behalf to an outside party", so send_email skips the confirmation gate
+ * for these (policy 2026-07: "I don't need to approve an email to myself"). A
+ * work-domain recipient (flyerdefense/disney — constraint #1) or ANY outside
+ * address fails the test, so those still route through confirmation. Accepts a
+ * string, a comma/semicolon list, or an array; splits each entry. Pure.
+ */
+export function isFamilySelfEmail(recipients) {
+  const list = (Array.isArray(recipients) ? recipients : [recipients])
+    .flatMap((v) => String(v || "").split(/[,;]/))
+    .map((a) => a.toLowerCase().trim())
+    .filter(Boolean);
+  if (!list.length) return false;
+  return list.every((a) => isFamilyAddress(a) && !isWorkDomain(a));
+}
+
+/**
  * True if `from` looks like an unattended/bulk/bounce sender we should not
  * auto-reply to. Matches on the local-part tokens and bulk subdomains above.
  */
