@@ -163,8 +163,12 @@ async function maybeScanShipments() {
     let tracked = 0, delivered = 0;
     for (const m of await recentShipmentMail({ top: 25 })) {
       if (isSelfAddress(m.from)) continue; // never act on our own outbound
+      // Real shipping notices come from carriers/retailers. A family sender is a
+      // personal email (forwarded carrier mail keeps the carrier's From), so skip
+      // it -- otherwise a casual "on the way / arriving Sunday" mints a phantom.
+      if (isFamilyAddress(m.from)) continue;
       if (!isShippingEmail(m.subject, m.body) && !isDeliveryConfirmation(m.subject, m.body)) continue;
-      const r = await processShipmentEmail({ subject: m.subject, body: m.body });
+      const r = await processShipmentEmail({ subject: m.subject, body: m.body, from: m.from });
       tracked += r.tracked.length;
       delivered += r.delivered.length;
     }

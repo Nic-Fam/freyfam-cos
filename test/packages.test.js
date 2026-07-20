@@ -122,6 +122,37 @@ test("a plain marketing email with no ETA and no shipping subject mints no packa
   assert.deepEqual(await pkg.listActivePackages(), []);
 });
 
+test("extractRetailer uses the sender domain and rejects nav-menu boilerplate", () => {
+  // Real Amazon shipping email: the body's "Your Orders Your Account Buy Again
+  // Your package" nav chrome must NOT become the retailer; the sender does.
+  const navBody = "Your Orders Your Account Buy Again Your package was shipped!";
+  assert.equal(pkg.extractRetailer("Shipped: \"Old Spice Men's...\"", navBody, "shipment-tracking@amazon.com"), "Amazon");
+  assert.equal(pkg.extractRetailer("Shipped: \"Old Spice Men's...\"", navBody), "", "no sender + nav-junk body => no bogus retailer");
+  assert.equal(pkg.retailerFromSender("no-reply@therealreal.com"), "The RealReal");
+});
+
+test("real Amazon trackingless shipping notice: tracked with a clean 'Amazon' label", async () => {
+  // Verbatim shape of the 2026-07-19 cos@ email (Amazon uses no carrier number here).
+  const subject = 'Shipped: "Old Spice Men\'s..."';
+  const body = "Your Orders Your Account Buy Again Your package was shipped! Ordered Shipped Out for delivery Delivered Arriving today Nic - LA CRESCENTA, CA";
+  const r = await pkg.processShipmentEmail({ subject, body, from: "shipment-tracking@amazon.com" });
+  assert.equal(r.found.length, 0, "Amazon logistics email has no carrier tracking number");
+  assert.equal(r.tracked.length, 1, "tracked via synthetic id on the shipping subject");
+  assert.equal(r.retailer, "Amazon", "retailer from sender, not the nav-menu junk");
+  const [p] = await pkg.listActivePackages();
+  assert.equal(p.retailer, "Amazon");
+  assert.equal(p.hasTracking, false);
+});
+
+test("a personal reply that merely says 'on the way' with a stray date mints no package", async () => {
+  // Real cos@ false positive: a family reply about a visit, not a shipment.
+  const subject = "Re: Visit Stewart and Val";
+  const body = "It's an afternoon bbq so afternoon dinnerish time. So no eggs n things on the way out. The visit moved to Sunday, Aug 16.";
+  const r = await pkg.processShipmentEmail({ subject, body, from: "Nic@Freyfam.com" });
+  assert.equal(r.tracked.length, 0, "no shipping subject and not a known retailer sender => no phantom package");
+  assert.deepEqual(await pkg.listActivePackages(), []);
+});
+
 test("a home-delivery package is tracked but never enters the pickup queue", async () => {
   await pkg.processShipmentEmail({ subject: "Shipped", body: "On its way to your home. Tracking TBA303384950001", description: "Soap" });
   assert.equal((await pkg.listActivePackages()).length, 1);

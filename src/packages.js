@@ -134,15 +134,47 @@ export function extractEta(subject = "", body = "") {
   return "";
 }
 
+// Known carrier/retailer sender domains -> a clean display name. The sender is a
+// far more reliable retailer signal than the body: retailer HTML is full of nav
+// chrome ("Your Orders Your Account Buy Again Your package...") that the body
+// heuristic below otherwise mis-captures. Ordered longest-match-agnostic (each
+// regex is anchored enough to be unambiguous).
+const RETAILER_DOMAINS = [
+  [/amazon\./, "Amazon"],
+  [/ups\.com/, "UPS"],
+  [/fedex\./, "FedEx"],
+  [/usps\.com/, "USPS"],
+  [/dhl\./, "DHL"],
+  [/therealreal\./, "The RealReal"],
+  [/vestiairecollective\./, "Vestiaire Collective"],
+  [/poshmark\./, "Poshmark"],
+  [/grailed\./, "Grailed"],
+  [/1stdibs\./, "1stDibs"],
+];
+
+/** Map a sender address to a known carrier/retailer name, or "". Pure. */
+export function retailerFromSender(from = "") {
+  const domain = (String(from).toLowerCase().split("@")[1] || "").trim();
+  if (!domain) return "";
+  for (const [re, name] of RETAILER_DOMAINS) if (re.test(domain)) return name;
+  return "";
+}
+
 /**
  * Best-effort retailer/brand name from a shipping notice, for a readable label
- * when there's no tracking number to show. Handles the common "Your <BRAND>
- * package ..." phrasing; falls back to "". Pure.
+ * when there's no tracking number to show. Prefers the SENDER domain (reliable);
+ * falls back to the "Your <BRAND> package ..." body phrasing, rejecting nav-menu
+ * captures ("Orders Your Account Buy Again Your"). Pure.
  */
-export function extractRetailer(subject = "", body = "") {
+export function extractRetailer(subject = "", body = "", from = "") {
+  const bySender = retailerFromSender(from);
+  if (bySender) return bySender;
   const m = `${subject}\n${body}`.match(/\byour\s+(.{2,40}?)\s+(?:package|order|shipment|parcel)\b/i);
   if (!m) return "";
   const name = m[1].replace(/\s+/g, " ").trim();
+  // Reject boilerplate/nav captures: account chrome tokens, or too many words to
+  // be a brand name (a real brand is 1-3 words; nav strings are longer).
+  if (/\b(account|buy again|sign in|orders?|your)\b/i.test(name) || name.split(/\s+/).length > 3) return "";
   // Title-case ALL-CAPS names ("THE REALREAL" -> "The Realreal"); leave mixed case.
   return /^[^a-z]*$/.test(name) ? name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : name;
 }
@@ -270,13 +302,14 @@ export function formatPackages(packages) {
  * either mark delivered (delivery confirmation) or track them (shipping notice).
  * Returns what changed so the caller can give the family a heads-up.
  */
-export async function processShipmentEmail({ subject = "", body = "", description = "" } = {}) {
+export async function processShipmentEmail({ subject = "", body = "", description = "", from = "" } = {}) {
   const found = extractTrackingNumbers(`${subject}\n${body}`);
   const isDelivery = isDeliveryConfirmation(subject, body);
   const owner = attributeOwner(subject, body);
   const { isPickup, location } = detectPickupLocation(subject, body);
   const eta = extractEta(subject, body);
-  const retailer = extractRetailer(subject, body);
+  const retailer = extractRetailer(subject, body, from);
+  const senderRetailer = retailerFromSender(from);
   const tracked = [];
   const delivered = [];
   for (const n of found) {
@@ -293,8 +326,12 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
   // in the digest / active list. Gated: only when there's a real shipping signal —
   // an ETA we parsed, or a shipping phrase in the SUBJECT — so marketing mail that
   // merely mentions "free shipping" doesn't mint phantom packages.
+  // Mint a trackingless shipment only on a REAL shipping signal: a shipping phrase
+  // in the SUBJECT, or an ETA we parsed from a KNOWN carrier/retailer sender. A
+  // bare body date alone is not enough -- a personal reply ("...on the way out...
+  // moved to Sunday, Aug 16") would otherwise mint a phantom package.
   const subjectIsShipping = SHIPPING_RE.test(String(subject).toLowerCase());
-  if (!isDelivery && found.length === 0 && (eta || subjectIsShipping)) {
+  if (!isDelivery && found.length === 0 && (subjectIsShipping || (eta && senderRetailer))) {
     const trackingNumber = syntheticKey(retailer, eta, subject);
     await addPackage({
       trackingNumber,
