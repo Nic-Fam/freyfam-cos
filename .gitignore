@@ -13,3 +13,4 @@ data/*
 !data/seed-hunts.mjs
 *.log
 .DS_Store
+test/fixtures/food-steps.json

@@ -12,6 +12,8 @@ import { dirname } from "node:path";
 const STORE_PATH = () => process.env.PACKAGES_PATH || "./data/packages.json";
 const MAX_TEXT = 50_000;
 
+const cap = (s) => (s ? `${s[0].toUpperCase()}${s.slice(1).toLowerCase()}` : s);
+
 // Ordered by specificity — UPS/Amazon before the broad digit patterns.
 const TRACKING_PATTERNS = [
   { carrier: "UPS", regex: /\b(1Z[A-Z0-9]{16})\b/gi, url: (n) => `https://www.ups.com/track?tracknum=${n}` },
@@ -39,10 +41,17 @@ export function extractTrackingNumbers(text) {
   return found;
 }
 
+// In-transit phrasing carriers/retailers actually use. Broad on purpose: some
+// notices (e.g. The RealReal's "Your package is on the way", boutique/retailer
+// mail) never say "shipped" and carry NO tracking number, only an ETA — those
+// were slipping through the old "shipped|tracking|on its way" check entirely.
+const SHIPPING_RE =
+  /\b(shipped|has shipped|on (its|the|your) way|out for delivery|in transit|tracking number|tracking|arriving|will arrive|estimated (to arrive|delivery)|expected (to arrive|delivery)|has an estimated delivery)\b/;
+
 /** True if the email looks like a shipping/in-transit notice. Pure. */
 export function isShippingEmail(subject, body) {
   const text = `${subject || ""} ${body || ""}`.toLowerCase();
-  return /\b(shipped|tracking|on its way|out for delivery|in transit|has shipped)\b/.test(text);
+  return SHIPPING_RE.test(text);
 }
 
 /**
@@ -97,6 +106,86 @@ export function detectPickupLocation(subject = "", body = "") {
   return { isPickup: false, location: "" };
 }
 
+const WEEKDAY = "(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*";
+const MONTH = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*";
+
+/**
+ * Best-effort delivery ETA from a shipping notice, as a short human label (e.g.
+ * "Monday 07/27/2026 by 9:00 PM"). Retailer/carrier ETAs are the ONLY date many
+ * notices carry (no tracking number), so this is what surfaces the package in the
+ * morning digest's "Arriving:" line. Returns "" when nothing parseable. Pure.
+ */
+export function extractEta(subject = "", body = "") {
+  const text = `${subject}\n${body}`.replace(/[ \t]+/g, " ");
+  const time = (text.match(/\bby\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))\b/i) || [])[1];
+  const withTime = (d) => (time ? `${d} by ${time.replace(/\s+/g, " ").toUpperCase()}` : d);
+  // "Monday 07/27/2026" / "Monday, 7/27" (weekday then a numeric date)
+  let m = text.match(new RegExp(`\\b(${WEEKDAY})\\b[,\\s]*\\b(\\d{1,2}\\/\\d{1,2}(?:\\/\\d{2,4})?)\\b`, "i"));
+  if (m) return withTime(`${cap(m[1])} ${m[2]}`);
+  // "Monday, July 27" (weekday then a month name + day)
+  m = text.match(new RegExp(`\\b(${WEEKDAY})\\b[,\\s]*\\b(${MONTH}\\.?\\s+\\d{1,2}(?:,?\\s+\\d{4})?)`, "i"));
+  if (m) return withTime(`${cap(m[1])}, ${m[2].replace(/\b\w/g, (c) => c.toUpperCase())}`);
+  // Bare "July 27" / "Jul 27, 2026" near an arrive/deliver word
+  m = text.match(new RegExp(`\\b(?:arrive|arriving|deliver(?:y|ed|ered)?|by|before|expected)\\b[^\\n]{0,24}?\\b(${MONTH}\\.?\\s+\\d{1,2}(?:,?\\s+\\d{4})?)`, "i"));
+  if (m) return withTime(m[1].replace(/\b\w/g, (c) => c.toUpperCase()));
+  // Bare numeric date near an arrive/deliver word
+  m = text.match(/\b(?:arrive|arriving|deliver(?:y|ed|ered)?|by|before|expected)\b[^\n]{0,24}?\b(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/i);
+  if (m) return withTime(m[1]);
+  return "";
+}
+
+// Known carrier/retailer sender domains -> a clean display name. The sender is a
+// far more reliable retailer signal than the body: retailer HTML is full of nav
+// chrome ("Your Orders Your Account Buy Again Your package...") that the body
+// heuristic below otherwise mis-captures. Ordered longest-match-agnostic (each
+// regex is anchored enough to be unambiguous).
+const RETAILER_DOMAINS = [
+  [/amazon\./, "Amazon"],
+  [/ups\.com/, "UPS"],
+  [/fedex\./, "FedEx"],
+  [/usps\.com/, "USPS"],
+  [/dhl\./, "DHL"],
+  [/therealreal\./, "The RealReal"],
+  [/vestiairecollective\./, "Vestiaire Collective"],
+  [/poshmark\./, "Poshmark"],
+  [/grailed\./, "Grailed"],
+  [/1stdibs\./, "1stDibs"],
+];
+
+/** Map a sender address to a known carrier/retailer name, or "". Pure. */
+export function retailerFromSender(from = "") {
+  const domain = (String(from).toLowerCase().split("@")[1] || "").trim();
+  if (!domain) return "";
+  for (const [re, name] of RETAILER_DOMAINS) if (re.test(domain)) return name;
+  return "";
+}
+
+/**
+ * Best-effort retailer/brand name from a shipping notice, for a readable label
+ * when there's no tracking number to show. Prefers the SENDER domain (reliable);
+ * falls back to the "Your <BRAND> package ..." body phrasing, rejecting nav-menu
+ * captures ("Orders Your Account Buy Again Your"). Pure.
+ */
+export function extractRetailer(subject = "", body = "", from = "") {
+  const bySender = retailerFromSender(from);
+  if (bySender) return bySender;
+  const m = `${subject}\n${body}`.match(/\byour\s+(.{2,40}?)\s+(?:package|order|shipment|parcel)\b/i);
+  if (!m) return "";
+  const name = m[1].replace(/\s+/g, " ").trim();
+  // Reject boilerplate/nav captures: account chrome tokens, or too many words to
+  // be a brand name (a real brand is 1-3 words; nav strings are longer).
+  if (/\b(account|buy again|sign in|orders?|your)\b/i.test(name) || name.split(/\s+/).length > 3) return "";
+  // Title-case ALL-CAPS names ("THE REALREAL" -> "The Realreal"); leave mixed case.
+  return /^[^a-z]*$/.test(name) ? name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : name;
+}
+
+// Stable synthetic id for a shipment we can't key by tracking number (retailer +
+// ETA). Re-scanning the same notice collapses to the same key, so it dedupes.
+function syntheticKey(retailer, eta, subject) {
+  const slug = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  return `notrack:${slug(retailer) || "pkg"}:${slug(eta) || slug(subject) || "x"}`;
+}
+
 // --- local store ------------------------------------------------------------
 
 async function load() {
@@ -114,7 +203,7 @@ async function save(db) {
 
 /** Upsert a tracked package (keeps the original addedAt + any pickup scheduling). */
 export async function addPackage(
-  { trackingNumber, carrier, description = "", url = "", owner, pickup, location },
+  { trackingNumber, carrier, description = "", url = "", owner, pickup, location, eta, retailer, hasTracking },
   now = Date.now()
 ) {
   if (!trackingNumber) return;
@@ -128,6 +217,9 @@ export async function addPackage(
     owner: owner || prev?.owner || "nic",        // who it's for (drives pickup urgency)
     pickup: pickup ?? prev?.pickup ?? false,     // true => sent to a pickup location
     location: location || prev?.location || "",  // pickup location label, if any
+    eta: eta || prev?.eta || "",                 // human ETA label (retailer notices often have only this)
+    retailer: retailer || prev?.retailer || "",  // brand name, for a readable label when there's no number
+    hasTracking: hasTracking ?? prev?.hasTracking ?? true, // false => synthetic id, no carrier tracking number
     pickupScheduledAt: prev?.pickupScheduledAt || null, // set once we propose a pickup event
     addedAt: prev?.addedAt || new Date(now).toISOString(),
     delivered: prev?.delivered || false,
@@ -194,8 +286,13 @@ export function formatPackages(packages) {
     .map((p) => {
       const date = p.addedAt ? new Date(p.addedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "unknown";
       const who = p.owner ? `${p.owner[0].toUpperCase()}${p.owner.slice(1)}: ` : "";
+      const label = p.description || (p.retailer ? `${p.retailer} package` : "Package");
+      // With a real tracking number show "carrier number"; trackingless shows just the carrier/brand.
+      const dupCarrier = p.carrier && label.toLowerCase().includes(p.carrier.toLowerCase());
+      const id = p.hasTracking === false ? (p.carrier && p.carrier !== "Unknown" && !dupCarrier ? ` — ${p.carrier}` : "") : ` — ${p.carrier} ${p.trackingNumber}`;
       const pickup = p.pickup ? ` [pickup${p.location ? ` @ ${p.location}` : ""}]` : "";
-      return `${who}${p.description || "Package"} — ${p.carrier} ${p.trackingNumber}${pickup} (since ${date})${p.url ? `\n  ${p.url}` : ""}`;
+      const when = p.eta ? ` (arriving ${p.eta})` : ` (since ${date})`;
+      return `${who}${label}${id}${pickup}${when}${p.url ? `\n  ${p.url}` : ""}`;
     })
     .join("\n");
 }
@@ -205,11 +302,14 @@ export function formatPackages(packages) {
  * either mark delivered (delivery confirmation) or track them (shipping notice).
  * Returns what changed so the caller can give the family a heads-up.
  */
-export async function processShipmentEmail({ subject = "", body = "", description = "" } = {}) {
+export async function processShipmentEmail({ subject = "", body = "", description = "", from = "" } = {}) {
   const found = extractTrackingNumbers(`${subject}\n${body}`);
   const isDelivery = isDeliveryConfirmation(subject, body);
   const owner = attributeOwner(subject, body);
   const { isPickup, location } = detectPickupLocation(subject, body);
+  const eta = extractEta(subject, body);
+  const retailer = extractRetailer(subject, body, from);
+  const senderRetailer = retailerFromSender(from);
   const tracked = [];
   const delivered = [];
   for (const n of found) {
@@ -217,9 +317,29 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
       await markDelivered(n.trackingNumber, Date.now(), { pickup: isPickup, location });
       delivered.push(n);
     } else {
-      await addPackage({ ...n, description, owner, pickup: isPickup, location });
+      await addPackage({ ...n, description, owner, pickup: isPickup, location, eta, retailer });
       tracked.push(n);
     }
   }
-  return { isDelivery, found, tracked, delivered, owner, pickup: isPickup, location };
+  // Trackingless in-transit notice (retailer mail like The RealReal carries an ETA
+  // but no carrier number). Record it under a stable synthetic id so it still shows
+  // in the digest / active list. Gated: only when there's a real shipping signal —
+  // an ETA we parsed, or a shipping phrase in the SUBJECT — so marketing mail that
+  // merely mentions "free shipping" doesn't mint phantom packages.
+  // Mint a trackingless shipment only on a REAL shipping signal: a shipping phrase
+  // in the SUBJECT, or an ETA we parsed from a KNOWN carrier/retailer sender. A
+  // bare body date alone is not enough -- a personal reply ("...on the way out...
+  // moved to Sunday, Aug 16") would otherwise mint a phantom package.
+  const subjectIsShipping = SHIPPING_RE.test(String(subject).toLowerCase());
+  if (!isDelivery && found.length === 0 && (subjectIsShipping || (eta && senderRetailer))) {
+    const trackingNumber = syntheticKey(retailer, eta, subject);
+    await addPackage({
+      trackingNumber,
+      carrier: retailer || "Retailer",
+      description: description || (retailer ? `${retailer} package` : "Package"),
+      owner, pickup: isPickup, location, eta, retailer, hasTracking: false,
+    });
+    tracked.push({ trackingNumber, carrier: retailer || "Retailer", eta, hasTracking: false });
+  }
+  return { isDelivery, found, tracked, delivered, owner, pickup: isPickup, location, eta, retailer };
 }
