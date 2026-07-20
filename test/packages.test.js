@@ -144,6 +144,39 @@ test("real Amazon trackingless shipping notice: tracked with a clean 'Amazon' la
   assert.equal(p.hasTracking, false);
 });
 
+test("Amazon Shipped then Delivered collapse into ONE package keyed by order #", async () => {
+  const order = "114-0189185-5373077";
+  const shipped = await pkg.processShipmentEmail({
+    subject: 'Shipped: "Old Spice Men\'s..."',
+    body: `Your package was shipped! Order # ${order} Arriving today`,
+    from: "shipment-tracking@amazon.com",
+  });
+  assert.equal(shipped.tracked.length, 1);
+  assert.equal(shipped.tracked[0].trackingNumber, `amzn:${order}`, "keyed by the Amazon order #");
+  let active = await pkg.listActivePackages();
+  assert.equal(active.length, 1);
+  assert.equal(active[0].description, "Old Spice Men's", "readable item from the subject");
+  assert.equal(active[0].retailer, "Amazon");
+
+  // The Delivered notice (also trackingless, same order #) closes the SAME package.
+  const del = await pkg.processShipmentEmail({
+    subject: 'Delivered: "Old Spice Men\'s..."',
+    body: `Delivered Order # ${order}`,
+    from: "order-update@amazon.com",
+  });
+  assert.equal(del.delivered.length, 1);
+  assert.equal(del.delivered[0].trackingNumber, `amzn:${order}`);
+  active = await pkg.listActivePackages();
+  assert.deepEqual(active, [], "one order in, one package out, delivered leaves the active list");
+});
+
+test("extractOrderNumber / extractSubjectItem pull the Amazon fields", () => {
+  assert.equal(pkg.extractOrderNumber("Shipped", "Order # 114-0189185-5373077 today"), "114-0189185-5373077");
+  assert.equal(pkg.extractOrderNumber("Shipped", "no order here"), "");
+  assert.equal(pkg.extractSubjectItem('Shipped: "Old Spice Men\'s..."'), "Old Spice Men's");
+  assert.equal(pkg.extractSubjectItem("Shipped: no quotes"), "");
+});
+
 test("a personal reply that merely says 'on the way' with a stray date mints no package", async () => {
   // Real cos@ false positive: a family reply about a visit, not a shipment.
   const subject = "Re: Visit Stewart and Val";

@@ -152,6 +152,23 @@ const RETAILER_DOMAINS = [
   [/1stdibs\./, "1stDibs"],
 ];
 
+// Amazon order number: 3-7-7 digits (e.g. 114-0189185-5373077). Stable across the
+// Ordered / Shipped / Delivered emails for one order, and present when there is no
+// carrier tracking number (Amazon logistics), so it's the right key to collapse
+// those three notices into a single package.
+const AMAZON_ORDER_RE = /\b(\d{3}-\d{7}-\d{7})\b/;
+
+/** Extract an Amazon order number from the text, or "". Pure. */
+export function extractOrderNumber(subject = "", body = "") {
+  return (`${subject}\n${body}`.match(AMAZON_ORDER_RE) || [])[1] || "";
+}
+
+/** The item name Amazon quotes in the subject (Shipped: "Old Spice..."), or "". */
+export function extractSubjectItem(subject = "") {
+  const m = String(subject).match(/"([^"]{2,120})"/);
+  return m ? m[1].replace(/\.{2,}$/, "").trim() : "";
+}
+
 /** Map a sender address to a known carrier/retailer name, or "". Pure. */
 export function retailerFromSender(from = "") {
   const domain = (String(from).toLowerCase().split("@")[1] || "").trim();
@@ -310,6 +327,7 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
   const eta = extractEta(subject, body);
   const retailer = extractRetailer(subject, body, from);
   const senderRetailer = retailerFromSender(from);
+  const orderNo = extractOrderNumber(subject, body);
   const tracked = [];
   const delivered = [];
   for (const n of found) {
@@ -320,6 +338,14 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
       await addPackage({ ...n, description, owner, pickup: isPickup, location, eta, retailer });
       tracked.push(n);
     }
+  }
+  // Trackingless DELIVERY (Amazon logistics carries no carrier number, only an
+  // order #). Close the package keyed by that order # so the Shipped notice we
+  // recorded earlier stops showing as active, instead of lingering forever.
+  if (isDelivery && found.length === 0 && orderNo) {
+    const key = `amzn:${orderNo}`;
+    await markDelivered(key, Date.now(), { pickup: isPickup, location });
+    delivered.push({ trackingNumber: key, hasTracking: false });
   }
   // Trackingless in-transit notice (retailer mail like The RealReal carries an ETA
   // but no carrier number). Record it under a stable synthetic id so it still shows
@@ -332,11 +358,15 @@ export async function processShipmentEmail({ subject = "", body = "", descriptio
   // moved to Sunday, Aug 16") would otherwise mint a phantom package.
   const subjectIsShipping = SHIPPING_RE.test(String(subject).toLowerCase());
   if (!isDelivery && found.length === 0 && (subjectIsShipping || (eta && senderRetailer))) {
-    const trackingNumber = syntheticKey(retailer, eta, subject);
+    // Key by the Amazon order # when present so this order's Ordered/Shipped/
+    // Delivered notices collapse into one package; else fall back to a subject/ETA
+    // synthetic key (retailer mail like The RealReal, which has no order #).
+    const trackingNumber = orderNo ? `amzn:${orderNo}` : syntheticKey(retailer, eta, subject);
+    const item = extractSubjectItem(subject);
     await addPackage({
       trackingNumber,
       carrier: retailer || "Retailer",
-      description: description || (retailer ? `${retailer} package` : "Package"),
+      description: description || item || (retailer ? `${retailer} package` : "Package"),
       owner, pickup: isPickup, location, eta, retailer, hasTracking: false,
     });
     tracked.push({ trackingNumber, carrier: retailer || "Retailer", eta, hasTracking: false });
