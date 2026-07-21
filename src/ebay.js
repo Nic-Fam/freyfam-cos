@@ -64,6 +64,7 @@ export function mapEbayItem(it) {
     url: it?.itemWebUrl || "",
     snippet: [priceStr, cond].filter(Boolean).join(" - "),
     price: Number.isFinite(price) ? price : null,
+    image: it?.image?.imageUrl || it?.thumbnailImages?.[0]?.imageUrl || "", // listing photo, for the vision assessment
   };
 }
 

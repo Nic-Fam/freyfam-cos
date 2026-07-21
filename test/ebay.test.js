@@ -9,7 +9,10 @@ beforeEach(() => _resetEbayAuth());
 
 test("mapEbayItem reduces an itemSummary to our standard row", () => {
   const r = mapEbayItem({ title: "Tabi 39", itemWebUrl: "https://ebay.com/itm/1", price: { value: "320.00", currency: "USD" }, condition: "Pre-owned" });
-  assert.deepEqual(r, { title: "Tabi 39", url: "https://ebay.com/itm/1", snippet: "$320 - Pre-owned", price: 320 });
+  assert.deepEqual(r, { title: "Tabi 39", url: "https://ebay.com/itm/1", snippet: "$320 - Pre-owned", price: 320, image: "" });
+  // The listing photo is carried through for the resale vision assessment.
+  const withImg = mapEbayItem({ title: "Tabi", itemWebUrl: "https://ebay.com/itm/2", image: { imageUrl: "https://i.ebayimg.com/x.jpg" } });
+  assert.equal(withImg.image, "https://i.ebayimg.com/x.jpg");
 });
 
 test("ebaySearch returns [] (no throw) when creds are unset", async () => {
