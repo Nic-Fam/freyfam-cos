@@ -15,12 +15,11 @@ const STATE_PATH = () => process.env.RESALE_SCHED_PATH || "./data/resale-schedul
 // 30 min comfortably covers the 15-min heartbeat (a tick always lands in it).
 const WINDOW_MIN = Number(process.env.RESALE_RUN_WINDOW_MIN ?? 30);
 
-// A daytime cadence (~every 2-2.5h) so the always-posting sites (Poshmark, eBay,
-// Vestiaire, 1stDibs) surface within a couple hours, while 07:05 and 16:05 still
-// hit TheRealReal's fixed 7a/4p drops exactly. ~7 runs/day balances freshness vs
-// cost (each run = a resale delegate + a Brave search per saved search). Override
+// Twice daily: 07:05 and 16:05 hit TheRealReal's fixed 7a/4p drops exactly, and
+// keep the family's inbox quiet the rest of the day (they asked for fewer emails).
+// Each run = a resale delegate + a Brave search per saved search. Override
 // "H:MM,..." — fewer times = cheaper/staler, more = fresher/pricier.
-const SLOTS = (process.env.RESALE_RUN_TIMES || "07:05,09:30,12:00,14:30,16:05,18:30,20:30")
+const SLOTS = (process.env.RESALE_RUN_TIMES || "07:05,16:05")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean)
