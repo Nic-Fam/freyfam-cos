@@ -100,3 +100,9 @@ test("changeKey is stable regardless of order", () => {
   const b = changeKey([{ tier: "triage", to: "claude-haiku-5" }, { tier: "standard", to: "claude-sonnet-5" }]);
   assert.equal(a, b);
 });
+
+test("isDeniedModel: denying claude-sonnet-5 does not deny the 5.5 point release", () => {
+  assert.equal(isDeniedModel("claude-sonnet-5-5"), false);
+  assert.equal(isDeniedModel("claude-sonnet-5-5", ["claude-sonnet-5"]), false);
+  assert.equal(isDeniedModel("claude-sonnet-5-20260901", ["claude-sonnet-5"]), true);
+});

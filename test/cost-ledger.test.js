@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { priceFor, costOfUsage, cycleKey, recordUsage, budgetState, cycleSummary } from "../src/cost-ledger.js";
+import { MODELS } from "../src/config.js";
 
 // Each test gets its own ledger file so accumulation is isolated.
 let path;
@@ -32,7 +33,7 @@ test("costOfUsage applies the price table per token bucket", () => {
 });
 
 test("an unknown model falls back to standard pricing", () => {
-  assert.deepEqual(priceFor("mystery-model"), priceFor("claude-sonnet-4-6"));
+  assert.deepEqual(priceFor("mystery-model"), priceFor(MODELS.standard));
 });
 
 test("cycleKey is a YYYY-MM month bucket", () => {

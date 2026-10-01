@@ -30,8 +30,11 @@ const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
 // change. cacheWrite/cacheRead default to the standard 1.25x / 0.10x of input.
 const DEFAULT_PRICES = {
   "claude-haiku-4-5": { input: 1, output: 5 },
+  "claude-haiku-4-5-20251001": { input: 1, output: 5 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
-  "claude-opus-4-8": { input: 15, output: 75 },
+  "claude-opus-4-8": { input: 5, output: 25 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20 },
 };
 function loadPrices() {
   let overrides = {};

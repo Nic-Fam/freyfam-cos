@@ -39,7 +39,10 @@ export const MODEL_DENYLIST = (process.env.MODEL_DENYLIST ?? "claude-sonnet-5")
 // keeps it from over-matching a differently-numbered family member.
 export function isDeniedModel(id, denylist = MODEL_DENYLIST) {
   const s = String(id || "");
-  return denylist.some((d) => s === d || s.startsWith(`${d}-`));
+  // Only the exact id or a DATED snapshot (-YYYYMMDD) of it. A bare prefix match
+  // would wrongly deny the next point release (claude-sonnet-5 must NOT deny
+  // claude-sonnet-5-5).
+  return denylist.some((d) => s === d || (s.startsWith(`${d}-`) && /^\d{8}$/.test(s.slice(d.length + 1))));
 }
 
 const isDatedSnapshot = (id) => /-\d{8}$/.test(String(id || ""));

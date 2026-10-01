@@ -7,15 +7,15 @@ import { isCoo, isCompanyAgent } from "./companies.js";
 // Confirm exact model IDs / snapshots at https://docs.claude.com/en/docs/about-claude/models
 // ---------------------------------------------------------------------------
 export const MODELS = {
-  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5-20251001",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-4-6", // the workhorse (see NOTE)
-  // NOTE 2026-07-01: reverted from "claude-sonnet-5". That model returned EMPTY on
-  // long/tool-heavy standard-tier outputs (the morning digest composed 0 chars; short
-  // replies like "OK" slipped through, masking it), so the digest silently stopped and
-  // any substantial standard-tier email/voice reply came back blank. Verified same-prompt:
-  // sonnet-4-6 -> full 3.4k digest, sonnet-5 -> 0. Re-attempt sonnet-5 only after tuning
-  // max_tokens / thinking so long outputs aren't truncated.
-  heavy: process.env.MODEL_HEAVY || "claude-opus-4-8",      // high-stakes / agentic only
+  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5-20251001",   // cheap router + heartbeat gate (still the newest Haiku)
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse (see NOTE)
+  // NOTE 2026-10-01: moved to the 5.5 generation. History: claude-sonnet-5 was reverted
+  // 2026-07-01 because it returned EMPTY on long/tool-heavy outputs (digest composed 0
+  // chars). Root cause: 5.x models run adaptive thinking by default and thinking counts
+  // against max_tokens, so our 1024/2048 budgets were spent thinking before any text.
+  // complete() in claude.js now raises the max_tokens floor and sets an effort level
+  // for 5.x models (MODEL_MIN_MAX_TOKENS / MODEL_EFFORT), which fixes that.
+  heavy: process.env.MODEL_HEAVY || "claude-opus-5-5",      // high-stakes / agentic only
 };
 
 // Map a triage complexity verdict to a model tier.

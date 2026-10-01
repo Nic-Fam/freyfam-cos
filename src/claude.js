@@ -68,6 +68,25 @@ export function withConvoCacheBreakpoint(messages) {
   return out;
 }
 
+// 5.x models (Sonnet 5+, Opus 5+, Fable, Mythos) run ADAPTIVE THINKING by default,
+// and thinking tokens count against max_tokens. Our call sites were sized for
+// non-thinking models (1024/2048), which is exactly how claude-sonnet-5 came back
+// with zero text on the morning digest (see NOTE in config.js). For those models:
+// raise max_tokens to a floor (you only pay for tokens actually generated) and set
+// an explicit effort so thinking stays proportionate. Older models are untouched.
+export const THINKING_MODEL_RE = /^claude-(sonnet|opus|fable|mythos|haiku)-([5-9]|\d{2,})(-|$)/;
+export function isThinkingByDefault(model) {
+  return THINKING_MODEL_RE.test(String(model || ""));
+}
+export function applyThinkingDefaults(req, env = process.env) {
+  if (!isThinkingByDefault(req.model)) return req;
+  const floor = Number(env.MODEL_MIN_MAX_TOKENS || 8192);
+  if (!(req.max_tokens >= floor)) req.max_tokens = floor;
+  const effort = env.MODEL_EFFORT || "medium"; // low | medium | high | xhigh | max
+  req.output_config = { ...(req.output_config || {}), effort };
+  return req;
+}
+
 /**
  * Single completion. Caches tools (last tool gets the breakpoint) and system.
  * `cacheConversation` adds a third breakpoint on the growing message history
@@ -86,6 +105,7 @@ export async function complete({
     max_tokens: maxTokens,
     messages: cacheConversation ? withConvoCacheBreakpoint(messages) : messages,
   };
+  applyThinkingDefaults(req);
   if (system) req.system = system;
   if (tools && tools.length) {
     // Mark the final tool so the whole tool block is cached — 1h TTL, same as the
@@ -98,7 +118,12 @@ export async function complete({
   }
   // The 1h cache TTL requires the extended-cache-ttl beta header. Harmless if the
   // feature is GA; required while it's beta.
-  return client.messages.create(req, { headers: { "anthropic-beta": "extended-cache-ttl-2025-04-11" } });
+  const resp = await client.messages.create(req, { headers: { "anthropic-beta": "extended-cache-ttl-2025-04-11" } });
+  // Loud signal for the old silent failure: budget spent with no text produced.
+  if (resp?.stop_reason === "max_tokens" && !textOf(resp) && !toolUses(resp).length) {
+    console.warn(`[claude] ${model} hit max_tokens (${req.max_tokens}) with NO text output; raise maxTokens or MODEL_MIN_MAX_TOKENS`);
+  }
+  return resp;
 }
 
 export function textOf(resp) {
