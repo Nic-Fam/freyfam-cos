@@ -124,6 +124,24 @@ test("the digest forbids 'nothing to report' filler and stale completion notices
   assert.match(p, /Never report that something is already finished/i);
 });
 
+test("dinner out weighs BOTH calendars and won't pitch a family dinner for one person", () => {
+  const p = buildDigestPrompt(WED, TZ);
+  assert.match(p, /FIRST WORK OUT WHO IS ACTUALLY THERE/);
+  assert.match(p, /the same event often appears on BOTH Nic's and\s+Shelli's calendars/);
+  assert.match(p, /Both Nic and Shelli at it: suggest dinner for the two of them/);
+  assert.match(p, /Only ONE of them out: do NOT pitch a dinner out/);
+});
+
+test("follow-ups exclude routine, self-completing things (no 'how did the dogs go')", () => {
+  const p = buildDigestPrompt(WED, TZ);
+  assert.match(p, /BE STRICT ABOUT WHAT EARNS A FOLLOW-UP/);
+  assert.match(p, /someone OUTSIDE the household/);
+  assert.match(p, /COMPLETE BY HAPPENING/);
+  assert.match(p, /dogs are out in the garden/);
+  assert.match(p, /Do not ask how any of them\s+went/);
+  assert.match(p, /no open follow-ups at all, omit\s+this whole section/);
+});
+
 test("extractDigest pulls fenced content and drops any preamble", () => {
   const raw = "Now I have everything I need. Note: today is...\n<digest>Good morning. Clear day.</digest>\ntrailing";
   assert.equal(extractDigest(raw), "Good morning. Clear day.");

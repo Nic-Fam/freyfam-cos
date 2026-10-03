@@ -113,26 +113,44 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
       : null,
     `- Dinner out: check today's schedule for an event in the DINNER window (~4:30-8:30 PM)
   at a location AWAY from home (the family lives in the La Crescenta area; a tour,
-  appointment, or plans in another neighborhood around that time counts). If there is
-  one, proactively suggest 2-3 well-reviewed dinner spots near that location: use
-  \`search\` (e.g. "best dinner restaurants near <place>") to find them, name each with
-  a one-line why, and offer to check a table (find_reservation) or book (make_reservation).
-  Keep it to a few lines. Skip entirely if the evening is free, plans are at home, or
-  nothing is near dinnertime -- don't force it.`,
+  appointment, or plans in another neighborhood around that time counts).
+  FIRST WORK OUT WHO IS ACTUALLY THERE. list_calendar merges both calendars and
+  names whose each event is on, and the same event often appears on BOTH Nic's and
+  Shelli's calendars (and the attendee list says who else is invited). Check both
+  before deciding, and say who the suggestion is for:
+    - Both Nic and Shelli at it: suggest dinner for the two of them (note that Fox
+      would need to be covered if it runs past his bedtime routine).
+    - Only ONE of them out: do NOT pitch a dinner out. One person at an evening
+      appointment is not a family dinner plan. Mention it only if they would
+      plausibly want to grab something solo on the way home, in one short line.
+  When a dinner out does make sense, suggest 2-3 well-reviewed spots near that
+  location: use \`search\` (e.g. "best dinner restaurants near <place>") to find them,
+  name each with a one-line why, and offer to check a table (find_reservation) or
+  book (make_reservation). Keep it to a few lines. Skip entirely if the evening is
+  free, plans are at home, or nothing is near dinnertime -- don't force it.`,
     moveSaleSection(move),
     commuteSection(plan),
     `- Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
-  needs a next step (a house tour, a meeting with a named outside person, an
-  appointment with an action afterward), check list_tasks; if no open follow-up
-  exists for it yet, create one with add_task, phrased as the ACTION and dated
-  ${date} (e.g. add_task title "Follow up: email Deborah re: Fairview tour"
-  dueDate ${date}). Then call list_tasks and surface EVERY open follow-up plus
-  anything overdue or due today AS A NUMBERED LIST (1., 2., 3. ...), keeping the
-  SAME order and numbers list_tasks returns so a later "done 2" maps to the right
-  one. The numbers make it easy to see at a glance which items are done or still
-  need input. Close the section with exactly: "To clear any of these, reply 'done 2'
-  with its number (or 'done <the item>'), and I'll mark it handled."
+  genuinely needs a next step, check list_tasks; if no open follow-up exists for it
+  yet, create one with add_task, phrased as the ACTION and dated ${date} (e.g.
+  add_task title "Follow up: email Deborah re: Fairview tour" dueDate ${date}).
+  BE STRICT ABOUT WHAT EARNS A FOLLOW-UP. Only create one when ALL of these hold:
+    1. it involves someone OUTSIDE the household, or leaves a decision/deliverable
+       still open (a tour to respond to, a quote to chase, a form to send back), AND
+    2. something would actually go wrong if it were forgotten.
+  Never create a follow-up for a routine or self-completing thing. Chores, reminders,
+  household tasks, personal routines and recurring events COMPLETE BY HAPPENING: once
+  the dogs are out in the garden, the trash is at the curb, or a workout is done,
+  there is nothing to follow up on and nothing to report. Do not ask how any of them
+  went, and do not add them to the list.
+  Then call list_tasks and surface EVERY open follow-up plus anything overdue or due
+  today AS A NUMBERED LIST (1., 2., 3. ...), keeping the SAME order and numbers
+  list_tasks returns so a later "done 2" maps to the right one. The numbers make it
+  easy to see at a glance which items are done or still need input. Close the section
+  with exactly: "To clear any of these, reply 'done 2' with its number (or 'done <the
+  item>'), and I'll mark it handled." If there are no open follow-ups at all, omit
+  this whole section including that closing line.
   GROUNDING (important): never state that a task, hunt, tour, or action is "over",
   "done", "completed", or "wrapped up" unless list_tasks shows it done or the
   family told you. If you are not sure, treat it as still OPEN. Do not invent
