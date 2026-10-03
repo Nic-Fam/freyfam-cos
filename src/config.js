@@ -7,15 +7,17 @@ import { isCoo, isCompanyAgent } from "./companies.js";
 // Confirm exact model IDs / snapshots at https://docs.claude.com/en/docs/about-claude/models
 // ---------------------------------------------------------------------------
 export const MODELS = {
-  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5-20251001",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-4-6", // the workhorse (see NOTE)
-  // NOTE 2026-07-01: reverted from "claude-sonnet-5". That model returned EMPTY on
-  // long/tool-heavy standard-tier outputs (the morning digest composed 0 chars; short
-  // replies like "OK" slipped through, masking it), so the digest silently stopped and
-  // any substantial standard-tier email/voice reply came back blank. Verified same-prompt:
-  // sonnet-4-6 -> full 3.4k digest, sonnet-5 -> 0. Re-attempt sonnet-5 only after tuning
-  // max_tokens / thinking so long outputs aren't truncated.
-  heavy: process.env.MODEL_HEAVY || "claude-opus-4-8",      // high-stakes / agentic only
+  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5",   // cheap router + heartbeat gate
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse (see NOTE)
+  // NOTE 2026-10-03: moved to the current generation. Sonnet 5.5 and Opus 5.5 are
+  // both CHEAPER than the 4.x models they replace ($2/$10 vs Sonnet 4.6's $3/$15;
+  // $4/$20 vs Opus 4.8's $5/$25), so this is a quality AND cost win.
+  // History: "claude-sonnet-5" was reverted 2026-07-01 because it returned EMPTY on
+  // long/tool-heavy standard-tier output (the morning digest composed 0 chars).
+  // claude-sonnet-5-5 is a DIFFERENT, later model, not that one - but watch the
+  // first few digests for empty output and fall back to claude-sonnet-4-6 via
+  // MODEL_STANDARD if it ever recurs.
+  heavy: process.env.MODEL_HEAVY || "claude-opus-5-5",      // complex / agentic only
 };
 
 // Map a triage complexity verdict to a model tier.
@@ -327,6 +329,38 @@ export const SLACK = {
 };
 
 // ---------------------------------------------------------------------------
+// Family week shape. This is what makes the morning digest ADAPTIVE instead of
+// templated: the digest only asks for a commute, work-location weather, or a
+// daycare drop-off when someone is actually doing that today. Weekends drop all
+// three; a work-from-home day drops that person's commute and work weather.
+//
+// Days are JS weekday numbers: 0=Sun, 1=Mon ... 6=Sat. Every list is overridable
+// by env (comma-separated); setting one to an EMPTY string means "none", while
+// leaving it unset keeps the default below.
+// ---------------------------------------------------------------------------
+function dayList(raw, fallback) {
+  if (raw === undefined || raw === null) return fallback;
+  return String(raw)
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+}
+
+export const SCHEDULE = {
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  // Days anyone is expected at a workplace at all.
+  workDays: dayList(process.env.FAMILY_WORK_DAYS, [1, 2, 3, 4, 5]),
+  // Days Fox is at Woodbury Preschool (drives the drop-off leg + his daily note).
+  daycareDays: dayList(process.env.DAYCARE_DAYS, [1, 2, 3, 4, 5]),
+  people: [
+    // Nic's morning drive is CHAINED through Fox's daycare on daycare days.
+    { name: "Nic", wfhDays: dayList(process.env.NIC_WFH_DAYS, []), chainedDaycare: true },
+    // Shelli works from home on Fridays, so no commute/work weather for her then.
+    { name: "Shelli", wfhDays: dayList(process.env.SHELLI_WFH_DAYS, [5]), chainedDaycare: false },
+  ],
+};
+
+// ---------------------------------------------------------------------------
 // Morning digest (ported from the legacy assistant). Fires once per local day
 // in a morning window; Lloyd composes it by delegating to the specialists.
 // ---------------------------------------------------------------------------
@@ -340,6 +374,11 @@ export const DIGEST = {
   // is internal tools, so nothing here needs paid search. Left as an opt-in
   // escape hatch for any other live lookup; flip to "true" to attach the tool.
   webSearch: String(process.env.DIGEST_WEB_SEARCH ?? "false").toLowerCase() === "true",
+  // One-off life events that should age OUT of the digest instead of lingering as
+  // a "nothing to do here" line forever. The move-sale line is data-driven (it is
+  // only requested when items are still draft/active), and this flag retires it
+  // outright once the move is finished.
+  moveSale: String(process.env.DIGEST_MOVE_SALE ?? "true").toLowerCase() === "true",
   // Email recipients for the digest (reliable now; SMS rides Twilio clearance).
   // Comma-separated; empty disables the email copy.
   emailTo: (process.env.DIGEST_EMAIL_TO || "nic@freyfam.com,shelli@freyfam.com")

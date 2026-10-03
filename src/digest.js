@@ -1,6 +1,8 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MODELS, DIGEST } from "./config.js";
+import { dayPlan } from "./schedule.js";
+import { summary as downsizingSummary } from "./downsizing.js";
 import { runChief } from "./orchestrator.js";
 import { postSlack } from "./channels/notify.js";
 import { sendMail } from "./channels/graph.js";
@@ -19,57 +21,107 @@ import { createLogger } from "./log.js";
 
 const log = createLogger("digest");
 
+/**
+ * Commute + weather, built from who is ACTUALLY going out today. On a weekend (or
+ * any day nobody leaves) this collapses to a single home-weather line and
+ * explicitly forbids work commutes, work-location temperatures, and daycare -
+ * the family doesn't need any of that on a day nobody travels. Pure.
+ */
+export function commuteSection(plan) {
+  if (!plan.anyOut) {
+    const why = plan.isWeekend ? "It is the weekend" : "Nobody is heading to a workplace today";
+    return `- Weather: call get_weather for HOME only and give one short line.
+  ${why}, so do NOT include any work commute, work-location temperature, or
+  daycare drop-off. Do not mention their absence either, just leave them out.`;
+  }
+  const legs = plan.out.map((p) =>
+    p.chainedDaycare && plan.daycare
+      ? `  - ${p.name}: CHAINED trip. Call commute_time for BOTH legs (home -> Woodbury
+    Preschool in Altadena to drop Fox off, then Woodbury -> ${p.name}'s work) and give
+    the TOTAL morning drive, not a straight home-to-work number.`
+      : `  - ${p.name}: call commute_time from home to ${p.name}'s work.`
+  );
+  const stops = plan.out.some((p) => p.chainedDaycare) && plan.daycare
+    ? "each workplace you routed to, plus Woodbury/Altadena"
+    : "each workplace you routed to";
+  const homeNote = plan.home.length
+    ? `\n  ${plan.home.map((p) => `${p.name} (${p.reason})`).join(" and ")} ${plan.home.length > 1 ? "are" : "is"} not
+  commuting today: give NO commute and NO work-location weather for ${plan.home.length > 1 ? "them" : "them"}.`
+    : "";
+  return `- Commute + weather, ONLY for the people heading out today:
+${legs.join("\n")}
+  Call get_weather at ${stops}. One short line per person who is traveling.${homeNote}`;
+}
+
+/** The move-sale line, only when items are still live. Pure. */
+export function moveSaleSection(move) {
+  if (!move) return null;
+  return `- Move sale: ${move.active} listed and ${move.draft} still in draft (${move.sold} sold).
+  One short line nudging the remaining drafts to get posted. Do not recap items
+  already sold or pulled.`;
+}
+
+/**
+ * Gather the day's shape before composing: who travels, whether daycare runs, and
+ * whether the move sale still has anything live. Doing this in CODE (not in the
+ * prompt) is what stops the digest asking for sections that cannot apply today.
+ */
+export async function buildDigestContext(now = new Date(), { tz = DIGEST.tz, moveSummary = downsizingSummary } = {}) {
+  const plan = dayPlan(now, tz);
+  let move = null;
+  if (DIGEST.moveSale) {
+    try {
+      const s = await moveSummary();
+      // Only surface it while something is still live. Once everything is sold or
+      // pulled the section disappears for good instead of reporting "done" daily.
+      if ((s?.draft || 0) + (s?.active || 0) > 0) move = s;
+    } catch {
+      /* a store hiccup must never block the digest */
+    }
+  }
+  return { plan, move };
+}
+
 // The prompt is built per-run so TODAY's date is injected as ground truth. The
 // model was unreliable at computing the date itself (it once wrote "June 22 /
 // Monday" on Sunday the 21st and then dropped that day's events as "past"), so we
 // hand it the authoritative weekday + ISO key and tell it to anchor on them.
-export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz) {
+// `ctx` (see buildDigestContext) decides which sections are even requested.
+export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) {
   const human = new Intl.DateTimeFormat("en-US", {
     timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric",
   }).format(now);
   const { date } = localParts(now, tz); // YYYY-MM-DD
-  // Weather comes from get_weather (free NWS, no metered web_search) at the same
-  // destinations as the commute, so the two share one bullet.
-  const commuteLine =
-    `- Commute + weather: the house rules list home plus each person's destination
-  and that Shelli keeps her own schedule. Nic's morning drive is a CHAINED trip
-  through Fox's daycare: home to Woodbury Preschool (Altadena) to drop Fox off,
-  then Woodbury to Nic's work. Call commute_time for BOTH legs (home->Woodbury
-  and Woodbury->Nic's work) and give Nic's total morning drive, not a straight
-  home->work number. For Shelli, call commute_time home to her work. Call
-  get_weather at each destination (Woodbury/Altadena and each workplace) today.
-  Give a one-line per-person heads-up. Skip anyone not heading out today (e.g. on
-  a weekend, skip work commutes; on a daycare day include the Woodbury leg).`;
-  return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
+  const { plan, move } = ctx || { plan: dayPlan(now, tz), move: null };
 
-Compose a brief MORNING DIGEST for the family.
-
-Gather what you need first:
-- Today's schedule: call list_calendar with days 1 (it merges Nic's and Shelli's
+  // Only ask for the sections that can actually apply today. Anything that cannot
+  // (a commute on a weekend, Fox's day when daycare is closed, a finished move
+  // sale) is omitted from the brief entirely rather than asked-for-then-skipped.
+  const sections = [
+    `- Today's schedule: call list_calendar with days 1 (it merges Nic's and Shelli's
   calendars; each event names whose calendar it is on). Anything dated ${date} is
   today. List EVERY non-work event for today with its time and whose it is; do not
   omit or merge them away (an all-day event does not cover timed ones). For WORK
   events, though, include ONLY the single earliest one of the day (per person) so
   we know when the day starts; do not list the rest of that person's work events.
   Treat an event as a work event if it is on a work calendar or has an attendee at
-  a work domain (flyerdefense.com for Nic, disney.com for Shelli).
-- Fox's day at Woodbury Preschool: call fox_today. Include his activities and the
+  a work domain (flyerdefense.com for Nic, disney.com for Shelli).`,
+    plan.daycare
+      ? `- Fox's day at Woodbury Preschool: call fox_today. Include his activities and the
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
-  full change of clothes on water days).
-- Dinner out: check today's schedule for an event in the DINNER window (~4:30-8:30 PM)
+  full change of clothes on water days).`
+      : null,
+    `- Dinner out: check today's schedule for an event in the DINNER window (~4:30-8:30 PM)
   at a location AWAY from home (the family lives in the La Crescenta area; a tour,
   appointment, or plans in another neighborhood around that time counts). If there is
   one, proactively suggest 2-3 well-reviewed dinner spots near that location: use
   \`search\` (e.g. "best dinner restaurants near <place>") to find them, name each with
   a one-line why, and offer to check a table (find_reservation) or book (make_reservation).
   Keep it to a few lines. Skip entirely if the evening is free, plans are at home, or
-  nothing is near dinnertime -- don't force it.
-- Move sale: call list_downsizing. If it shows any ACTIVE or DRAFT items, add one
-  short line: how many are live, how many sold, and how many drafts still need to be
-  posted (nudge to post the drafts, since the move is close). If there are none, skip
-  this entirely.
-${commuteLine}
-- Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
+  nothing is near dinnertime -- don't force it.`,
+    moveSaleSection(move),
+    commuteSection(plan),
+    `- Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
   needs a next step (a house tour, a meeting with a named outside person, an
   appointment with an action afterward), check list_tasks; if no open follow-up
@@ -84,31 +136,45 @@ ${commuteLine}
   GROUNDING (important): never state that a task, hunt, tour, or action is "over",
   "done", "completed", or "wrapped up" unless list_tasks shows it done or the
   family told you. If you are not sure, treat it as still OPEN. Do not invent
-  completion.
-- Package deliveries expected today: call list_packages and include anything arriving
+  completion.`,
+    `- Package deliveries expected today: call list_packages and include anything arriving
   today or in transit (what it is + carrier + ETA/status). A short "Arriving:" line;
-  skip it entirely if nothing is on the way.
-- Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).
-- Recent vendor/food receipts: call list_receipts. If any, fold the notable totals
+  skip it entirely if nothing is on the way.`,
+    `- Meals planned + anything expiring in the kitchen: delegate to chef (Carmine).`,
+    `- Recent vendor/food receipts: call list_receipts. If any, fold the notable totals
   into the finance heads-up (spend) and flag grocery receipts in the kitchen note as
-  food coming in. Skip the whole thing if there are none.
-- Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
+  food coming in. Skip the whole thing if there are none.`,
+    `- Anything money-related worth a heads-up: delegate to finance (Patrick). (Spend
   trends live in the separate weekly finance report, so keep this to anything
   time-sensitive: a bill due, an unusual charge worth flagging today.) Any finance
   flag MUST be grounded in a real logged transaction (actual merchant + amount +
   date); never invent amounts, totals, or "unnamed withdrawals". If nothing real is
-  worth flagging, omit the finance section entirely.
-- Any security flags: delegate to security (Frank).
-- Notable resale finds worth a glance: delegate to resale (Shey). Her saved-search
+  worth flagging, omit the finance section entirely.`,
+    `- Any security flags: delegate to security (Frank).`,
+    `- Notable resale finds worth a glance: delegate to resale (Shey). Her saved-search
   "traces" are ONGOING hunts, never one-and-done: report any NEW results as the
   action ("Dsquared trace: 2 new matches, take a look"), and never say a trace is
-  "over" or "done" -- a hunt with no new results today is simply quiet, still running.
+  "over" or "done" -- a hunt with no new results today is simply quiet, still running.`,
+  ].filter(Boolean);
+
+  return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
+
+Compose a brief MORNING DIGEST for the family.
+
+Gather what you need first:
+${sections.join("\n")}
 
 Then write it warm, short, and scannable: a one-line greeting that names ${human},
-today's schedule, the per-person commute + weather lines, Fox's day + wardrobe
-note, the follow-ups & open actions (with the "reply 'done <item>'" clear line),
-any package deliveries expected today, meals plus any prep reminder, and any flags.
-Skip sections that have nothing.
+then only the parts that have something to say today.
+
+WRITE WHAT MATTERS, OMIT THE REST. This is the most important rule:
+- If a section has nothing to report, leave it out COMPLETELY: no heading, no
+  "nothing today", no "all clear", no "no new matches", no empty bullet.
+- Never report that something is already finished, handled, or no longer running.
+  A finished thing is simply absent from the digest, not announced again.
+- Do not narrate what you skipped or why. The family should see only live items.
+- Vary the shape to the day. A quiet day should be a few short lines; do not pad
+  it out to look like a full template.
 Plain punctuation, no em dashes.
 
 Output ONLY the finished digest, wrapped exactly in <digest> and </digest> tags,
@@ -206,11 +272,13 @@ export function digestSubject(now = new Date()) {
  * (reliable today). Each send is independent, so one failing never blocks the
  * other. Channels injectable for tests.
  */
-export async function runMorningDigest({ runner = runChief, notify = postSlack, mail = sendMail } = {}) {
+export async function runMorningDigest({ runner = runChief, notify = postSlack, mail = sendMail, now = new Date() } = {}) {
   // Weather now comes from the free get_weather tool, so the digest no longer
   // needs the metered web_search tool. DIGEST.webSearch stays as an opt-in
   // escape hatch (default off) for any other live lookup the chief might want.
-  const text = await runner(buildDigestPrompt(), MODELS.standard, { webSearch: DIGEST.webSearch });
+  // The context decides which sections are requested at all (see buildDigestContext).
+  const ctx = await buildDigestContext(now);
+  const text = await runner(buildDigestPrompt(now, DIGEST.tz, ctx), MODELS.standard, { webSearch: DIGEST.webSearch });
   const body = extractDigest(text);
   if (!body) {
     log.warn("digest produced no text; nothing sent");

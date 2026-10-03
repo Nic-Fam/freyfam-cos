@@ -34,12 +34,13 @@ const FAMILIES = { triage: "claude-haiku", standard: "claude-sonnet", heavy: "cl
 export const MODEL_DENYLIST = (process.env.MODEL_DENYLIST ?? "claude-sonnet-5")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
-// Denied if the id equals a denylist entry or is one of its dated snapshots
-// (claude-sonnet-5 also denies claude-sonnet-5-20260901). The trailing "-" guard
-// keeps it from over-matching a differently-numbered family member.
+// Denied if the id equals a denylist entry or is one of its DATED snapshots
+// (claude-sonnet-5 also denies claude-sonnet-5-20260901). It must NOT swallow a
+// later version in the same family: claude-sonnet-5-5 is a different, newer model
+// than claude-sonnet-5, so only an 8-digit date suffix counts as the same model.
 export function isDeniedModel(id, denylist = MODEL_DENYLIST) {
   const s = String(id || "");
-  return denylist.some((d) => s === d || s.startsWith(`${d}-`));
+  return denylist.some((d) => s === d || new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}$`).test(s));
 }
 
 const isDatedSnapshot = (id) => /-\d{8}$/.test(String(id || ""));

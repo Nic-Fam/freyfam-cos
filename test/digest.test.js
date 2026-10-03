@@ -3,7 +3,8 @@ import assert from "node:assert";
 import { rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { shouldRunDigest, runMorningDigest, buildDigestPrompt, extractDigest, getLastDigestDate, setLastDigestDate, getDigestAlertedDate, setDigestAlertedDate } from "../src/digest.js";
+import { shouldRunDigest, runMorningDigest, buildDigestPrompt, buildDigestContext, extractDigest, getLastDigestDate, setLastDigestDate, getDigestAlertedDate, setDigestAlertedDate } from "../src/digest.js";
+import { dayPlan } from "../src/schedule.js";
 
 const TZ = "America/Los_Angeles";
 const opts = { hour: 7, tz: TZ, windowHours: 2 };
@@ -59,6 +60,68 @@ test("buildDigestPrompt asks for anticipated package deliveries", () => {
   const p = buildDigestPrompt(new Date("2026-06-21T19:00:00Z"), TZ);
   assert.match(p, /list_packages/);
   assert.match(p, /package deliveries expected today/i);
+});
+
+// --- adaptive sections: only ask for what applies today ---------------------
+
+const WED = new Date("2026-10-07T16:00:00Z"); // Wednesday PT
+const FRI = new Date("2026-10-09T16:00:00Z"); // Friday PT
+const SAT = new Date("2026-10-10T16:00:00Z"); // Saturday PT
+
+test("weekend digest drops commutes, work-location weather, and daycare entirely", () => {
+  const p = buildDigestPrompt(SAT, TZ);
+  assert.doesNotMatch(p, /commute_time/, "no commute routing on a weekend");
+  assert.doesNotMatch(p, /fox_today/, "no daycare note when daycare is closed");
+  assert.doesNotMatch(p, /Woodbury/, "no daycare location at all");
+  assert.match(p, /get_weather for HOME only/i, "home weather is still useful");
+  assert.match(p, /do NOT include any work commute/i);
+});
+
+test("Friday digest routes Nic but not Shelli (she works from home)", () => {
+  const p = buildDigestPrompt(FRI, TZ);
+  assert.match(p, /Nic: CHAINED trip/, "Nic still has the chained daycare drive");
+  assert.doesNotMatch(p, /home to Shelli's work/, "no commute leg for Shelli");
+  assert.match(p, /Shelli \(works from home today\)/);
+  assert.match(p, /NO commute and NO work-location weather/i);
+  assert.match(p, /fox_today/, "daycare still runs on Friday");
+});
+
+test("a normal weekday routes both people and includes the daycare leg", () => {
+  const p = buildDigestPrompt(WED, TZ);
+  assert.match(p, /Nic: CHAINED trip/);
+  assert.match(p, /Shelli: call commute_time from home to Shelli's work/);
+  assert.match(p, /fox_today/);
+});
+
+test("move sale is omitted unless something is still live, and never recaps sold items", () => {
+  const quiet = buildDigestPrompt(WED, TZ, { plan: dayPlan(WED, TZ), move: null });
+  assert.doesNotMatch(quiet, /Move sale/i, "a finished move must not appear at all");
+  assert.doesNotMatch(quiet, /list_downsizing/);
+
+  const live = buildDigestPrompt(WED, TZ, { plan: dayPlan(WED, TZ), move: { active: 3, draft: 2, sold: 7 } });
+  assert.match(live, /Move sale: 3 listed and 2 still in draft \(7 sold\)/);
+  assert.match(live, /Do not recap items\s+already sold or pulled/);
+});
+
+test("buildDigestContext suppresses the move sale once nothing is draft/active", async () => {
+  const done = await buildDigestContext(WED, { tz: TZ, moveSummary: async () => ({ active: 0, draft: 0, sold: 12, pulled: 3 }) });
+  assert.equal(done.move, null, "all sold/pulled -> section retires itself");
+
+  const live = await buildDigestContext(WED, { tz: TZ, moveSummary: async () => ({ active: 1, draft: 0, sold: 2 }) });
+  assert.ok(live.move, "still live -> section stays");
+});
+
+test("buildDigestContext survives a store failure", async () => {
+  const ctx = await buildDigestContext(WED, { tz: TZ, moveSummary: async () => { throw new Error("store gone"); } });
+  assert.equal(ctx.move, null);
+  assert.ok(ctx.plan, "the day plan is still computed");
+});
+
+test("the digest forbids 'nothing to report' filler and stale completion notices", () => {
+  const p = buildDigestPrompt(WED, TZ);
+  assert.match(p, /OMIT THE REST/);
+  assert.match(p, /"nothing today", no "all clear"/);
+  assert.match(p, /Never report that something is already finished/i);
 });
 
 test("extractDigest pulls fenced content and drops any preamble", () => {

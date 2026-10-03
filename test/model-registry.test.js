@@ -47,7 +47,11 @@ test("isDeniedModel matches the alias and its dated snapshots, not siblings", ()
   assert.equal(isDeniedModel("claude-sonnet-5"), true);
   assert.equal(isDeniedModel("claude-sonnet-5-20260901"), true, "dated snapshot of a denied model");
   assert.equal(isDeniedModel("claude-sonnet-4-6"), false);
-  assert.equal(isDeniedModel("claude-sonnet-50"), false, "trailing '-' guard prevents over-match");
+  assert.equal(isDeniedModel("claude-sonnet-50"), false, "must not over-match a different number");
+  // A LATER VERSION in the same family is a different model and must stay allowed.
+  // (claude-sonnet-5-5 is not the reverted claude-sonnet-5.)
+  assert.equal(isDeniedModel("claude-sonnet-5-5"), false, "a newer point release is not the denied model");
+  assert.equal(isDeniedModel("claude-sonnet-5-5-20261001"), false);
 });
 
 test("denylist keeps a reverted model (sonnet-5) from being auto-selected or notified", async () => {
