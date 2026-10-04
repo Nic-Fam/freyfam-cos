@@ -22,35 +22,51 @@ import { createLogger } from "./log.js";
 const log = createLogger("digest");
 
 /**
- * Commute + weather, built from who is ACTUALLY going out today. On a weekend (or
- * any day nobody leaves) this collapses to a single home-weather line and
- * explicitly forbids work commutes, work-location temperatures, and daycare -
- * the family doesn't need any of that on a day nobody travels. Pure.
+ * Weather + travel. Two rules drive this:
+ *   - HOME weather goes in every single day, regardless of who is going anywhere.
+ *   - Travel follows TODAY'S SCHEDULE FIRST. A real commitment (doctor, Gary's, a
+ *     tour) is the destination; the work commute is only a FALLBACK for a person
+ *     with nothing else on the calendar, and only on a day they'd be in-office.
+ * The plan supplies the fallback rules (who is in-office, whether daycare runs);
+ * the actual destinations come from the calendar at compose time. Pure.
  */
 export function commuteSection(plan) {
-  if (!plan.anyOut) {
-    const why = plan.isWeekend ? "It is the weekend" : "Nobody is heading to a workplace today";
-    return `- Weather: call get_weather for HOME only and give one short line.
-  ${why}, so do NOT include any work commute, work-location temperature, or
-  daycare drop-off. Do not mention their absence either, just leave them out.`;
-  }
-  const legs = plan.out.map((p) =>
+  const legFor = (p) =>
     p.chainedDaycare && plan.daycare
-      ? `  - ${p.name}: CHAINED trip. Call commute_time for BOTH legs (home -> Woodbury
-    Preschool in Altadena to drop Fox off, then Woodbury -> ${p.name}'s work) and give
-    the TOTAL morning drive, not a straight home-to-work number.`
-      : `  - ${p.name}: call commute_time from home to ${p.name}'s work.`
-  );
-  const stops = plan.out.some((p) => p.chainedDaycare) && plan.daycare
-    ? "each workplace you routed to, plus Woodbury/Altadena"
-    : "each workplace you routed to";
+      ? `    - ${p.name}: his drive is CHAINED through daycare. Route home -> Woodbury
+      Preschool (Altadena) to drop Fox off, then Woodbury -> wherever he is headed
+      (appointment or work), and give the TOTAL morning drive, not a single leg.`
+      : `    - ${p.name}: route home -> wherever ${p.name} is headed.`;
+
+  const fallback = plan.out.length
+    ? `Only if a person has NO away-from-home commitment on the calendar, fall back to
+  their work commute:
+${plan.out.map((p) => (p.chainedDaycare && plan.daycare
+      ? `    - ${p.name}: home -> Woodbury Preschool (Altadena) -> ${p.name}'s work, TOTAL drive.`
+      : `    - ${p.name}: home -> ${p.name}'s work.`)).join("\n")}`
+    : `There is NO work-commute fallback today${plan.isWeekend ? " (weekend)" : ""}: nobody is
+  due in an office, so route ONLY to what the calendar actually shows. Never invent a
+  work commute, and never include work-location weather.`;
+
   const homeNote = plan.home.length
-    ? `\n  ${plan.home.map((p) => `${p.name} (${p.reason})`).join(" and ")} ${plan.home.length > 1 ? "are" : "is"} not
-  commuting today: give NO commute and NO work-location weather for ${plan.home.length > 1 ? "them" : "them"}.`
+    ? `\n  ${plan.home.map((p) => `${p.name} (${p.reason})`).join(" and ")} ${plan.home.length > 1 ? "have" : "has"} no work
+  commute today: route ${plan.home.length > 1 ? "them" : "them"} only if the calendar puts ${plan.home.length > 1 ? "them" : "them"} somewhere.`
     : "";
-  return `- Commute + weather, ONLY for the people heading out today:
-${legs.join("\n")}
-  Call get_weather at ${stops}. One short line per person who is traveling.${homeNote}`;
+
+  const daycareNote = plan.daycare ? "" : `\n  Daycare is closed today, so never include a drop-off leg.`;
+
+  return `- Weather + travel:
+  ALWAYS call get_weather for HOME and give one short line. Do this EVERY day,
+  whether or not anyone leaves the house.
+  Travel is driven by TODAY'S SCHEDULE FIRST, not by a default commute:
+    1. For each person, find their FIRST commitment today that is away from home
+       (a doctor's appointment, Gary's, a tour, anything with a location). If there
+       is one, that is their destination: call commute_time from home to THAT place
+       and call get_weather there. This OUTRANKS any work commute.
+${plan.out.map(legFor).join("\n") || "    - (nobody is in-office today)"}
+    2. ${fallback}
+    3. A person with neither gets no travel line at all.
+  One short line per person who is actually going somewhere.${homeNote}${daycareNote}`;
 }
 
 /** The move-sale line, only when items are still live. Pure. */
@@ -229,7 +245,7 @@ export function localParts(now, tz) {
  * not already sent today. Returns the local date so the caller can record it.
  * Pure + exported for tests.
  */
-export function shouldRunDigest(now, lastRunDate, { hour = 7, tz = "America/Los_Angeles", windowHours = 2 } = {}) {
+export function shouldRunDigest(now, lastRunDate, { hour = 6, tz = "America/Los_Angeles", windowHours = 2 } = {}) {
   const { date, hour: h } = localParts(now, tz);
   const inWindow = h >= hour && h < hour + windowHours;
   return { run: inWindow && lastRunDate !== date, date };

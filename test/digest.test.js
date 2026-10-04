@@ -68,29 +68,36 @@ const WED = new Date("2026-10-07T16:00:00Z"); // Wednesday PT
 const FRI = new Date("2026-10-09T16:00:00Z"); // Friday PT
 const SAT = new Date("2026-10-10T16:00:00Z"); // Saturday PT
 
-test("weekend digest drops commutes, work-location weather, and daycare entirely", () => {
-  const p = buildDigestPrompt(SAT, TZ);
-  assert.doesNotMatch(p, /commute_time/, "no commute routing on a weekend");
-  assert.doesNotMatch(p, /fox_today/, "no daycare note when daycare is closed");
-  assert.doesNotMatch(p, /Woodbury/, "no daycare location at all");
-  assert.match(p, /get_weather for HOME only/i, "home weather is still useful");
-  assert.match(p, /do NOT include any work commute/i);
+test("home weather is requested every day, weekend included", () => {
+  for (const d of [WED, FRI, SAT]) {
+    assert.match(buildDigestPrompt(d, TZ), /ALWAYS call get_weather for HOME/, `home weather missing for ${d.toISOString()}`);
+  }
 });
 
-test("Friday digest routes Nic but not Shelli (she works from home)", () => {
-  const p = buildDigestPrompt(FRI, TZ);
-  assert.match(p, /Nic: CHAINED trip/, "Nic still has the chained daycare drive");
-  assert.doesNotMatch(p, /home to Shelli's work/, "no commute leg for Shelli");
-  assert.match(p, /Shelli \(works from home today\)/);
-  assert.match(p, /NO commute and NO work-location weather/i);
-  assert.match(p, /fox_today/, "daycare still runs on Friday");
-});
-
-test("a normal weekday routes both people and includes the daycare leg", () => {
+test("travel follows the schedule first, with work only as a fallback", () => {
   const p = buildDigestPrompt(WED, TZ);
-  assert.match(p, /Nic: CHAINED trip/);
-  assert.match(p, /Shelli: call commute_time from home to Shelli's work/);
-  assert.match(p, /fox_today/);
+  assert.match(p, /Travel is driven by TODAY'S SCHEDULE FIRST/);
+  assert.match(p, /FIRST commitment today that is away from home/);
+  assert.match(p, /a doctor's appointment, Gary's, a tour/);
+  assert.match(p, /This OUTRANKS any work commute/);
+  assert.match(p, /Only if a person has NO away-from-home commitment on the calendar, fall back/);
+});
+
+test("weekend still routes real appointments but has no work-commute fallback", () => {
+  const p = buildDigestPrompt(SAT, TZ);
+  assert.match(p, /ALWAYS call get_weather for HOME/);
+  assert.match(p, /There is NO work-commute fallback today \(weekend\)/);
+  assert.match(p, /Never invent a\s+work commute/);
+  assert.doesNotMatch(p, /Woodbury/, "daycare is closed on the weekend");
+  assert.doesNotMatch(p, /fox_today/);
+});
+
+test("Friday keeps Nic's chained daycare drive and leaves Shelli unrouted by default", () => {
+  const p = buildDigestPrompt(FRI, TZ);
+  assert.match(p, /Nic: his drive is CHAINED through daycare/);
+  assert.match(p, /Shelli \(works from home today\) has no work/);
+  assert.match(p, /route them only if the calendar puts them somewhere/);
+  assert.match(p, /fox_today/, "daycare still runs on Friday");
 });
 
 test("move sale is omitted unless something is still live, and never recaps sold items", () => {

@@ -365,7 +365,7 @@ export const SCHEDULE = {
 // in a morning window; Lloyd composes it by delegating to the specialists.
 // ---------------------------------------------------------------------------
 export const DIGEST = {
-  hour: Number(process.env.DIGEST_HOUR ?? 7),            // local hour to send
+  hour: Number(process.env.DIGEST_HOUR ?? 6),            // local hour to send
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
   windowHours: Number(process.env.DIGEST_WINDOW_HOURS ?? 2), // catch-up window after `hour`
   enabled: String(process.env.DIGEST_ENABLED ?? "true").toLowerCase() === "true",
