@@ -55,14 +55,28 @@ ${plan.out.map((p) => (p.chainedDaycare && plan.daycare
 
   const daycareNote = plan.daycare ? "" : `\n  Daycare is closed today, so never include a drop-off leg.`;
 
+  // Weather is listed SEPARATELY from routing on purpose. Tying it to "wherever a
+  // person is headed" silently dropped Woodbury: Fox is there all day even though
+  // nobody's trip ENDS there, and it is the forecast they dress him for.
+  const weatherStops = [
+    `    - HOME, every single day, whether or not anyone leaves the house.`,
+    plan.daycare
+      ? `    - Woodbury Preschool (Altadena), because Fox is there all day. Include it
+      whenever daycare runs, even though it is only a drop-off stop on the way to
+      somewhere else: it is the forecast they dress Fox for.`
+      : null,
+    `    - every place someone actually travels to below (an appointment location, or
+      their workplace). Do not skip the workplace just because it is the fallback.`,
+  ].filter(Boolean);
+
   return `- Weather + travel:
-  ALWAYS call get_weather for HOME and give one short line. Do this EVERY day,
-  whether or not anyone leaves the house.
-  Travel is driven by TODAY'S SCHEDULE FIRST, not by a default commute:
+  WEATHER: call get_weather for EACH of these and give a short line each:
+${weatherStops.join("\n")}
+  TRAVEL is driven by TODAY'S SCHEDULE FIRST, not by a default commute:
     1. For each person, find their FIRST commitment today that is away from home
        (a doctor's appointment, Gary's, a tour, anything with a location). If there
-       is one, that is their destination: call commute_time from home to THAT place
-       and call get_weather there. This OUTRANKS any work commute.
+       is one, that is their destination: call commute_time from home to THAT place.
+       This OUTRANKS any work commute.
 ${plan.out.map(legFor).join("\n") || "    - (nobody is in-office today)"}
     2. ${fallback}
     3. A person with neither gets no travel line at all.

@@ -70,13 +70,30 @@ const SAT = new Date("2026-10-10T16:00:00Z"); // Saturday PT
 
 test("home weather is requested every day, weekend included", () => {
   for (const d of [WED, FRI, SAT]) {
-    assert.match(buildDigestPrompt(d, TZ), /ALWAYS call get_weather for HOME/, `home weather missing for ${d.toISOString()}`);
+    assert.match(buildDigestPrompt(d, TZ), /HOME, every single day/, `home weather missing for ${d.toISOString()}`);
   }
+});
+
+test("Woodbury weather is requested on daycare days even though it is only a drop-off stop", () => {
+  for (const d of [WED, FRI]) {
+    const p = buildDigestPrompt(d, TZ);
+    assert.match(p, /Woodbury Preschool \(Altadena\), because Fox is there all day/,
+      `Woodbury weather missing for ${d.toISOString()}`);
+    assert.match(p, /the forecast they dress Fox for/);
+  }
+  // Closed-daycare days must not ask for it.
+  assert.doesNotMatch(buildDigestPrompt(SAT, TZ), /Woodbury/);
+});
+
+test("workplace weather is still requested when work is only the fallback", () => {
+  const p = buildDigestPrompt(WED, TZ);
+  assert.match(p, /every place someone actually travels to below/);
+  assert.match(p, /Do not skip the workplace just because it is the fallback/);
 });
 
 test("travel follows the schedule first, with work only as a fallback", () => {
   const p = buildDigestPrompt(WED, TZ);
-  assert.match(p, /Travel is driven by TODAY'S SCHEDULE FIRST/);
+  assert.match(p, /TRAVEL is driven by TODAY'S SCHEDULE FIRST/);
   assert.match(p, /FIRST commitment today that is away from home/);
   assert.match(p, /a doctor's appointment, Gary's, a tour/);
   assert.match(p, /This OUTRANKS any work commute/);
@@ -85,7 +102,7 @@ test("travel follows the schedule first, with work only as a fallback", () => {
 
 test("weekend still routes real appointments but has no work-commute fallback", () => {
   const p = buildDigestPrompt(SAT, TZ);
-  assert.match(p, /ALWAYS call get_weather for HOME/);
+  assert.match(p, /HOME, every single day/);
   assert.match(p, /There is NO work-commute fallback today \(weekend\)/);
   assert.match(p, /Never invent a\s+work commute/);
   assert.doesNotMatch(p, /Woodbury/, "daycare is closed on the weekend");
