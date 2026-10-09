@@ -209,7 +209,7 @@ const hitId = (searchId, url) => createHash("sha1").update(`${searchId}|${url}`)
  * remote specialist over the delegate seam). `search`/`runSites` injectable.
  * Returns [{ id, label, maxPrice, newHits:[{title,url,snippet,price?}], totalFound }].
  */
-export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch, scope = "all", searches = null, hone = false } = {}) {
+export async function runSavedSearches({ search = webSearch, count, runSites = runSiteSearch, scope = "all", searches = null, hone = false, judge = null } = {}) {
   const list = searches || (await listSavedSearches());
   if (!list.length) return [];
   const seen = new Set((await hits().list()).map((h) => h.id));
@@ -235,6 +235,18 @@ export async function runSavedSearches({ search = webSearch, count, runSites = r
     } catch {
       results = []; // a provider hiccup on one search must not sink the rest
     }
+    // With a judge (hunt-judge.js), honing is a model decision on the UNSEEN results
+    // only: "is this listing actually the hunted piece?" It also recovers title/price
+    // from the card text. Without one, fall back to the keyword bar below.
+    const found = results.length;
+    if (hone && judge) {
+      const unseen = results.filter((r) => r.url && !seen.has(hitId(s.id, r.url)));
+      try {
+        results = await judge({ hunts: [s], items: unseen });
+      } catch {
+        results = unseen.filter((r) => textMatchesHunt(`${r.title || ""} ${r.snippet || ""}`, s));
+      }
+    }
     const newHits = [];
     for (const r of results) {
       if (!r.url) continue;
@@ -242,14 +254,14 @@ export async function runSavedSearches({ search = webSearch, count, runSites = r
       // loosely-related listings, so when honing is on we surface only results that
       // actually read like the tracked piece (>=2 shared terms), same bar the
       // boutique/First Look feeds use. Keeps the one feed to the pieces we asked for.
-      if (hone && !textMatchesHunt(`${r.title || ""} ${r.snippet || ""}`, s)) continue;
+      if (hone && !judge && !textMatchesHunt(`${r.title || ""} ${r.snippet || ""}`, s)) continue;
       const id = hitId(s.id, r.url);
       if (seen.has(id)) continue;
       seen.add(id);
-      newHits.push(r);
+      newHits.push({ title: r.title, url: r.url, snippet: r.snippet, price: r.price ?? null });
       await hits().add({ id, searchId: s.id, url: r.url, title: r.title, price: r.price ?? null, firstSeenAt: new Date().toISOString() });
     }
-    out.push({ id: s.id, num: s.num, label: s.label, maxPrice: s.maxPrice, newHits, totalFound: results.length });
+    out.push({ id: s.id, num: s.num, label: s.label, maxPrice: s.maxPrice, newHits, totalFound: found });
   }
   return out;
 }

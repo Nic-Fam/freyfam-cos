@@ -15,6 +15,7 @@ import { runSavedSearches } from "./saved-searches.js";
 import { runBoutiqueFeeds } from "./boutique-feed.js";
 import { runFirstLookFeed } from "./resale-feed.js";
 import { canonicalHref } from "./boutique-feed.js";
+import { judgeListings, huntJudgeEnabled } from "./hunt-judge.js";
 
 /** One find, source-agnostic: {source, label, title, url, price}. */
 function push(out, seen, item) {
@@ -37,6 +38,7 @@ export async function runHuntSearch({
   siteRunner = runSavedSearches,
   boutiqueRunner = runBoutiqueFeeds,
   firstLookRunner = runFirstLookFeed,
+  judge = huntJudgeEnabled() ? judgeListings : null,
 } = {}) {
   if (!Array.isArray(hunts) || !hunts.length) return { newItems: [], counts: { site: 0, boutique: 0, firstlook: 0 } };
   const out = [];
@@ -45,7 +47,7 @@ export async function runHuntSearch({
 
   // Resale sites (honed to each hunt). One provider hiccup must not sink the rest.
   try {
-    const runs = await siteRunner({ scope, searches: hunts, hone: true });
+    const runs = await siteRunner({ scope, searches: hunts, hone: true, ...(judge ? { judge } : {}) });
     for (const r of runs || []) {
       for (const h of r.newHits || []) {
         push(out, seen, { source: "site", label: r.label, title: h.title || "New listing", url: h.url, price: h.price ?? null });
@@ -74,6 +76,20 @@ export async function runHuntSearch({
       counts.firstlook += 1;
     }
   } catch { /* best-effort */ }
+
+  // Boutique + First Look items passed the keyword pre-filter inside their readers;
+  // give them the same "is it actually the piece?" check the site results get.
+  if (judge) {
+    const pre = out.filter((i) => i.source !== "site");
+    if (pre.length) {
+      try {
+        const kept = new Set((await judge({ hunts, items: pre.map((i) => ({ ...i, text: i.title })) })).map((m) => m.url));
+        for (let k = out.length - 1; k >= 0; k--) {
+          if (out[k].source !== "site" && !kept.has(out[k].url)) { counts[out[k].source] -= 1; out.splice(k, 1); }
+        }
+      } catch { /* keep the keyword-honed items */ }
+    }
+  }
 
   return { newItems: out, counts };
 }

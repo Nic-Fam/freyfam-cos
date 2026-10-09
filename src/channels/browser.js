@@ -161,6 +161,9 @@ export async function closeBrowser() {
  * lid-closed on power). Reservations + authenticated browsing use this.
  */
 export async function withHeadedPage(fn) {
+  // Already headed (BROWSER_HEADLESS=false): reuse the live context. Closing it here
+  // would kill any other page in flight (a resale read, the browser agent).
+  if (!BROWSER.headless) return withPage(fn);
   await closeBrowser();     // drop any headless context on this profile
   _headedOverride = false;  // force headed for the relaunch
   try {
@@ -272,24 +275,34 @@ export async function readPageHeaded(url, { maxChars = 6000, timeoutMs = 40000, 
  * @param {string} url
  * @param {{anchorPrefix?:string, fields?:Record<string,string>, max?:number, timeoutMs?:number}} [opts]
  */
-export async function readListingFeed(url, { anchorPrefix = "/products/", fields = {}, max = 60, timeoutMs = 30000 } = {}) {
+export async function readListingFeed(url, { anchorPrefix = "/products/", anchorMatch = null, fields = {}, max = 60, timeoutMs = 30000 } = {}) {
   hostOf(url);
   const page = await newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     // The grid is an SPA that paints async; wait briefly for the first card, but
     // don't fail the run if it never appears (e.g. redirected to a sign-in wall).
-    try { await page.waitForSelector(`a[href^="${anchorPrefix}"]`, { timeout: 8000 }); } catch { /* empty feed */ }
-    const items = await page.evaluate(({ anchorPrefix, fields, max }) => {
+    try {
+      if (anchorMatch) await page.waitForFunction((re) => [...document.querySelectorAll("a[href]")].some((a) => new RegExp(re).test(a.getAttribute("href"))), anchorMatch, { timeout: 8000 });
+      else await page.waitForSelector(`a[href^="${anchorPrefix}"]`, { timeout: 8000 });
+    } catch { /* empty feed */ }
+    const items = await page.evaluate(({ anchorPrefix, anchorMatch, fields, max }) => {
+      // anchorMatch (a regex source) is for sites whose product links share no clean
+      // path prefix (Vestiaire "...-12345.shtml"); otherwise match by prefix.
+      const re = anchorMatch ? new RegExp(anchorMatch) : null;
+      const isProduct = (a) => { const h = a.getAttribute("href") || ""; return re ? re.test(h) : h.startsWith(anchorPrefix); };
+      const productLinks = (root) => [...root.querySelectorAll("a[href]")].filter(isProduct);
       const byHref = new Map();
-      for (const a of document.querySelectorAll(`a[href^="${anchorPrefix}"]`)) {
+      for (const a of productLinks(document)) {
         const href = a.getAttribute("href");
         if (!href || byHref.has(href)) continue;
         let card = a;
-        while (card.parentElement && card.parentElement.querySelectorAll(`a[href^="${anchorPrefix}"]`).length === 1) {
+        while (card.parentElement && productLinks(card.parentElement).every((x) => x.getAttribute("href") === href)) {
           card = card.parentElement;
         }
-        const row = { href };
+        // The card's own visible text (brand, title, price, size): selector-free, so
+        // the hunt judge can read it even when a site's CSS classes drift.
+        const row = { href, text: (card.innerText || "").replace(/\s+/g, " ").trim().slice(0, 300) };
         for (const k of Object.keys(fields)) {
           const el = card.querySelector(fields[k]);
           row[k] = el ? (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim() : null;
@@ -298,7 +311,7 @@ export async function readListingFeed(url, { anchorPrefix = "/products/", fields
         if (byHref.size >= max) break;
       }
       return [...byHref.values()];
-    }, { anchorPrefix, fields, max });
+    }, { anchorPrefix, anchorMatch, fields, max });
     return { url, finalUrl: page.url(), items };
   } finally {
     await page.close();

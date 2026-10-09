@@ -13,7 +13,8 @@ test("isLocalSite flags browser-only sites that must run on Lloyd", () => {
   assert.equal(isLocalSite("TheRealReal.com"), true);
   assert.equal(isLocalSite("grailed"), true);
   assert.equal(isLocalSite("ebay"), false, "eBay is the API source, not browser-only");
-  assert.equal(isLocalSite("vestiaire"), false, "Brave fallback, not browser-only");
+  assert.equal(isLocalSite("vestiaire"), true, "headed browser since 2026-10 (bot-checks headless)");
+  assert.equal(isLocalSite("mytheresa"), false, "Brave fallback, not browser-only");
 });
 
 test("searchSite routes eBay to the API source with a structured maxPrice", async () => {
@@ -38,10 +39,10 @@ test("searchSite routes a known no-API site to the browser source", async () => 
 test("searchSite falls back to Brave (domain-scoped, price folded) for sites with no API/browser", async () => {
   let q;
   const braveSearch = async (query) => { q = query; return [{ title: "v", url: "https://vc/1" }]; };
-  await searchSite("vestiaire", "Margiela Tabi", { maxPrice: 350, braveSearch });
+  await searchSite("mytheresa", "Margiela Tabi", { maxPrice: 350, braveSearch });
   assert.match(q, /Margiela Tabi/);
   assert.match(q, /under \$350/);
-  assert.match(q, /site:vestiairecollective\.com/);
+  assert.match(q, /site:mytheresa\.com/);
 });
 
 test("runSiteSearch fans across sites and dedupes by url", async () => {
@@ -52,15 +53,14 @@ test("runSiteSearch fans across sites and dedupes by url", async () => {
 });
 
 test("runSiteSearch: one failing site does not sink the others", async () => {
-  // vestiaire -> Brave (we inject a throwing braveSearch); ebay -> Brave too only
-  // if unknown; here use two Brave-fallback sites, one throws.
+  // Two Brave-fallback sites (ssense, mytheresa); the mytheresa one throws.
   let calls = 0;
   const braveSearch = async (query) => {
     calls++;
     if (query.includes("mytheresa")) throw new Error("brave 429");
     return [{ title: "v", url: "https://vc/1" }];
   };
-  const out = await runSiteSearch("Tabi", { sites: ["vestiaire", "mytheresa"], braveSearch });
-  assert.deepEqual(out.map((r) => r.url), ["https://vc/1"], "vestiaire result survives mytheresa's failure");
+  const out = await runSiteSearch("Tabi", { sites: ["ssense", "mytheresa"], braveSearch });
+  assert.deepEqual(out.map((r) => r.url), ["https://vc/1"], "ssense result survives mytheresa's failure");
   assert.equal(calls, 2);
 });

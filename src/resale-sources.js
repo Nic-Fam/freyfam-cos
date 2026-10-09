@@ -8,8 +8,8 @@ import { browserSiteSearch, isBrowserSite } from "./resale-browser.js";
 // [{title,url,snippet,price?}]:
 //
 //   ebay                         -> free official Browse API (ebay.js)
-//   therealreal/poshmark/depop/grailed -> local signed-in Chrome (resale-browser.js)
-//   anything else (vestiaire, mytheresa, or no known site) -> Brave web search,
+//   therealreal/poshmark/depop/grailed/vestiaire -> local signed-in Chrome (resale-browser.js)
+//   anything else (mytheresa, or no known site) -> Brave web search,
 //                                  scoped to the site's domain when we know it
 //
 // This is what lets resale hunts stop paying metered Brave search for the sites
