@@ -10,6 +10,8 @@ import { watchItem, listWatched, unwatchItem } from "./watch.js";
 import { dismissBoutiqueListings } from "./boutique-feed.js";
 import { placeRalphsOrder, gatherGroceryItems } from "./grocery.js";
 import { buildGroceryPlaybook } from "./grocery-order-playbook.js";
+import { startStoreOrder, placeStoreOrder, STORES } from "./store-order.js";
+import { browserAgentEnabled } from "./browser-agent.js";
 import { buildCvsOtcPlaybook } from "./pharmacy-order-playbook.js";
 import { planRxSync, formatRxPlan } from "./rx.js";
 import { triageInbound } from "./triage.js";
@@ -641,6 +643,12 @@ const tools = [
     },
   },
   {
+    name: "order_groceries",
+    description:
+      "Build a grocery order YOURSELF with your own browser: reads the store's To Do list, fills the cart on the family's signed-in account (drops out-of-stock items), stops at review, and sends the real cart + total for approval. Nothing is bought until the family approves. Takes several minutes and runs in the background, so tell the family the cart is being built and the approval will follow. Use for 'order the Costco list', 'place a Costco order', 'do the grocery order'. store = 'costco' (Instacart) or 'ralphs'.",
+    input_schema: { type: "object", properties: { store: { type: "string", enum: ["costco", "ralphs"] } }, required: ["store"] },
+  },
+  {
     name: "order_food",
     description:
       "HIGH-STAKES: reorder a past food-delivery order for home delivery. Spends money, so it always requires owner approval first. Use for 'order what we had last time from <restaurant>' or 'order me dinner'. It reconstructs the most recent (or chosen) past order from that restaurant and places it only after approval.",
@@ -759,6 +767,13 @@ registerActionHandler("order", async ({ url, steps }) => {
 registerActionHandler("food_order", async (order) => {
   const r = await placeFoodOrder(order);
   await logAction("order", `Food delivery: ${order?.restaurant || "?"} via ${order?.provider || "?"}`);
+  return r;
+});
+// A cart Lloyd's browser agent built and the family approved (order_groceries).
+// placeStoreOrder re-checks the cart against the approved total, then places it.
+registerActionHandler("store_order", async (order) => {
+  const r = await placeStoreOrder(order);
+  await logAction("order", `${order?.store || "store"} order: ${r}`);
   return r;
 });
 // The weekly Ralphs grocery order (assembled Friday from the shopping list). Runs
@@ -1284,6 +1299,26 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     },
     list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
     list_receipts: async ({ sinceDays, kind } = {}) => formatReceipts(await listReceipts({ sinceDays, kind })),
+    order_groceries: async ({ store } = {}) => {
+      const s = String(store || "").toLowerCase();
+      if (!STORES[s]) return "I can order from costco or ralphs.";
+      if (!browserAgentEnabled()) return "My browser agent isn't switched on yet (COS_BROWSER_AGENT), so I can't build the cart myself. Use order_playbook for the manual route.";
+      // Read the list up front so an empty list is answered now, not silently later.
+      const items = await gatherGroceryItems({ store: STORES[s].list, local: s === "ralphs" ? await listShopping() : [] });
+      if (!items.length) return `The ${STORES[s].name} list is empty, so there's nothing to order.`;
+      const gather = async () => items;
+      // Background: a paced cart fill takes minutes, longer than one chat turn should
+      // block. The result arrives as the approval (or a failure note to the owner).
+      startStoreOrder(s, {
+        deps: {
+          gather,
+          stage: (desc, kind, params) => requestConfirmation(desc, kind, params, { thread }),
+          notify: notifyOwner,
+        },
+      }).then((msg) => log.info("order_groceries finished", { store: s, msg }))
+        .catch((e) => { log.error("order_groceries failed", { store: s, reason: e.message }); notifyOwner(`The ${s} cart build failed: ${e.message}. Nothing was ordered.`); });
+      return `Started building the ${STORES[s].name} cart (${items.length} items) in the background. The family will get the cart and total to approve in a few minutes; nothing is bought before that.`;
+    },
     order_playbook: async ({ store } = {}) => {
       const s = String(store || "").toLowerCase();
       if (s === "ralphs") {

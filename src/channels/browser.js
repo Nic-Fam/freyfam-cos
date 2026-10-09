@@ -119,7 +119,7 @@ async function newPage() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Randomized human-like pause in [min,max]. Pure-ish; 0 when both are 0.
-function humanPauseMs(min = BROWSER.orderStepMinMs, max = BROWSER.orderStepMaxMs) {
+export function humanPauseMs(min = BROWSER.orderStepMinMs, max = BROWSER.orderStepMaxMs) {
   if (!min && !max) return 0;
   const lo = Math.min(min, max), hi = Math.max(min, max);
   return lo + Math.floor(Math.random() * (hi - lo + 1));
