@@ -43,6 +43,8 @@ export function groceryHints() {
     profile: process.env.GROCERY_PROFILE_HINT || "Nic",
     account: (process.env.GROCERY_ACCOUNT_NAME_HINT || "Nic").toLowerCase(),
     address: process.env.HOME_DELIVERY_HINT || "the family's home address",
+    // Costco/Instacart delivers to the detached garage, not the house (Nic, 2026-07-13).
+    costcoAddress: process.env.COSTCO_DELIVERY_HINT || process.env.HOME_DELIVERY_HINT || "the family's home address",
     spendCap: Number(process.env.GROCERY_SPEND_CAP || 350), // refuse an order above this
   };
 }
@@ -54,9 +56,17 @@ const STORE_LABEL = { ralphs: "Ralphs (ralphs.com)", costco: "Costco (Instacart 
  * @param {{store:"ralphs"|"costco", phase:"fill"|"submit", items:Array<{item,quantity,note}>,
  *          delivery?:boolean, applyFuelCoupon?:boolean, spendCap?:number}} o
  */
-export function buildGroceryPlaybook({ store = "ralphs", phase = "fill", items = [], delivery = true, applyFuelCoupon = false, spendCap } = {}) {
+export function buildGroceryPlaybook({ store = "ralphs", phase = "fill", items = [], delivery = true, applyFuelCoupon = false, spendCap, operator = "chrome", approvedTotal } = {}) {
   const h = groceryHints();
   const cap = Number.isFinite(Number(spendCap)) ? Number(spendCap) : h.spendCap;
+  const address = store === "costco" ? h.costcoAddress : h.address;
+  // operator "agent" = Lloyd's own browser agent (browser-agent.js), already on the
+  // family's signed-in profile at the store URL; "chrome" = a Claude-in-Chrome session.
+  const agent = operator === "agent";
+  const via = agent ? "in the family's signed-in Chrome (you are already on the store's site)" : "via Claude-in-Chrome on the family's logged-in Chrome";
+  const pickBrowser = agent
+    ? `1. You start on ${STORE_URLS[store]}. Take a snapshot.`
+    : `1. list_connected_browsers; select the one whose name contains "${h.profile}". If none, STOP {"ok":false,"reason":"wrong_browser"}.`;
   const url = STORE_URLS[store];
   const label = STORE_LABEL[store] || store;
   const mode = delivery ? "delivery" : "pickup";
@@ -64,10 +74,11 @@ export function buildGroceryPlaybook({ store = "ralphs", phase = "fill", items =
 
   if (phase === "submit") {
     return [
-      `PLACE the ${label} order that is ALREADY in the cart and reviewed — the family approved it. Via Claude-in-Chrome on their logged-in Chrome.`,
-      `1. list_connected_browsers; select the one whose name contains "${h.profile}" (case-insensitive). If none, STOP {"ok":false,"reason":"wrong_browser"}.`,
+      `PLACE the ${label} order that is ALREADY in the cart and reviewed — the family approved it. Work ${via}.`,
+      ...(list ? [`APPROVED ITEMS:`, list] : []),
+      agent ? `1. You start on ${STORE_URLS[store]}. Take a snapshot.` : `1. list_connected_browsers; select the one whose name contains "${h.profile}" (case-insensitive). If none, STOP {"ok":false,"reason":"wrong_browser"}.`,
       `2. Open ${url}. If a sign-in prompt appears, STOP {"ok":false,"reason":"not_signed_in"} — do NOT sign in.`,
-      `3. Confirm the cart still matches the reviewed order and the total is <= $${cap}. If it changed materially or exceeds the cap, STOP {"ok":false,"reason":"cart_changed","notes":"<what changed>"}.`,
+      `3. Confirm the cart still matches the reviewed order and the total is <= $${cap}${Number.isFinite(Number(approvedTotal)) ? ` and no more than $${(Number(approvedTotal) * 1.1 + 5).toFixed(2)} (the approved $${Number(approvedTotal).toFixed(2)} plus a small allowance for tax/fees)` : ""}. If it changed materially or exceeds that, STOP {"ok":false,"reason":"cart_changed","notes":"<what changed>"}.`,
       `4. Place the order (button wording varies: "Place order" / "Check out" / "Submit order"). Complete any final confirmation. Do NOT change the tip, add memberships, or accept upsells.`,
       `5. Capture the confirmation (order #, total, ${mode} window).`,
       `6. Output EXACTLY one JSON line: success {"ok":true,"store":"${store}","orderNumber":"<#>","total":<number>,"window":"<slot>"}  |  failure {"ok":false,"reason":"not_signed_in|cart_changed|over_cap|checkout_failed|other","notes":"<detail>"}`,
@@ -76,21 +87,21 @@ export function buildGroceryPlaybook({ store = "ralphs", phase = "fill", items =
 
   // phase "fill"
   return [
-    `Build a ${mode} cart at ${label} via Claude-in-Chrome on the family's logged-in Chrome, then STOP for their review. DO NOT place the order in this phase.`,
+    `Build a ${mode} cart at ${label} ${via}, then STOP for their review. DO NOT place the order in this phase.`,
     ``,
     `ITEMS (from the ${store === "ralphs" ? "Ralphs" : "Costco"} shopping list):`,
     list || "  (none — STOP, nothing to order)",
     ``,
     `STEPS:`,
-    `1. list_connected_browsers; select the one whose name contains "${h.profile}". If none, STOP {"ok":false,"reason":"wrong_browser"}.`,
+    pickBrowser,
     `2. Open ${url}. If it asks you to sign in, STOP {"ok":false,"reason":"not_signed_in"} — never sign in.`,
-    `3. ACCOUNT/ADDRESS GUARD: confirm you are in the family's account (greeting/name contains "${h.account}") and the ${mode} target is ${h.address}. If not, STOP {"ok":false,"reason":"wrong_account_or_address"}.`,
+    `3. ACCOUNT/ADDRESS GUARD: confirm you are in the family's account (greeting/name contains "${h.account}") and the ${mode} target is ${address}. If not, STOP {"ok":false,"reason":"wrong_account_or_address"}.`,
     store === "ralphs" && applyFuelCoupon
       ? `4. Clip the "4X fuel points" digital coupon (Savings/Coupons section) so it applies to this order — this order runs on a Friday specifically for it.`
       : `4. (No coupon step.)`,
     `5. Add each item above (search, pick the closest match to the family's usual brand/size, set the quantity).`,
     `6. OUT-OF-STOCK POLICY: if an item is unavailable, DROP it and note it — do NOT auto-substitute and do NOT block the rest.`,
-    `7. Set the ${mode} to the soonest ${store === "ralphs" ? "FRIDAY EVENING" : "available"} slot at ${h.address}.`,
+    `7. Set the ${mode} to the soonest ${store === "ralphs" ? "FRIDAY EVENING" : "available"} slot at ${address}.`,
     `8. Go to the review/checkout page and READ the order total. Do NOT place it.`,
     `9. Output EXACTLY one JSON line: {"ok":true,"store":"${store}","phase":"fill","added":[{"item":"<name>","qty":<n>}],"dropped":["<oos item>"],"total":<number>,"window":"<slot>"}  or  {"ok":false,"reason":"not_signed_in|wrong_account_or_address|wrong_browser|other","notes":"<detail>"}`,
     ``,

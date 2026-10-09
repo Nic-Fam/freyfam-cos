@@ -49,6 +49,14 @@ export const RESALE_SITES = {
     anchorPrefix: "/listings/",
     fields: { title: "[class*='itle']", price: "[class*='rice']" },
   },
+  // Vestiaire: product links have no shared prefix but always end "-<id>.shtml".
+  // It bot-checks HEADLESS browsers ("Just a moment..."); the real headed Chrome
+  // on the mini loads it (verified 2026-10-08). Was Brave-only before.
+  vestiaire: {
+    base: "https://us.vestiairecollective.com",
+    searchUrl: (q) => `https://us.vestiairecollective.com/search/?q=${encodeURIComponent(q)}`,
+    anchorMatch: "-\\d+\\.shtml(\\?|$)",
+  },
 };
 
 /** True when a site has a local-browser config (vs. needing the Brave fallback). */
@@ -87,11 +95,13 @@ export function normalizeBrowserRows(rows, { base = "", maxPrice = null } = {}) 
     if (!href || seen.has(href)) continue;
     seen.add(href);
     const url = /^https?:\/\//i.test(href) ? href : base + href;
-    const m = String(r.price || "").match(/\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)/);
+    // Prefer the price selector; fall back to the first $ amount in the card text.
+    const m = String(r.price || r.text || "").match(/\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)/);
     const price = m ? Number(m[1].replace(/,/g, "")) : null;
     if (maxPrice != null && price != null && price > Number(maxPrice)) continue;
     const title = (r.title && String(r.title).trim()) || slugToTitle(href) || url;
-    out.push({ title, url, snippet: price != null ? `$${price}` : "", price });
+    // Keep the card text: the hunt judge reads it to decide "is this the piece?".
+    out.push({ title, url, snippet: price != null ? `$${price}` : "", price, ...(r.text ? { text: r.text } : {}) });
   }
   return out;
 }
@@ -108,7 +118,7 @@ export async function browserSiteSearch(siteKey, query, { maxPrice = null, max =
   if (!q) return [];
   let rows = [];
   try {
-    const res = await read(site.searchUrl(q), { anchorPrefix: site.anchorPrefix, fields: site.fields || {}, max });
+    const res = await read(site.searchUrl(q), { anchorPrefix: site.anchorPrefix, ...(site.anchorMatch ? { anchorMatch: site.anchorMatch } : {}), fields: site.fields || {}, max });
     rows = res.items || [];
   } catch {
     return [];

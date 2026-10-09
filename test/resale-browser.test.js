@@ -6,7 +6,7 @@ test("isBrowserSite knows the configured no-API sites", () => {
   assert.equal(isBrowserSite("poshmark"), true);
   assert.equal(isBrowserSite("grailed"), true);
   assert.equal(isBrowserSite("therealreal"), true);
-  assert.equal(isBrowserSite("vestiaire"), false, "no clean prefix -> not a browser site (Brave fallback)");
+  assert.equal(isBrowserSite("mytheresa"), false, "no clean prefix -> not a browser site (Brave fallback)");
   assert.equal(isBrowserSite("ebay"), false, "eBay uses the API source");
 });
 
@@ -56,5 +56,5 @@ test("browserSiteSearch returns [] on a read failure (sign-in wall etc.)", async
 });
 
 test("browserSiteSearch returns [] for an unconfigured site", async () => {
-  assert.deepEqual(await browserSiteSearch("vestiaire", "x", { read: async () => ({ items: [{ href: "/a" }] }) }), []);
+  assert.deepEqual(await browserSiteSearch("mytheresa", "x", { read: async () => ({ items: [{ href: "/a" }] }) }), []);
 });
