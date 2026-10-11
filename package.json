@@ -20,7 +20,7 @@
     "test": "EMBEDDINGS_PROVIDER=none node --test"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.0",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.5.0",
     "@azure/storage-blob": "^12.33.0",

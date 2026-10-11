@@ -1,4 +1,4 @@
-import { agentLoop, systemBlocks } from "./claude.js";
+import { agentLoop, systemBlocks, MAX_TURNS_SENTINEL, TRUNCATED_SENTINEL } from "./claude.js";
 import { modelForComplexity, modelForTurn, GRAPH, BUDGET } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
@@ -1617,7 +1617,7 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
       ? `[${new Date(m.ts).toLocaleString("en-US", { timeZone: FAMILY_TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}] ${m.content}`
       : (m ? m.content : ""),
   }));
-  const { text } = await agentLoop({
+  const { text, truncated } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
     // Prior turns (short-term memory) precede the current one so a follow-up like
@@ -1630,9 +1630,15 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
   });
   // Never send the raw loop-cap sentinel to the family. If Lloyd ran out of turns,
   // log it (the trace above shows which tools he looped on) and reply gracefully.
-  if (/^\(stopped: max tool turns reached\)/.test(text)) {
+  if (text.startsWith(MAX_TURNS_SENTINEL)) {
     log.warn("chief hit max tool turns", { model });
     return "Sorry, I got tangled up working on that and didn't finish. Let me take another run at it. If it happens again, a quick nudge with any extra detail helps.";
+  }
+  // A twice-truncated turn with no text at all: say so instead of sending the
+  // sentinel (or nothing). Partial text is still delivered (it is real content).
+  if (truncated && (text === TRUNCATED_SENTINEL || !text)) {
+    log.warn("chief reply truncated with no text", { model });
+    return "Sorry, that answer ran long and got cut off before I could finish. Ask me again and I'll keep it tighter.";
   }
   return text;
 }

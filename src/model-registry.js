@@ -26,12 +26,12 @@ const log = createLogger("model-registry");
 const FAMILIES = { triage: "claude-haiku", standard: "claude-sonnet", heavy: "claude-opus" };
 
 // Models that must NEVER be auto-selected for a tier, even if the catalog reports
-// them as newest. Defaults to claude-sonnet-5, which was reverted 2026-07-01 for
-// returning EMPTY on long/tool-heavy standard-tier outputs (see the NOTE in
-// config.js): with COS_MODEL_AUTOUPDATE=true the weekly check would otherwise
-// silently re-apply that regression. Override with MODEL_DENYLIST (comma-sep) —
-// e.g. clear it once sonnet-5 is safe to re-attempt after tuning max_tokens.
-export const MODEL_DENYLIST = (process.env.MODEL_DENYLIST ?? "claude-sonnet-5")
+// them as newest. Empty by default (policy 2026-10-11). It used to deny
+// claude-sonnet-5, "reverted 2026-07-01 for returning EMPTY on long/tool-heavy
+// output"; that was a misdiagnosis of a request-shape bug (adaptive thinking
+// consuming a 2048-token max_tokens; see the NOTE in config.js and claude.js),
+// which is now fixed. Set MODEL_DENYLIST (comma-sep) to deny a model deliberately.
+export const MODEL_DENYLIST = (process.env.MODEL_DENYLIST ?? "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
 // Denied if the id equals a denylist entry or is one of its DATED snapshots

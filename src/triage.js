@@ -43,7 +43,9 @@ export async function triageInbound(message) {
     model: MODELS.triage,
     system: systemBlocks(INBOUND_SYSTEM),
     messages: [{ role: "user", content: message }],
-    maxTokens: 200,
+    // Haiku 5.5 thinks before answering and the thinking counts against
+    // max_tokens, so leave room (the JSON itself is ~60 tokens).
+    maxTokens: 1024,
   });
   return inboundVerdict(parseJson(textOf(resp)), message);
 }
@@ -130,7 +132,7 @@ export async function triageHeartbeat(signals) {
     model: MODELS.triage,
     system: systemBlocks(HEARTBEAT_SYSTEM),
     messages: [{ role: "user", content: JSON.stringify(signals).slice(0, 6000) }],
-    maxTokens: 400,
+    maxTokens: 1536, // room for adaptive thinking + a multi-item verdict
   });
   return heartbeatVerdict(parseJson(textOf(resp)));
 }

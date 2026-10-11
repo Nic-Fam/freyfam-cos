@@ -7,16 +7,24 @@ import { isCoo, isCompanyAgent } from "./companies.js";
 // Confirm exact model IDs / snapshots at https://docs.claude.com/en/docs/about-claude/models
 // ---------------------------------------------------------------------------
 export const MODELS = {
-  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse (see NOTE)
+  // NOTE 2026-10-11: triage moved to Haiku 5.5 ($0.10/$0.50 per MTok vs Haiku
+  // 4.5's $1/$5). This tier is used far beyond triage (heartbeat gate, resale +
+  // chef + company specialists, trivial replies, voice turns, hunt judge, receipt
+  // and finance extraction), so it was ~a quarter of API spend. Haiku 5.5 runs
+  // adaptive thinking by default; claude.js sends effort "low" for the Haiku
+  // family and every call site's max_tokens was raised to leave room for it.
+  triage: process.env.MODEL_TRIAGE || "claude-haiku-5-5",   // cheap router + heartbeat gate
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse
   // NOTE 2026-10-03: moved to the current generation. Sonnet 5.5 and Opus 5.5 are
   // both CHEAPER than the 4.x models they replace ($2/$10 vs Sonnet 4.6's $3/$15;
   // $4/$20 vs Opus 4.8's $5/$25), so this is a quality AND cost win.
   // History: "claude-sonnet-5" was reverted 2026-07-01 because it returned EMPTY on
   // long/tool-heavy standard-tier output (the morning digest composed 0 chars).
-  // claude-sonnet-5-5 is a DIFFERENT, later model, not that one - but watch the
-  // first few digests for empty output and fall back to claude-sonnet-4-6 via
-  // MODEL_STANDARD if it ever recurs.
+  // Re-diagnosed 2026-10-11: that generation thinks by default and the thinking
+  // counted against the chief loop's max_tokens of 2048, so a tool-heavy turn
+  // could spend the whole budget thinking and return no text. claude.js now sets
+  // an explicit effort, an 8192 default cap, and retries a truncated turn, which
+  // is the actual fix; the model was not at fault.
   heavy: process.env.MODEL_HEAVY || "claude-opus-5-5",      // complex / agentic only
 };
 

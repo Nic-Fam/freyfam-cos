@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { priceFor, costOfUsage, cycleKey, recordUsage, budgetState, cycleSummary } from "../src/cost-ledger.js";
+import { MODELS } from "../src/config.js";
 
 // Each test gets its own ledger file so accumulation is isolated.
 let path;
@@ -32,7 +33,21 @@ test("costOfUsage applies the price table per token bucket", () => {
 });
 
 test("an unknown model falls back to standard pricing", () => {
-  assert.deepEqual(priceFor("mystery-model"), priceFor("claude-sonnet-4-6"));
+  assert.deepEqual(priceFor("mystery-model"), priceFor(MODELS.standard));
+});
+
+test("current-generation prices and TTL-aware cache writes", () => {
+  const h = priceFor("claude-haiku-5-5");
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(h.input, 0.1) && near(h.output, 0.5) && near(h.cacheWrite, 0.125) && near(h.cacheWrite1h, 0.2) && near(h.cacheRead, 0.01), JSON.stringify(h));
+  assert.equal(priceFor("claude-opus-5-5").cacheRead, 0.2, "Opus 5.5 cache reads are 0.05x, set explicitly");
+  assert.equal(priceFor("claude-opus-4-8").input, 5, "Opus 4.8 is $5/$25, not $15/$75");
+  // 1M tokens written to the 1h prefix on Sonnet 5.5 = $4 (2x); on the 5m breakpoint = $2.50 (1.25x).
+  const usd = costOfUsage("claude-sonnet-5-5", { cache_creation_input_tokens: 2_000_000, cache_creation: { ephemeral_1h_input_tokens: 1_000_000, ephemeral_5m_input_tokens: 1_000_000 } });
+  assert.ok(Math.abs(usd - 6.5) < 1e-9, `got ${usd}`);
+  // Without the breakdown, the aggregate is priced at the 5m rate.
+  const flat = costOfUsage("claude-sonnet-5-5", { cache_creation_input_tokens: 1_000_000 });
+  assert.ok(Math.abs(flat - 2.5) < 1e-9, `got ${flat}`);
 });
 
 test("cycleKey is a YYYY-MM month bucket", () => {
