@@ -21,7 +21,8 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, fetchAuthenticationResults, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { verifyEmailSender } from "./email-auth.js";
 import { calendarGateDecision } from "./calendar-gate.js";
 import { findConflicts } from "./week-conflicts.js";
 import { isReceipt, captureReceipt, listReceipts, formatReceipts } from "./receipts.js";
@@ -1210,8 +1211,12 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
           `Item: "${name}"${cond ? `, condition ${cond}` : ""}${cat ? `, category ${cat}` : ""}.${desc ? ` Details: ${desc}.` : ""}\n\n` +
           `Comparable listings / sold prices:\n${comps}\n\n` +
           `Reply in exactly three short lines: "Asking: $N", "Range: $low-$high", and one line of rationale (what the comps show + the quick-sale adjustment).`;
+        // delegate returns {text, requests} (workstream S contract); unwrap the text.
         let rec = "";
-        try { rec = await delegate({ agent: "resale", task }); } catch { rec = ""; }
+        try {
+          const res = await delegate({ agent: "resale", task });
+          rec = typeof res === "string" ? res : String(res?.text ?? "");
+        } catch { rec = ""; }
         if (!rec || !rec.trim()) {
           return `Shey couldn't be reached to price "${name}", but here are the comps I found so you can set a price:\n${comps}`;
         }
@@ -1691,13 +1696,27 @@ export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
  * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[], subject?:string, graphMessageId?:string}} msg
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
-export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null } = {}) {
+export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null, authHeaders = fetchAuthenticationResults } = {}) {
   // Authorization (hard constraint #1 + #2). Only an authorized sender may drive
   // the chief OR resolve an approval. Computed once, up front. Silent-capture
   // paths below (OTP relay, shipment/txn filing) deliberately run for UNauthorized
   // service mail too — they never run a model or reply — so this only gates the
   // agent run and the approval gate.
-  const authorized = isAuthorizedSender(msg);
+  //
+  // EMAIL is special (policy 2026-10-11): the From header is forgeable, so a
+  // family From is necessary but not sufficient. The message's
+  // Authentication-Results (DMARC / composite auth, read via Graph) must also
+  // pass, or the sender is treated as a stranger: no approval, no agent run.
+  // `authHeaders` is injectable so tests stay hermetic. The check only runs for
+  // senders that would otherwise be authorized, so service mail costs no Graph read.
+  let authorized = isAuthorizedSender(msg);
+  if (authorized && msg.channel === "email") {
+    const v = await verifyEmailSender(msg, { fetchHeader: authHeaders });
+    if (!v.verified) {
+      log.warn("email sender refused (authentication failed)", { from: msg.from, reason: v.reason });
+      authorized = false;
+    }
+  }
 
   // 0. Is this a YES/NO answer to a pending approval? If so, resolve it (running
   //    the staged action on YES) and reply with the outcome on this same channel.
@@ -1947,7 +1966,18 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   }
 
   // 4. Deliver via the transport (channel reply for SMS/email; channel post for Slack).
-  await transport.reply(text);
+  //    The turn's side effects (tasks added, memory saved, approvals staged, self-
+  //    emails sent) have ALREADY happened, so a delivery failure must not throw:
+  //    the queue would redeliver the message and run every side effect again.
+  //    Log it, fall back to the owner channel, and ack the message.
+  try {
+    await transport.reply(text);
+  } catch (err) {
+    log.error("reply delivery failed; side effects already applied, not retrying the turn", {
+      channel: msg.channel, reason: String(err?.message || err),
+    });
+    await notifyOwner(`I handled a ${msg.channel} message from ${msg.from} but couldn't deliver the reply there (${String(err?.message || err).slice(0, 120)}). Here it is:\n\n${text}`).catch(() => {});
+  }
   // 4b. Audible reply (Tier 1 voice): if the family SENT a voice note, also speak the
   //     answer back on the same channel. Additive + best-effort — the text reply above
   //     always stands, so a TTS/send failure loses nothing.

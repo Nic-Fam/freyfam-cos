@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender } from "../src/guards.js";
+import { isAutomatedSender, isSelfAddress, shouldAutoReply, isWorkDomain, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender, openChannelWarnings } from "../src/guards.js";
 
 test("isFamilyAddress recognizes the family's own addresses (case-insensitive), not outsiders", () => {
   assert.equal(isFamilyAddress("Nic@Freyfam.com"), true);
@@ -78,17 +78,30 @@ test("isAuthorizedSender: email is family-only (public mailbox is strict)", () =
   assert.equal(isAuthorizedSender({ channel: "email", from: "" }), false);
 });
 
-test("isAuthorizedSender: imessage/sms open when no allowlist configured", () => {
-  // Default env sets no IMESSAGE_ALLOW, so the private handle/number is the gate.
-  assert.equal(isAuthorizedSender({ channel: "imessage", from: "+15551234567" }), true);
-  assert.equal(isAuthorizedSender({ channel: "sms", from: "+15551234567" }), true);
+test("isAuthorizedSender: imessage/sms FAIL CLOSED when no allowlist is configured", () => {
+  // Default env sets no IMESSAGE_ALLOW: every handle is refused (an Apple ID is
+  // guessable, and an open gate let any sender approve a staged action).
+  assert.equal(isAuthorizedSender({ channel: "imessage", from: "+15551234567" }), false);
+  assert.equal(isAuthorizedSender({ channel: "sms", from: "+15551234567" }), false);
 });
 
-test("isAuthorizedSender: slack open when no allowlist configured", () => {
-  assert.equal(isAuthorizedSender({ channel: "slack", from: "U12345SLACK" }), true);
+test("isAuthorizedSender: slack FAILS CLOSED when no allowlist is configured", () => {
+  assert.equal(isAuthorizedSender({ channel: "slack", from: "U12345SLACK" }), false);
 });
 
-test("isAuthorizedSender: unknown/internal channels are trusted", () => {
+test("isAuthorizedSender: voice is trusted (token-gated upstream); unknown channels are not", () => {
   assert.equal(isAuthorizedSender({ channel: "voice", from: "x" }), true);
-  assert.equal(isAuthorizedSender({ channel: undefined, from: "x" }), true);
+  assert.equal(isAuthorizedSender({ channel: undefined, from: "x" }), false);
+  assert.equal(isAuthorizedSender({ channel: "webhook", from: "x" }), false);
+  assert.equal(isAuthorizedSender({ channel: "voice", from: "" }), false);
+});
+
+test("openChannelWarnings names enabled channels that have no allowlist", () => {
+  const w = openChannelWarnings({
+    imessage: { enabled: true, allow: [] },
+    slack: { enabled: true, allow: ["U1"] },
+  });
+  assert.equal(w.length, 1);
+  assert.match(w[0], /^imessage/);
+  assert.deepEqual(openChannelWarnings({ imessage: { enabled: false, allow: [] }, slack: { enabled: false, allow: [] } }), []);
 });

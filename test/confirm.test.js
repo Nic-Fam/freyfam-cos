@@ -148,6 +148,22 @@ test("YES ALL is scoped to the thread: an unrelated pending action is untouched"
   assert.equal((await resolveByCode(grocery.code, true)).found, true, "grocery was left pending, not blanket-approved");
 });
 
+test("a bare YES ALL with nothing quoted approves NOTHING and lists what is pending", async () => {
+  // Policy 2026-10-11: no fallback to "every pending code". A blanket yes from
+  // any channel must not fire the grocery order + the outbound email at once.
+  const a = await requestConfirmation("Email to plumber", "test", { what: "a" });
+  const b = await requestConfirmation("Costco order $212", "test", { what: "b" });
+  const res = await tryResolveConfirmation("YES ALL");
+  assert.equal(res.handled, true, "consumed (no re-ingest)");
+  assert.deepEqual(ran, [], "nothing ran");
+  assert.match(res.message, new RegExp(a.code));
+  assert.match(res.message, new RegExp(b.code));
+  // The explicit codes still work afterwards.
+  const res2 = await tryResolveConfirmation(`YES ${a.code}, ${b.code}`);
+  assert.equal(ran.length, 2);
+  assert.match(res2.message, /Approved 2 of 2/);
+});
+
 test("an approval reply is consumed even when it resolves nothing (no re-ingest loop)", async () => {
   // The Woodbury bug: a YES that resolved nothing fell through to the orchestrator,
   // which re-ingested the quoted thread and re-prompted -> loop. Must be handled:true.

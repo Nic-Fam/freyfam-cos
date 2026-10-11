@@ -122,6 +122,25 @@ export async function recentInboxFull({ top = 25 } = {}) {
 }
 
 /**
+ * Authentication-Results header value(s) for one inbox message, read via Graph
+ * `internetMessageHeaders`. Exchange Online stamps every delivered message with
+ * its SPF/DKIM/DMARC/compauth verdicts; src/email-auth.js turns that into the
+ * sender-verification decision. Returns an array (Graph can carry several
+ * Authentication-Results headers; the first is the receiving hop's). Empty array
+ * when the message has none.
+ */
+export async function fetchAuthenticationResults(messageId) {
+  if (!messageId) return [];
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/messages/${messageId}`)
+    .select("internetMessageHeaders")
+    .get();
+  return (res?.internetMessageHeaders || [])
+    .filter((h) => String(h?.name || "").toLowerCase() === "authentication-results")
+    .map((h) => String(h?.value || ""));
+}
+
+/**
  * Fetch file attachments for one message (workstream L: document intake). The
  * front door passes the `graphMessageId`; the daemon pulls the bytes via the
  * app-only Mail.Read it already has (no new consent). Returns materialized

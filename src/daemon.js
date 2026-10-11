@@ -8,6 +8,8 @@ import { closeBrowser } from "./channels/browser.js";
 import { startUplinkWatcher } from "./uplink.js";
 import { startDeadManBeacon } from "./deadman.js";
 import { notifyOwner } from "./channels/notify.js";
+import { openChannelWarnings } from "./guards.js";
+import { EMAIL_AUTH_ENFORCED } from "./email-auth.js";
 import { createLogger } from "./log.js";
 
 const log = createLogger("daemon");
@@ -21,6 +23,10 @@ async function main() {
   }
 
   log.info("Frey Family Chief of Staff starting");
+  // Inbound authorization fails CLOSED (policy 2026-10-11): say so loudly at boot
+  // when a channel is enabled without its allowlist, so a lockout is never a mystery.
+  for (const w of openChannelWarnings()) log.warn("inbound channel enabled with NO allowlist; all senders refused", { channel: w });
+  if (!EMAIL_AUTH_ENFORCED) log.warn("EMAIL_AUTH_CHECK=false: inbound email sender authentication is DISABLED; a forged From header can drive the chief and approve actions");
   const hb = startHeartbeat();
   // Email approval channel: each staged action emails Approve/Deny buttons.
   registerEmailApprovals();

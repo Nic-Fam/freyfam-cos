@@ -637,7 +637,25 @@ async function maybeRunCooReviews() {
 }
 
 let bootChecked = false;
+let ticking = false;
 export async function tick() {
+  // Re-entrancy guard: a tick that runs the digest + a resale slot + a grocery
+  // fill can outlast the interval, and setInterval would start the next tick on
+  // top of it (double triage, overlapping browser use, racing JSON writes). Skip
+  // the overlapping tick; the next one catches up.
+  if (ticking) {
+    log.warn("heartbeat tick still running; skipping this interval");
+    return;
+  }
+  ticking = true;
+  try {
+    await tickBody();
+  } finally {
+    ticking = false;
+  }
+}
+
+async function tickBody() {
   // On the FIRST tick after (re)start, detect whether Lloyd was offline for a real
   // gap and tell the owner he's back + catching up (workstream R). Reads the previous
   // run's last-seen before this tick refreshes it. Best-effort.

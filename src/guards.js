@@ -110,27 +110,51 @@ export function shouldAutoReply(from) {
 // filing) run BEFORE this gate, so unattended service mail is still ingested; it
 // just never triggers a model run, a reply, or an approval.
 //
-// Policy per channel:
-//   - email     : family address OR INBOUND_EMAIL_ALLOW (public mailbox -> strict)
-//   - imessage/sms: IMESSAGE.allow (empty = open; the handle/number is private)
-//   - slack     : SLACK.allow (empty = open; workspace membership is the gate)
-//   - voice     : trusted (localhost + token gated in voice-server.js)
+// Policy per channel (FAIL CLOSED, policy 2026-10-11):
+//   - email       : family address OR INBOUND_EMAIL_ALLOW, AND the message's
+//                   Authentication-Results must pass (src/email-auth.js, checked
+//                   by the orchestrator — From alone is forgeable).
+//   - imessage/sms: IMESSAGE_ALLOW must be set and contain the handle. An empty
+//                   allowlist used to mean "allow all"; it now means nobody, because
+//                   an Apple ID handle is guessable and any sender could otherwise
+//                   type "YES <code>" and approve a staged action.
+//   - slack       : SLACK_ALLOW must be set and contain the user id. Same reason:
+//                   a workspace holds guests/contractors, and approval buttons are
+//                   visible to every member of #command.
+//   - voice       : trusted (localhost + token gated in voice-server.js).
+//   - anything else: NOT trusted. Internal callers use the channels above.
+// Operators see a boot-time warning (daemon.js) when a channel is enabled with
+// an empty allowlist, so a lockout is loud, not silent.
 // ===========================================================================
 export function isAuthorizedSender(msg) {
   const channel = msg?.channel;
   const from = String(msg?.from || "").toLowerCase().trim();
+  if (!from) return false;
   switch (channel) {
     case "email":
       return isFamilyAddress(from) || INBOUND_EMAIL_ALLOW.includes(from);
     case "imessage":
     case "sms":
-      return IMESSAGE.allow.length === 0 || IMESSAGE.allow.includes(from);
+      return IMESSAGE.allow.length > 0 && IMESSAGE.allow.includes(from);
     case "slack":
       // Slack user ids are case-sensitive, so compare the raw value too.
-      return SLACK.allow.length === 0 || SLACK.allow.includes(String(msg?.from || "").trim());
+      return SLACK.allow.length > 0 && SLACK.allow.includes(String(msg?.from || "").trim());
     case "voice":
       return true;
     default:
-      return true; // unknown/internal channels (tests, timers) are trusted
+      return false; // unknown channels are never trusted
   }
+}
+
+/**
+ * Channels that are enabled but have no allowlist, so every sender on them is
+ * now refused (fail closed). daemon.js logs these at boot. Pure; takes the
+ * config objects so tests can pass their own.
+ * @returns {string[]} e.g. ["imessage (set IMESSAGE_ALLOW)", "slack (set SLACK_ALLOW)"]
+ */
+export function openChannelWarnings({ imessage = IMESSAGE, slack = SLACK } = {}) {
+  const out = [];
+  if (imessage?.enabled && !(imessage.allow || []).length) out.push("imessage (set IMESSAGE_ALLOW to the family's handles; every iMessage is refused until then)");
+  if (slack?.enabled && !(slack.allow || []).length) out.push("slack (set SLACK_ALLOW to the family's Slack user ids; every Slack message and approval tap is refused until then)");
+  return out;
 }

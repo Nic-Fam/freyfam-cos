@@ -117,6 +117,15 @@ inside the specialist runner, not a caller change.
    approval — emailing the family themselves isn't acting on their behalf to an
    outsider. Any outside or work-domain recipient still routes through the gate.
 3. **No money movement.** Finance agent surfaces actions; humans execute them.
+4. **Inbound trust fails closed (policy 2026-10-11).** "The family" is decided by
+   `guards.isAuthorizedSender`, and it never defaults open: iMessage/SMS need
+   `IMESSAGE_ALLOW`, Slack needs `SLACK_ALLOW` (commands AND approval taps), unknown
+   channels are refused, and an **email** From is trusted only when the message's
+   `Authentication-Results` passes DMARC/compauth (`src/email-auth.js`, read via
+   Graph). `YES ALL` applies only to codes quoted in the reply; there is no
+   "approve everything pending" fallback. Calendar auto-create (the one narrow
+   carve-out from constraint 2) requires an authenticated family requester; a
+   proactive/heartbeat turn always gates.
 
 ## Model routing = the cost strategy
 

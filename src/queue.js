@@ -27,6 +27,14 @@ import { createLogger } from "./log.js";
 const log = createLogger("queue");
 
 const MAX_DEQUEUE = Number(process.env.MAX_DEQUEUE || 5);
+// How long a received message stays hidden while we work on it. A chief turn can
+// run a 12-tool Opus loop or a browser crawl, so 2 minutes (the old value) was
+// routinely exceeded: the message became visible again, the pop receipt went
+// stale, the final delete threw, and the "failure" path unmarked + re-ran the
+// whole turn (duplicate replies + duplicate staged approvals). Now: a longer
+// default AND a lease that is renewed while handling runs (see withLease).
+const VISIBILITY_S = Number(process.env.QUEUE_VISIBILITY_SECONDS || 600);
+const RENEW_EVERY_MS = Math.max(15_000, Math.floor((VISIBILITY_S * 1000) / 3));
 
 const queue = new QueueClient(AZURE.queueConnectionString, AZURE.inboundQueue);
 const deadLetter = new QueueClient(AZURE.queueConnectionString, AZURE.deadLetterQueue);
@@ -34,14 +42,14 @@ const deadLetter = new QueueClient(AZURE.queueConnectionString, AZURE.deadLetter
 let running = false;
 let dlqReady = false;
 
-async function deadLetterMessage(m, err) {
+async function deadLetterMessage(q, m, err) {
   if (!dlqReady) {
     await deadLetter.createIfNotExists();
     dlqReady = true;
   }
   // Preserve the original (base64) body so the DLQ entry is replayable as-is.
   await deadLetter.sendMessage(m.messageText);
-  await queue.deleteMessage(m.messageId, m.popReceipt);
+  await q.deleteMessage(m.messageId, m.popReceipt);
   log.error("dead-lettered poison message", {
     deadLetterQueue: AZURE.deadLetterQueue,
     dequeueCount: m.dequeueCount,
@@ -49,10 +57,93 @@ async function deadLetterMessage(m, err) {
   });
 }
 
+/**
+ * Keep a received message invisible while `work` runs by extending its
+ * visibility timeout on a timer. Each `updateMessage` returns a NEW pop
+ * receipt, which `m.popReceipt` is updated to (the later delete needs it).
+ * A failed renewal is logged and the loop keeps going; the dedup store still
+ * protects a redelivery that slips through. Pure plumbing; `q` injectable.
+ */
+export async function withLease(q, m, work, { visibilityS = VISIBILITY_S, everyMs = RENEW_EVERY_MS, setTimer = setInterval, clearTimer = clearInterval } = {}) {
+  let renewing = false;
+  const timer = setTimer(async () => {
+    if (renewing) return;
+    renewing = true;
+    try {
+      const r = await q.updateMessage(m.messageId, m.popReceipt, undefined, visibilityS);
+      if (r?.popReceipt) m.popReceipt = r.popReceipt;
+      log.debug("lease renewed", { messageId: m.messageId });
+    } catch (err) {
+      log.warn("lease renewal failed", { messageId: m.messageId, reason: err.message });
+    } finally {
+      renewing = false;
+    }
+  }, everyMs);
+  try {
+    return await work();
+  } finally {
+    clearTimer(timer);
+  }
+}
+
+/**
+ * Process ONE received message end to end: dedup, handle under a lease, ack.
+ * Exported (with injectable queue + handler) so the retry/dedup/dead-letter
+ * rules are unit-testable without Azure. Rules:
+ *   - mark processed BEFORE handling; unmark ONLY if handling itself failed
+ *     (so a transient failure retries) — never when the handler succeeded but
+ *     the ack failed, because the side effects already happened and the dedup
+ *     mark is exactly what stops the redelivery from re-running them.
+ *   - after MAX_DEQUEUE failed deliveries the message is dead-lettered.
+ */
+export async function processMessage(m, { q = queue, handler = handleInbound, maxDequeue = MAX_DEQUEUE, lease = withLease } = {}) {
+  if (await isProcessed(m.messageId)) {
+    log.info("skipping already-processed message", { messageId: m.messageId, dequeueCount: m.dequeueCount });
+    await q.deleteMessage(m.messageId, m.popReceipt).catch(() => {});
+    return "duplicate";
+  }
+  await markProcessed(m.messageId);
+  let handled = false;
+  try {
+    await lease(q, m, async () => {
+      const payload = JSON.parse(Buffer.from(m.messageText, "base64").toString("utf8"));
+      await handler(payload);
+    });
+    handled = true;
+    await q.deleteMessage(m.messageId, m.popReceipt); // ack only on success
+    return "handled";
+  } catch (err) {
+    if (handled) {
+      // Handled fine; only the ack failed (stale receipt, network). Keep the dedup
+      // mark: if the queue redelivers, the duplicate branch above deletes it.
+      log.warn("ack failed after successful handling; dedup will absorb the redelivery", { reason: err.message });
+      return "handled-unacked";
+    }
+    await unmarkProcessed(m.messageId); // let the visibility-timeout redelivery retry a transient failure
+    if (m.dequeueCount >= maxDequeue) {
+      try {
+        await deadLetterMessage(q, m, err);
+        return "dead-lettered";
+      } catch (dlqErr) {
+        // Leave it on the main queue for another attempt rather than lose it.
+        log.error("dead-letter failed; leaving for retry", { reason: dlqErr.message });
+        return "retry";
+      }
+    }
+    // Leave it; visibility timeout returns it for another attempt.
+    log.warn("processing failed; will retry", {
+      reason: err.message,
+      dequeueCount: m.dequeueCount,
+      maxDequeue,
+    });
+    return "retry";
+  }
+}
+
 export async function startQueueConsumer() {
   await queue.createIfNotExists();
   running = true;
-  log.info("consuming", { queue: AZURE.inboundQueue, maxDequeue: MAX_DEQUEUE });
+  log.info("consuming", { queue: AZURE.inboundQueue, maxDequeue: MAX_DEQUEUE, visibilityS: VISIBILITY_S });
   let idleBackoff = 1000;
 
   while (running) {
@@ -60,7 +151,7 @@ export async function startQueueConsumer() {
     try {
       received = await queue.receiveMessages({
         numberOfMessages: 5,
-        visibilityTimeout: 120, // hide while we process; reappears if we crash
+        visibilityTimeout: VISIBILITY_S, // hide while we process; renewed under withLease
       });
     } catch (err) {
       log.error("receive failed", { reason: err.message });
@@ -76,39 +167,7 @@ export async function startQueueConsumer() {
     }
     idleBackoff = 1000;
 
-    for (const m of msgs) {
-      // At-least-once dedup: skip a message we already handled (redelivered after a
-      // reset/visibility-timeout before it was acked) so confirmations and "YES"
-      // approvals never refire. Mark BEFORE handling; unmark on failure to retry.
-      if (await isProcessed(m.messageId)) {
-        log.info("skipping already-processed message", { messageId: m.messageId, dequeueCount: m.dequeueCount });
-        await queue.deleteMessage(m.messageId, m.popReceipt).catch(() => {});
-        continue;
-      }
-      await markProcessed(m.messageId);
-      try {
-        const payload = JSON.parse(Buffer.from(m.messageText, "base64").toString("utf8"));
-        await handleInbound(payload);
-        await queue.deleteMessage(m.messageId, m.popReceipt); // ack only on success
-      } catch (err) {
-        await unmarkProcessed(m.messageId); // let the visibility-timeout redelivery retry a transient failure
-        if (m.dequeueCount >= MAX_DEQUEUE) {
-          try {
-            await deadLetterMessage(m, err);
-          } catch (dlqErr) {
-            // Leave it on the main queue for another attempt rather than lose it.
-            log.error("dead-letter failed; leaving for retry", { reason: dlqErr.message });
-          }
-        } else {
-          // Leave it; visibility timeout returns it for another attempt.
-          log.warn("processing failed; will retry", {
-            reason: err.message,
-            dequeueCount: m.dequeueCount,
-            maxDequeue: MAX_DEQUEUE,
-          });
-        }
-      }
-    }
+    for (const m of msgs) await processMessage(m);
   }
 }
 

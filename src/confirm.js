@@ -208,15 +208,23 @@ export async function tryResolveConfirmation(messageBody, { now = Date.now() } =
 
   // Which codes to act on. "ALL" is scoped to codes quoted in THIS reply that are
   // still pending, so a blanket yes can never approve an unrelated pending action
-  // (e.g. a grocery order sitting in the queue).
+  // (e.g. a grocery order sitting in the queue). There is deliberately NO
+  // fallback to "every pending code" when nothing is quoted (policy 2026-10-11):
+  // that fallback let a bare "yes all" from any authorized channel approve every
+  // staged send/spend at once. A reply that quotes no code is answered with the
+  // list of what is pending instead, still consumed (no re-ingest loop).
   let targetCodes = headCodes;
   if (isAll) {
     const pending = await loadPending(now);
     const inThread = new Set(codesIn(raw));
-    const scoped = [...pending.keys()].filter((c) => inThread.has(c));
-    // If nothing in the thread pins it (no quoted codes survived), fall back to
-    // every pending code -- the user explicitly said "all".
-    targetCodes = scoped.length ? scoped : [...pending.keys()];
+    targetCodes = [...pending.keys()].filter((c) => inThread.has(c));
+    if (!targetCodes.length && pending.size) {
+      const lines = [...pending.entries()].map(([c, e]) => `${c}: ${String(e.action || "").split("\n")[0].slice(0, 80)}`);
+      return {
+        handled: true,
+        message: `For safety, "${affirm ? "yes" : "no"} all" only applies to codes quoted in your reply. Pending right now:\n${lines.join("\n")}\nReply with the specific code(s), e.g. "${affirm ? "YES" : "NO"} ${lines[0].split(":")[0]}".`,
+      };
+    }
   }
 
   if (targetCodes.length === 0) {
