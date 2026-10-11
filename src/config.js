@@ -209,6 +209,47 @@ export const INBOUND_EMAIL_ALLOW = (process.env.INBOUND_EMAIL_ALLOW || "")
   .map((s) => s.toLowerCase().trim())
   .filter(Boolean);
 
+// WHO each family address belongs to. Keys must match the calendar owner labels
+// (the local-part of each GRAPH.calendars mailbox: "nic", "shelli"), because this
+// is how a calendar event's invitees are mapped to WHOSE time it takes when
+// checking for a clash. An event inviting only Shelli is checked against Shelli's
+// calendar, not Nic's. Override with FAMILY_PEOPLE_JSON='{"nic":[...],...}'.
+export const FAMILY_PEOPLE = (() => {
+  try {
+    const j = JSON.parse(process.env.FAMILY_PEOPLE_JSON || "");
+    if (j && typeof j === "object") {
+      return Object.fromEntries(
+        Object.entries(j).map(([k, v]) => [k, (Array.isArray(v) ? v : []).map((a) => String(a).toLowerCase().trim())])
+      );
+    }
+  } catch { /* fall through to defaults */ }
+  return {
+    nic: ["nic@freyfam.com", "nfrey2@gmail.com", "nicholasbfrey@gmail.com", "nicholas.frey@flyerdefense.com"],
+    shelli: ["shelli@freyfam.com", "shelliafrey@gmail.com", "shelli.frey@disney.com"],
+    fox: ["foxsfrey@gmail.com"],
+  };
+})();
+
+// The family's phone numbers (E.164), so a request arriving over iMessage/SMS from
+// a phone handle counts as "asked for by the family". FAMILY_ADDRESSES only holds
+// email addresses, which is why requests over iMessage were never trusted and every
+// event with invitees fell through to an approval. Defaults to OWNER_PHONE.
+export const FAMILY_PHONES = (process.env.FAMILY_PHONES || process.env.OWNER_PHONE || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Calendar event defaults.
+export const CALENDAR = {
+  // An event with no end used to be created ZERO-length (end = start), which also
+  // made it invisible to the clash check. Default it to this many minutes.
+  defaultDurationMin: Number(process.env.CALENDAR_DEFAULT_DURATION_MIN ?? 60),
+  // Local hours [start, end) that count as "during the workday" for invitee rules.
+  workHours: String(process.env.CALENDAR_WORK_HOURS || "8-18")
+    .split("-")
+    .map((n) => Number(n)),
+};
+
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------

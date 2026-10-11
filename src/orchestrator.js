@@ -1,5 +1,5 @@
 import { agentLoop, systemBlocks } from "./claude.js";
-import { modelForComplexity, modelForTurn, GRAPH, BUDGET } from "./config.js";
+import { modelForComplexity, modelForTurn, GRAPH, BUDGET, CALENDAR } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
 import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
@@ -21,8 +21,9 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, listEventsDetailed, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { calendarGateDecision } from "./calendar-gate.js";
+import { describeEventTime, eventFacts, checkWeekday, isBeforeToday, todayISO, addMinutes, wallClock, dateReference, personsFor } from "./calendar-facts.js";
 import { findConflicts } from "./week-conflicts.js";
 import { isReceipt, captureReceipt, listReceipts, formatReceipts } from "./receipts.js";
 import { synthesizeSpeech, ttsConfigured } from "./tts.js";
@@ -52,7 +53,7 @@ import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
 import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
-import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender } from "./guards.js";
+import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender, isFamilyRequester } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
 import { mealsToGroceryItems } from "./meal-grocery.js";
@@ -141,7 +142,7 @@ const tools = [
   {
     name: "list_calendar",
     description:
-      "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `day` field with the AUTHORITATIVE weekday + date (e.g. 'Saturday, Jun 27'): use it verbatim whenever you name a day, and NEVER compute the weekday yourself from the date (you get it wrong, e.g. calling Sat Jun 27 'Friday', which shifts availability onto the wrong day). Each event also has a `calendars` field naming whose calendar it is on and a `showAs` field. For availability, treat showAs 'busy' OR 'tentative' as UNAVAILABLE (work calendars surface as free/busy only); only open time or showAs 'free' is bookable. `days` sets how far ahead to look (default 14): pass `days: 1` for just today (the morning digest), or a larger value to see further out, e.g. `days: 30` for the next month or `days: 60` for two months. If you are checking a specific future date, set `days` to comfortably reach it.",
+      "List upcoming events across the family calendars (Nic's and Shelli's, merged), read-only. Each event has a `day` field with the AUTHORITATIVE weekday + date (e.g. 'Saturday, Jun 27'): use it verbatim whenever you name a day, and NEVER compute the weekday yourself from the date (you get it wrong, e.g. calling Sat Jun 27 'Friday', which shifts availability onto the wrong day). Each event also has a `calendars` field naming whose calendar it is on and a `showAs` field. For availability, treat showAs 'busy' OR 'tentative' as UNAVAILABLE (work calendars surface as free/busy only); only open time or showAs 'free' is bookable. `days` sets how far ahead to look (default 14): pass `days: 1` for just today (the morning digest), or a larger value to see further out, e.g. `days: 30` for the next month or `days: 60` for two months. If you are checking a specific future date, set `days` to comfortably reach it. The result is {events, warnings?}. If `warnings` is present, part of the calendar could not be read or was cut off: say plainly what you could not see (e.g. \"I couldn't load Shelli's calendar\") and never present a partial calendar as complete.",
     input_schema: { type: "object", properties: { top: { type: "number" }, days: { type: "number", description: "days ahead to look; default 14, up to 120" }, back: { type: "number", description: "also include events from this many days BEFORE today (default 0). Use back: 1 in the morning digest to review what just happened yesterday and spawn follow-ups." } } },
   },
   {
@@ -174,19 +175,23 @@ const tools = [
   {
     name: "create_calendar_event",
     description:
-      "Create a calendar event and invite attendees. High-stakes (sends invites): requires owner approval. Apply the house rules above — e.g. for workday appointments include Nic's and Shelli's work emails as attendees; mark House Cleaning events showAs='free'. Times are ISO strings in the family's timezone.",
+      "Create a calendar event and invite attendees. Routine family events are added DIRECTLY, no approval: every invitee is a family address (their own work emails count), it doesn't clash with an existing event for the people involved, and a family member asked for it. An outside invitee or a clash goes to the family for approval instead. " +
+      "DATES: take the date from the date reference in your context, never compute it, and ALWAYS pass `weekday` (the weekday you mean, e.g. 'Tuesday'); a date that isn't that weekday is rejected so you can fix it. Times are ISO wall-clock in the family's timezone (e.g. 2026-10-14T14:00:00). Give an `end`; if you omit it the event runs " + CALENDAR.defaultDurationMin + " minutes. " +
+      "INVITEES: apply the house rules using THIS EVENT's date and time, not the current time (e.g. if the rules say workday appointments include both work emails, a Tuesday 2 PM appointment gets them even when asked for at night). If the event falls in work hours on a workday with no work email invited, you will be asked to re-check the rule; pass inviteesChecked: true only when the rule genuinely does not apply. Mark House Cleaning events showAs='free'.",
     input_schema: {
       type: "object",
       properties: {
         subject: { type: "string" },
-        start: { type: "string", description: "ISO start, e.g. 2026-06-25T14:00:00" },
-        end: { type: "string", description: "ISO end; defaults to start if omitted" },
+        start: { type: "string", description: "ISO wall-clock start in family time, e.g. 2026-10-14T14:00:00 (from the date reference)" },
+        end: { type: "string", description: "ISO wall-clock end; defaults to start + " + CALENDAR.defaultDurationMin + " minutes" },
+        weekday: { type: "string", description: "The weekday this event is on, e.g. 'Tuesday'. Checked against the date." },
         attendees: { type: "array", items: { type: "string" }, description: "invitee email addresses" },
         location: { type: "string" },
         showAs: { type: "string", enum: ["free", "busy"] },
         body: { type: "string" },
+        inviteesChecked: { type: "boolean", description: "Set true only after re-checking that a workday invitee rule does not apply to this event." },
       },
-      required: ["subject", "start"],
+      required: ["subject", "start", "weekday"],
     },
   },
   {
@@ -910,19 +915,27 @@ export function wrapDelegateWithMirror(delegateFn, { onDelegate, images, fulfill
 
 // 011: would this proposed event overlap an existing one? Free/closure events never
 // conflict; a date too far out to fetch (>120d) is treated as "gate to be safe".
+// Checks the people whose time the event takes (its family invitees), not always
+// the write calendar's owner: an event for Shelli used to be checked against NIC's
+// calendar, so his meetings gated her appointments. Returns {conflict, clashes}.
 async function calendarWouldConflict(input) {
   const t = Date.parse(String(input.start));
-  if (Number.isNaN(t)) return true;
-  if (String(input.showAs || "").toLowerCase() === "free") return false;
+  if (Number.isNaN(t)) return { conflict: true, clashes: [] };
+  if (String(input.showAs || "").toLowerCase() === "free") return { conflict: false, clashes: [] };
   const daysOut = Math.ceil((t - Date.now()) / 864e5) + 2;
-  if (daysOut > 120) return true;
-  const owner = String(GRAPH.calendarWrite || "nic@freyfam.com").split("@")[0];
-  const proposed = { subject: input.subject, start: input.start, end: input.end || input.start, showAs: input.showAs, calendars: [owner] };
+  if (daysOut > 120) return { conflict: true, clashes: [] };
+  const owners = GRAPH.calendars.map((m) => String(m).split("@")[0]);
+  const writer = String(GRAPH.calendarWrite || "nic@freyfam.com").split("@")[0];
+  const people = personsFor(input.attendees).filter((p) => owners.includes(p));
+  const proposed = { subject: input.subject, start: input.start, end: input.end || input.start, showAs: input.showAs, calendars: people.length ? people : [writer] };
   const events = await listEvents({ days: Math.max(1, daysOut) });
-  return findConflicts([...events, proposed]).some((c) => c.a === proposed || c.b === proposed);
+  const clashes = findConflicts([...events, proposed])
+    .filter((c) => c.a === proposed || c.b === proposed)
+    .map((c) => (c.a === proposed ? c.b : c.a));
+  return { conflict: clashes.length > 0, clashes };
 }
 
-function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } = {}) {
+function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, trustedRequester = null } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
     // Optional `agent` routes the fact to that specialist's scoped brain; omit for shared.
@@ -969,7 +982,12 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         return fulfillCooRequests(coo, requests, { delegate, requestConfirmation });
       },
     }),
-    list_calendar: async ({ top, days, back } = {}) => JSON.stringify(await listEvents({ top, days, back })),
+    list_calendar: async ({ top, days, back } = {}) => {
+      // Report anything unread or cut off rather than presenting a partial calendar
+      // as complete (see listEventsDetailed).
+      const r = await listEventsDetailed({ top, days, back });
+      return JSON.stringify(r.warnings.length ? { warnings: r.warnings, events: r.events } : { events: r.events });
+    },
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Woodbury Preschool context captured for that day yet" }),
     ingest_fox_curriculum: async ({ url }) => {
@@ -999,30 +1017,65 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     // runs only when the family replies "YES <code>"; the staged kind+params are
     // persisted (confirm.js) so a restart can't drop a pending approval.
     create_calendar_event: async (input) => {
-      const who = (input.attendees || []).join(", ") || "(no invitees)";
-      const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
-      // 011: auto-create routine, family-own events (personal blocks or family-only
-      // invitees requested by family, no conflict); gate everything else exactly as
-      // before. Conservative: any error -> treat as conflict -> gate.
-      let hasConflict = true;
-      try { hasConflict = await calendarWouldConflict(input); } catch { hasConflict = true; }
-      const gate = calendarGateDecision({ start: input.start, attendees: input.attendees, sourceFrom, hasConflict });
+      // Strip our own control fields so the staged/created params are exactly the event.
+      const { weekday, inviteesChecked, ...raw } = input || {};
+      const ev = { ...raw };
+      const sw = wallClock(ev.start);
+      if (!sw) return `I couldn't read the start time "${ev.start}". Use an ISO date-time like 2026-10-14T14:00:00 taken from the date reference.`;
+      // A missing end used to create a ZERO-length event, which also hid it from the
+      // clash check (so it could auto-create on top of a real meeting).
+      if (!ev.end && sw.hasTime) ev.end = addMinutes(ev.start, CALENDAR.defaultDurationMin);
+      const today = todayISO();
+
+      // Deterministic date guards. The model names the weekday it MEANS; we check the
+      // date actually is that weekday, and that it isn't in the past (wrong year).
+      if (isBeforeToday(ev.start, today)) {
+        return `Not created: ${ev.start.slice(0, 10)} is before today (${eventFacts(today)?.weekday}, ${today}). Check the year and the date reference, then call again.`;
+      }
+      const mismatch = checkWeekday(ev.start, weekday, { today });
+      if (mismatch) return `Not created. ${mismatch}`;
+
+      const when = describeEventTime(ev.start, ev.end);
+      const attendees = Array.isArray(ev.attendees) ? ev.attendees : [];
+      const who = attendees.join(", ") || "(no invitees)";
+
+      // Invitee checkpoint. House rules stay prose (they carry nuance, e.g. Fox's
+      // appointments), but the model kept judging "during the workday" by the CURRENT
+      // time. If the EVENT sits in work hours on a workday, a workday invitee rule
+      // exists, and no work email is invited, make it re-check against the event.
+      const facts = eventFacts(ev.start);
+      if (facts?.duringWorkHours && !inviteesChecked && !attendees.some((a) => isWorkDomain([a]))) {
+        const rules = await getHouseRules();
+        if (rules.some((r) => /work ?day|work hours|working hours/i.test(r) && /invite/i.test(r))) {
+          return `Not created yet. "${ev.subject}" is on ${when}, a workday during work hours, and no work email is invited. Your house rules have a workday invitee rule: apply it to THIS event's day and time (not the current time) and call create_calendar_event again with the invitees it calls for. If it genuinely does not apply (the family said not to invite anyone, or a more specific rule overrides it), call again with inviteesChecked: true.`;
+        }
+      }
+
+      // 011: auto-create routine, family-own events; gate everything else.
+      // Conservative: any error -> treat as a clash -> gate.
+      let clash = { conflict: true, clashes: [] };
+      try { clash = await calendarWouldConflict(ev); } catch { clash = { conflict: true, clashes: [] }; }
+      const gate = calendarGateDecision({ start: ev.start, attendees, sourceFrom, trustedRequester, hasConflict: clash.conflict });
       if (gate.auto) {
         try {
-          await createEvent(input);
-          log.info("calendar auto-created (011)", { subject: input.subject, why: gate.why });
-          return `Added "${input.subject}" (${when})${(input.attendees || []).length ? `, invitees: ${who}` : ""} to the calendar automatically (${gate.why}). Tell me if you want it changed or removed.`;
+          await createEvent(ev);
+          log.info("calendar auto-created (011)", { subject: ev.subject, why: gate.why });
+          return `Added "${ev.subject}" on ${when}${attendees.length ? `, invitees: ${who}` : ""}. It went straight on the calendar (${gate.why}). When you tell the family, use the day and time exactly as written here.`;
         } catch (e) {
           log.error("calendar auto-create failed; falling back to approval", { reason: e.message });
         }
       }
+      // When an approval IS needed, say why, and name what it clashes with.
+      const clashText = clash.clashes.length
+        ? `Clashes with: ${clash.clashes.map((c) => `${c.subject} (${describeEventTime(c.start, c.end)}, ${(c.calendars || []).join(" & ")})`).join("; ")}`
+        : "";
       const { instruction } = await requestConfirmation(
-        `Create event: ${input.subject}\n${when}\nInvitees: ${who}${input.showAs ? `\nShow as: ${input.showAs}` : ""}`,
+        `Create event: ${ev.subject}\n${when}\nInvitees: ${who}${ev.showAs ? `\nShow as: ${ev.showAs}` : ""}${clashText ? `\n${clashText}` : ""}`,
         "calendar",
-        input,
+        ev,
         { thread }
       );
-      return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
+      return `Needs approval (${gate.why}). Ready to create "${ev.subject}" on ${when}, invitees: ${who}.${clashText ? ` ${clashText}.` : ""} ${instruction}`;
     },
     delete_calendar_event: async ({ refs, subject, start }) => {
       const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);
@@ -1571,13 +1624,15 @@ function memSavedTag(m) {
 // digest, for live weather + traffic along each person's commute).
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
 
-export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null, sourceFrom = null } = {}) {
+export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null, sourceFrom = null, trustedRequester = null } = {}) {
   const p = await persona("chief-of-staff");
   const mems = await recall(body, 4); // recall always keys off the text
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
   const contacts = await getEmailContacts(); // so Lloyd knows who is NOT a first contact
   const volatile = [
     `Now: ${nowInFamilyTz()}`,
+    // Day-to-date table so "Tuesday" / "next Thursday" is a lookup, not arithmetic.
+    dateReference(),
     formatHouseRules(rules),
     contacts.length
       ? `Email addresses you have written before (anyone NOT on this list is a first contact, so introduce yourself): ${contacts.join(", ")}`
@@ -1590,7 +1645,7 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     .join("\n\n");
   // Trace each tool the chief calls so a runaway loop (the one that ends in "max
   // tool turns reached") is visible — same wrapper as the specialists. Names only.
-  const rawHandlers = toolHandlers({ images, onDelegate, thread, sourceFrom });
+  const rawHandlers = toolHandlers({ images, onDelegate, thread, sourceFrom, trustedRequester });
   const tracedHandlers = {};
   for (const [name, fn] of Object.entries(rawHandlers)) {
     tracedHandlers[name] = async (input) => {
@@ -1941,7 +1996,9 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       // Thread approval emails INTO the source conversation when this turn was triggered
       // by an email (else the notifier falls back to a standalone approval email).
       thread: msg.channel === "email" && msg.graphMessageId ? { messageId: msg.graphMessageId, subject: msg.subject } : null,
-      sourceFrom: msg.from, // 011: "trusted sender" check for calendar auto-create
+      sourceFrom: msg.from, // 011: "trusted sender" check for calendar auto-create (email fallback)
+      // Channel-aware: a family member over iMessage/voice/Slack counts, not just email.
+      trustedRequester: isFamilyRequester(msg),
       onDelegate: (event) => transport.mirror(event),
     });
   }
@@ -1959,3 +2016,6 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
 
 // Re-export for the heartbeat to escalate actionable items into real runs.
 export { recentMailSignals };
+
+// Test visibility for the tool handlers (their pre-Graph guards are pure logic).
+export { toolHandlers as _toolHandlersForTest };

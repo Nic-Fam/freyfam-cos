@@ -275,25 +275,39 @@ async function calendarsFor(mailbox) {
 // Read ALL of a mailbox's calendars (default + secondaries like a shared "Nic
 // Work" free/busy calendar) in the window via calendarView (expands recurrences).
 // Without this Lloyd saw only the default calendar and missed work busy/tentative.
+//
+// Returns {events, errors}. It used to fetch ONE page of 50 per calendar and never
+// follow @odata.nextLink, so a busy work calendar silently lost every event past
+// the 50th in the window, and a calendar that failed to load vanished without a
+// trace. Now it pages to the end and reports anything it couldn't read.
 async function calendarViewFor(mailbox, window) {
   const cals = await calendarsFor(mailbox);
   const owner = calendarOwner(mailbox);
+  const prefer = `outlook.timezone="${FAMILY_TZ}"`;
   const per = await Promise.allSettled(
-    cals.map((cal) =>
-      graph()
+    cals.map(async (cal) => {
+      const first = await graph()
         .api(`/users/${mailbox}/calendars/${cal.id}/calendarView`)
         .query({ startDateTime: window.startDateTime, endDateTime: window.endDateTime })
-        .header("Prefer", `outlook.timezone="${FAMILY_TZ}"`)
+        .header("Prefer", prefer)
         .select("id,subject,start,end,location,showAs,attendees")
         .top(50)
         .orderby("start/dateTime")
-        .get()
-    )
+        .get();
+      // nextLink keeps the query but not headers, so re-send the timezone preference.
+      return collectPages(first, (next) => graph().api(next).header("Prefer", prefer).get());
+    })
   );
   const events = [];
-  for (const r of per) {
-    if (r.status !== "fulfilled") continue;
-    for (const e of r.value.value || []) {
+  const errors = [];
+  per.forEach((r, i) => {
+    const calName = cals[i]?.name || "calendar";
+    if (r.status !== "fulfilled") {
+      errors.push(`${owner}'s "${calName}" calendar could not be read (${r.reason?.message || r.reason})`);
+      return;
+    }
+    if (!r.value.complete) errors.push(`${owner}'s "${calName}" calendar has more events than could be fetched; some later ones may be missing`);
+    for (const e of r.value.items) {
       // Drop pure free/busy "Free" markers (a shared work calendar emits a "Free"
       // block per open slot). They carry no scheduling value and would bury real
       // events; busy/tentative blockers and real free events (House Cleaning) stay.
@@ -312,8 +326,57 @@ async function calendarViewFor(mailbox, window) {
         refs: e.id ? [{ calendar: mailbox, id: e.id }] : [],
       });
     }
+  });
+  return { events, errors };
+}
+
+/**
+ * Follow Graph @odata.nextLink pages to the end (bounded). Pure given `fetchNext`,
+ * so the paging is testable without a Graph client. `complete:false` means the
+ * bound was hit and later results exist that were not fetched.
+ */
+export async function collectPages(firstPage, fetchNext, { maxPages = 20 } = {}) {
+  const items = [...(firstPage?.value || [])];
+  let next = firstPage?.["@odata.nextLink"];
+  let pages = 1;
+  while (next && pages < maxPages) {
+    const page = await fetchNext(next);
+    items.push(...(page?.value || []));
+    next = page?.["@odata.nextLink"];
+    pages += 1;
   }
-  return events;
+  return { items, complete: !next };
+}
+
+/**
+ * Merge per-mailbox results: dedupe an event that sits on both calendars into one
+ * entry (with both owners + both delete refs), sort by start, and cap. Anything
+ * dropped or unreadable is REPORTED in `warnings` rather than silently lost, so the
+ * chief can say "I couldn't see Shelli's calendar" instead of presenting a partial
+ * view as complete. Pure.
+ */
+export function mergeCalendarResults(results, { cap = Infinity } = {}) {
+  const byKey = new Map();
+  const warnings = [];
+  for (const r of results || []) {
+    warnings.push(...(r.errors || []));
+    for (const e of r.events || []) {
+      const key = `${e.subject}|${e.start}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
+        const seen = new Set(existing.refs.map((x) => x.id));
+        existing.refs = [...existing.refs, ...e.refs.filter((x) => !seen.has(x.id))];
+      } else byKey.set(key, { ...e, calendars: [...e.calendars], refs: [...e.refs] });
+    }
+  }
+  const all = [...byKey.values()].sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  const truncated = all.length > cap;
+  const events = truncated ? all.slice(0, cap) : all;
+  if (truncated) {
+    warnings.push(`Only the first ${cap} of ${all.length} events are shown (through ${events[events.length - 1]?.day || "the cutoff"}). Ask for a shorter window to see the rest.`);
+  }
+  return { events, warnings, truncated, total: all.length };
 }
 
 // Short owner label (local-part) so the digest can say whose calendar it is.
@@ -359,32 +422,29 @@ export function clearCalendarCache() {
  * the union of owners in `calendars`. One mailbox erroring does not sink the
  * rest. `top` caps the merged result. Cached for a short TTL (see calendarCache).
  */
-export async function listEvents({ top, days = GRAPH.calendarDays, back = 0 } = {}) {
+export async function listEventsDetailed({ top, days = GRAPH.calendarDays, back = 0 } = {}) {
   const win = Math.min(Math.max(1, Math.round(days || GRAPH.calendarDays)), 120); // clamp 1..120 days
   const lookBack = Math.min(Math.max(0, Math.round(back)), 14); // 0..14 days of look-back (digest follow-ups)
-  // Scale the cap with the window so a longer look-ahead isn't silently truncated
-  // (work free/busy adds several blocks/day). Caller can still override `top`.
-  const cap = top ?? Math.min(300, Math.max(50, (win + lookBack) * 8));
-  return calendarCache.get(`${cap}|${win}|${lookBack}`, async () => {
+  // Generous cap now that every page is fetched (work free/busy adds several
+  // blocks/day). Hitting it is REPORTED in warnings, never silent.
+  const cap = top ?? Math.min(500, Math.max(100, (win + lookBack) * 15));
+  return calendarCache.get(`d|${cap}|${win}|${lookBack}`, async () => {
     const window = familyDateWindow(win, new Date(), { back: lookBack });
     const per = await Promise.allSettled(GRAPH.calendars.map((mb) => calendarViewFor(mb, window)));
-    const byKey = new Map();
-    for (const r of per) {
-      if (r.status !== "fulfilled") continue;
-      for (const e of r.value) {
-        const key = `${e.subject}|${e.start}`;
-        const existing = byKey.get(key);
-        if (existing) {
-          existing.calendars = [...new Set([...existing.calendars, ...e.calendars])];
-          const seen = new Set(existing.refs.map((r) => r.id));
-          existing.refs = [...existing.refs, ...e.refs.filter((r) => !seen.has(r.id))];
-        } else byKey.set(key, e);
-      }
-    }
-    return [...byKey.values()]
-      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
-      .slice(0, cap);
+    const results = per.map((r, i) =>
+      r.status === "fulfilled"
+        ? r.value
+        : { events: [], errors: [`${calendarOwner(GRAPH.calendars[i])}'s calendar could not be read (${r.reason?.message || r.reason})`] }
+    );
+    const merged = mergeCalendarResults(results, { cap });
+    for (const w of merged.warnings) _glog.warn("calendar read incomplete", { warning: w });
+    return merged;
   });
+}
+
+/** Events only (internal callers: clash checks, digest, week-ahead scan). */
+export async function listEvents(opts = {}) {
+  return (await listEventsDetailed(opts)).events;
 }
 
 /** Create an event on the family calendar (sends invites). High-stakes: confirm upstream. */

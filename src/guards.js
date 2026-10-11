@@ -1,4 +1,4 @@
-import { WORK_DOMAINS, GRAPH, FAMILY_ADDRESSES, INBOUND_EMAIL_ALLOW, IMESSAGE, SLACK } from "./config.js";
+import { WORK_DOMAINS, GRAPH, FAMILY_ADDRESSES, INBOUND_EMAIL_ALLOW, IMESSAGE, SLACK, FAMILY_PHONES } from "./config.js";
 
 // ===========================================================================
 // Outbound policy (updated 2026-06-20). Work domains (flyerdefense.com,
@@ -132,5 +132,41 @@ export function isAuthorizedSender(msg) {
       return true;
     default:
       return true; // unknown/internal channels (tests, timers) are trusted
+  }
+}
+
+// ===========================================================================
+// "Asked for by the family" (calendar auto-create, src/calendar-gate.js). This is
+// STRICTER than isAuthorizedSender above: an empty iMessage/Slack allowlist lets a
+// sender reach Lloyd, but only a positively-identified family member may have an
+// event with invitees created without approval.
+//
+// The previous check compared msg.from against FAMILY_ADDRESSES, which holds only
+// EMAIL addresses. A request over iMessage (a phone number), Slack (a user id), or
+// voice therefore never counted as family, so every event with invitees asked for
+// that way fell through to an approval. This recognises family on every channel.
+// ===========================================================================
+const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+
+export function isFamilyRequester(msg) {
+  const channel = msg?.channel;
+  const from = String(msg?.from || "").trim();
+  switch (channel) {
+    case "email":
+      return isFamilyAddress(from);
+    case "imessage":
+    case "sms": {
+      if (isFamilyAddress(from)) return true; // an Apple ID email handle
+      const digits = last10(from);
+      if (digits.length === 10 && FAMILY_PHONES.some((p) => last10(p) === digits)) return true;
+      return IMESSAGE.allow.length > 0 && IMESSAGE.allow.includes(from.toLowerCase());
+    }
+    case "slack":
+      // Only an explicitly allowlisted user: a workspace can hold guests.
+      return SLACK.allow.length > 0 && SLACK.allow.includes(from);
+    case "voice":
+      return true; // the voice endpoint is token-authenticated to the family's own devices
+    default:
+      return false; // heartbeat/proactive runs: no human asked, so keep the gate
   }
 }

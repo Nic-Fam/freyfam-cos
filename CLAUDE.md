@@ -116,6 +116,13 @@ inside the specialist runner, not a caller change.
    family-own NON-work inboxes (`guards.isFamilySelfEmail`) sends directly, no
    approval — emailing the family themselves isn't acting on their behalf to an
    outsider. Any outside or work-domain recipient still routes through the gate.
+   **Family calendar carve-out (011):** a calendar event is created directly, no
+   approval, only when ALL hold: every invitee is a family-own address (their own
+   work calendars included), it doesn't clash with an existing event for the people
+   it involves, and a family member asked for it (recognised on every channel by
+   `guards.isFamilyRequester`, not just email). Any outside invitee, any clash, or a
+   proactive/heartbeat-originated event still routes through the gate
+   (`src/calendar-gate.js`).
 3. **No money movement.** Finance agent surfaces actions; humans execute them.
 
 ## Model routing = the cost strategy
