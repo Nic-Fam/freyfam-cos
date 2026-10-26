@@ -1,7 +1,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MODELS, DIGEST } from "./config.js";
+import { MODELS, DIGEST, MAPS, GRAPH } from "./config.js";
 import { dayPlan } from "./schedule.js";
+import { planDay, priceTrips, formatTripLine } from "./day-plan.js";
+import { getWeather, formatWeather } from "./weather.js";
+import { listEventsDetailed } from "./channels/graph.js";
 import { summary as downsizingSummary } from "./downsizing.js";
 import { runChief } from "./orchestrator.js";
 import { postSlack } from "./channels/notify.js";
@@ -75,8 +78,11 @@ ${weatherStops.join("\n")}
   TRAVEL is driven by TODAY'S SCHEDULE FIRST, not by a default commute:
     1. For each person, find their FIRST commitment today that is away from home
        (a doctor's appointment, Gary's, a tour, anything with a location). If there
-       is one, that is their destination: call commute_time from home to THAT place.
-       This OUTRANKS any work commute.
+       is one, that is their destination: call commute_time from home to THAT place
+       with arriveBy set to that commitment's start time, so the drive is priced on
+       the traffic at that hour (it is early morning now; current traffic is
+       meaningless for an 8 or 9 AM trip). This OUTRANKS any work commute.
+       For the work commute, pass arriveBy = when they start work.
 ${plan.out.map(legFor).join("\n") || "    - (nobody is in-office today)"}
     2. ${fallback}
     3. A person with neither gets no travel line at all.
@@ -96,8 +102,39 @@ export function moveSaleSection(move) {
  * whether the move sale still has anything live. Doing this in CODE (not in the
  * prompt) is what stops the digest asking for sections that cannot apply today.
  */
-export async function buildDigestContext(now = new Date(), { tz = DIGEST.tz, moveSummary = downsizingSummary } = {}) {
-  const plan = dayPlan(now, tz);
+export async function buildDigestContext(now = new Date(), {
+  tz = DIGEST.tz,
+  moveSummary = downsizingSummary,
+  // No Graph credentials (tests, a fresh box) -> no calendar -> weekday rules.
+  loadEvents = async () => (GRAPH.tenantId && GRAPH.clientId ? (await listEventsDetailed({ days: 1 })).events : null),
+  price = priceTrips,
+  weather = getWeather,
+  mapsKey = MAPS.key,
+} = {}) {
+  // The CALENDAR decides the day's shape (PTO, sick days, Woodbury closures, trips,
+  // appointments before work), not the fixed weekday rules alone. See day-plan.js.
+  let events = null;
+  try {
+    events = await loadEvents();
+  } catch (e) {
+    log.warn("digest: calendar read failed; falling back to weekday rules", { reason: String(e?.message || e) });
+  }
+  const day = Array.isArray(events) ? planDay({ events, now, tz }) : null;
+  const plan = day ? legacyPlan(day, now, tz) : dayPlan(now, tz);
+
+  // Price every trip on predicted traffic and fetch weather in code, so the
+  // model gets exact leave-by times instead of guessing or using 6am traffic.
+  if (day && day.routable && mapsKey) {
+    try {
+      day.priced = await price(day, { now, tz });
+    } catch (e) {
+      log.warn("digest: trip pricing failed", { reason: String(e?.message || e) });
+    }
+    const wx = await Promise.allSettled(day.weatherStops.map((w) => weather(w.address)));
+    day.weather = day.weatherStops.map((w, i) => (wx[i].status === "fulfilled"
+      ? { ...w, ok: true, line: `${w.label}: ${formatWeather(wx[i].value)}` }
+      : { ...w, ok: false, error: String(wx[i].reason?.message || wx[i].reason) }));
+  }
   let move = null;
   if (DIGEST.moveSale) {
     try {
@@ -109,7 +146,49 @@ export async function buildDigestContext(now = new Date(), { tz = DIGEST.tz, mov
       /* a store hiccup must never block the digest */
     }
   }
-  return { plan, move };
+  return { plan, move, day };
+}
+
+/**
+ * The calendar-adjusted day expressed in the older {out, home, daycare} shape,
+ * so the fallback prompt (no addresses configured) still honors PTO, closures,
+ * work-from-home and travel. Pure.
+ */
+export function legacyPlan(day, now = new Date(), tz = DIGEST.tz) {
+  const base = dayPlan(now, tz);
+  const out = day.people.filter((p) => p.status === "in-office").map((p) => ({ name: p.name, chainedDaycare: p.chainedDaycare }));
+  const home = day.people
+    .filter((p) => p.status === "home" || p.status === "off")
+    .map((p) => ({ name: p.name, reason: p.status === "off" ? "off work today" : p.reason === "weekend" ? "weekend" : "works from home today" }));
+  return { ...base, daycare: day.daycare.runs, out, home, anyOut: out.length > 0 };
+}
+
+/** The travel + weather section when the planner has already done the work. Pure. */
+export function computedTravelSection(day) {
+  const priced = day.priced || [];
+  const ok = priced.filter((t) => t.ok);
+  const failed = priced.filter((t) => !t.ok);
+  const wxOk = (day.weather || []).filter((w) => w.ok);
+  const wxFailed = (day.weather || []).filter((w) => !w.ok);
+  const lines = [];
+  lines.push(`- Weather + travel (ALREADY COMPUTED from today's calendar; each drive is priced on the
+  traffic PREDICTED for when that person actually leaves, not on early-morning roads).
+  Use these as given. Do not call commute_time or get_weather for them, do not change
+  the leave-by times, and do not add trips that are not listed.`);
+  if (wxOk.length || wxFailed.length) {
+    lines.push(`  WEATHER (one short line each):`);
+    for (const w of wxOk) lines.push(`    - ${w.line}`);
+    for (const w of wxFailed) lines.push(`    - ${w.label}: not fetched (${w.error}); call get_weather for "${w.address}".`);
+  }
+  if (ok.length || failed.length) {
+    lines.push(`  TRAVEL (one line per trip, leave-by time first):`);
+    for (const t of ok) lines.push(`    - ${formatTripLine(t)}`);
+    for (const t of failed) lines.push(`    - ${formatTripLine(t)} Call commute_time from "${t.from}" to "${t.to}" with arriveBy "${t.arriveBy || ""}" for this one.`);
+    if (ok.some((t) => t.conflict)) lines.push(`  A line marked TIGHT is a real scheduling problem: lead the travel section with it.`);
+  } else {
+    lines.push(`  TRAVEL: nobody has anywhere to drive today, so leave travel out entirely.`);
+  }
+  return lines.join("\n");
 }
 
 // The prompt is built per-run so TODAY's date is injected as ground truth. The
@@ -122,7 +201,8 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
     timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric",
   }).format(now);
   const { date } = localParts(now, tz); // YYYY-MM-DD
-  const { plan, move } = ctx || { plan: dayPlan(now, tz), move: null };
+  const { plan, move, day } = ctx || { plan: dayPlan(now, tz), move: null, day: null };
+  const computed = Boolean(day && (day.priced || day.weather));
 
   // Only ask for the sections that can actually apply today. Anything that cannot
   // (a commute on a weekend, Fox's day when daycare is closed, a finished move
@@ -159,7 +239,7 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
   book (make_reservation). Keep it to a few lines. Skip entirely if the evening is
   free, plans are at home, or nothing is near dinnertime -- don't force it.`,
     moveSaleSection(move),
-    commuteSection(plan),
+    computed ? computedTravelSection(day) : commuteSection(plan),
     `- Follow-ups and open actions: first call list_calendar with days 1 AND back 1, so
   you also see what happened YESTERDAY. For any notable event that just passed and
   genuinely needs a next step, check list_tasks; if no open follow-up exists for it
@@ -205,8 +285,12 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
   "over" or "done" -- a hunt with no new results today is simply quiet, still running.`,
   ].filter(Boolean);
 
-  return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
+  const shape = day && day.notes.length
+    ? `\nTODAY'S SHAPE (worked out from the calendar; authoritative, plan around it):\n${day.notes.map((n) => `- ${n}`).join("\n")}\n`
+    : "";
 
+  return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
+${shape}
 Compose a brief MORNING DIGEST for the family.
 
 Gather what you need first:

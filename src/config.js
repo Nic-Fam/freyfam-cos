@@ -395,17 +395,33 @@ function dayList(raw, fallback) {
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
 }
 
+// Standing places for the calendar-driven day planner (src/day-plan.js). The
+// planner prices every trip on predicted traffic for when it actually happens, so
+// it needs real addresses. Until HOME_ADDRESS is set it still adapts the digest to
+// the calendar, but leaves the routing to Lloyd's commute_time tool. These are
+// env-only on purpose: addresses are personal and do not belong in the repo.
+const place = (v) => String(v || "").trim() || null;
+const hhmm = (v, fallback) => (/^\d{1,2}:\d{2}$/.test(String(v || "").trim()) ? String(v).trim().padStart(5, "0") : fallback);
+
 export const SCHEDULE = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  homeAddress: place(process.env.HOME_ADDRESS),
+  daycareAddress: place(process.env.DAYCARE_ADDRESS),
+  daycareName: process.env.DAYCARE_NAME || "Woodbury Preschool",
+  daycareDropoff: hhmm(process.env.DAYCARE_DROPOFF, "08:15"),   // target arrival at drop-off
+  dropoffDwellMin: Number(process.env.DAYCARE_DROPOFF_MIN ?? 5), // minutes spent at drop-off
+  travelBufferMin: Number(process.env.TRAVEL_BUFFER_MIN ?? 10),  // arrive this early
   // Days anyone is expected at a workplace at all.
   workDays: dayList(process.env.FAMILY_WORK_DAYS, [1, 2, 3, 4, 5]),
   // Days Fox is at Woodbury Preschool (drives the drop-off leg + his daily note).
   daycareDays: dayList(process.env.DAYCARE_DAYS, [1, 2, 3, 4, 5]),
   people: [
     // Nic's morning drive is CHAINED through Fox's daycare on daycare days.
-    { name: "Nic", wfhDays: dayList(process.env.NIC_WFH_DAYS, []), chainedDaycare: true },
+    { name: "Nic", wfhDays: dayList(process.env.NIC_WFH_DAYS, []), chainedDaycare: true,
+      workAddress: place(process.env.NIC_WORK_ADDRESS), workStart: hhmm(process.env.NIC_WORK_START, "09:00") },
     // Shelli works from home on Fridays, so no commute/work weather for her then.
-    { name: "Shelli", wfhDays: dayList(process.env.SHELLI_WFH_DAYS, [5]), chainedDaycare: false },
+    { name: "Shelli", wfhDays: dayList(process.env.SHELLI_WFH_DAYS, [5]), chainedDaycare: false,
+      workAddress: place(process.env.SHELLI_WORK_ADDRESS), workStart: hhmm(process.env.SHELLI_WORK_START, "09:00") },
   ],
 };
 

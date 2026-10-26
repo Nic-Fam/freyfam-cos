@@ -227,3 +227,58 @@ test("digest state keeps lastRunDate and alertedDate independently", async () =>
   await rm(TMP, { force: true });
   delete process.env.DIGEST_STATE_PATH;
 });
+
+// --- calendar-driven day planning + predicted traffic (2026-10-26) ------------
+import { SCHEDULE } from "../src/config.js";
+
+test("buildDigestContext plans from the calendar and hands over priced trips + weather", async () => {
+  const MON = new Date("2026-10-26T13:00:00Z"); // 6 AM PDT
+  const saved = { home: SCHEDULE.homeAddress, daycare: SCHEDULE.daycareAddress, work: SCHEDULE.people.map((p) => p.workAddress) };
+  SCHEDULE.homeAddress = "1 Home St";
+  SCHEDULE.daycareAddress = "2 School St";
+  SCHEDULE.people[0].workAddress = "3 Nic Work";
+  SCHEDULE.people[1].workAddress = "4 Shelli Work";
+  try {
+    const events = [
+      { subject: "Shelli PTO", start: "2026-10-26T00:00:00", end: "2026-10-27T00:00:00", showAs: "busy", attendees: [], calendars: ["shelli"] },
+      { subject: "Nic dentist", start: "2026-10-26T08:30:00", end: "2026-10-26T09:30:00", location: "Glendale Dental", showAs: "busy", attendees: [], calendars: ["nic"] },
+    ];
+    const route = async (from, to, { arriveAt, departAt }) => {
+      const at = arriveAt || departAt || MON;
+      return { minutes: 30, delayMins: 12, trafficLabel: "moderate traffic", basis: "predicted", arriveAt: arriveAt || new Date(at.getTime() + 30 * 60000), departAt: arriveAt ? new Date(at.getTime() - 30 * 60000) : at };
+    };
+    const ctx = await buildDigestContext(MON, {
+      tz: TZ,
+      moveSummary: async () => ({ active: 0, draft: 0 }),
+      loadEvents: async () => events,
+      price: (day, opts) => import("../src/day-plan.js").then((m) => m.priceTrips(day, { ...opts, route })),
+      weather: async (addr) => ({ label: "Today", temp: 71, unit: "F", shortForecast: `Sunny at ${addr}`, precipChance: 0 }),
+      mapsKey: "k",
+    });
+    assert.equal(ctx.plan.out.length, 1, "Shelli is off, so only Nic is out");
+    assert.deepEqual(ctx.plan.home, [{ name: "Shelli", reason: "off work today" }]);
+    const p = buildDigestPrompt(MON, TZ, ctx);
+    assert.match(p, /TODAY'S SHAPE/);
+    assert.match(p, /Shelli is off work today \("Shelli PTO"\)/);
+    assert.match(p, /ALREADY COMPUTED/);
+    assert.match(p, /Nic: leave home by .* for Nic dentist at 8:30 AM, drop Fox at Woodbury Preschool on the way/);
+    assert.match(p, /predicted for that time/);
+    assert.match(p, /Home: Today: Sunny at 1 Home St/);
+    assert.doesNotMatch(p, /call commute_time from home to THAT place/, "no model-side routing when it is computed");
+  } finally {
+    SCHEDULE.homeAddress = saved.home;
+    SCHEDULE.daycareAddress = saved.daycare;
+    SCHEDULE.people.forEach((p, i) => { p.workAddress = saved.work[i]; });
+  }
+});
+
+test("without addresses the digest still adapts to the calendar and asks for arrive-by routing", async () => {
+  const MON = new Date("2026-10-26T13:00:00Z");
+  const events = [{ subject: "Woodbury closed - in-service day", start: "2026-10-26T00:00:00", end: "2026-10-27T00:00:00", showAs: "busy", attendees: [], calendars: ["nic"] }];
+  const ctx = await buildDigestContext(MON, { tz: TZ, moveSummary: async () => ({ active: 0, draft: 0 }), loadEvents: async () => events, mapsKey: "" });
+  assert.equal(ctx.plan.daycare, false);
+  const p = buildDigestPrompt(MON, TZ, ctx);
+  assert.match(p, /Woodbury Preschool is closed today/);
+  assert.doesNotMatch(p, /call fox_today/, "no school-day section when Woodbury is closed");
+  assert.match(p, /arriveBy set to that commitment's start time/);
+});

@@ -553,7 +553,7 @@ const tools = [
   {
     name: "leave_by",
     description:
-      "Work out when to LEAVE to arrive on time, using live traffic (Azure Maps) plus a buffer. Pass origin, destination, and arriveBy (ISO datetime in the family tz). Set setReminder true to also arm a reminder at the leave-by time. Use for 'when do I need to leave for X?' or to set a leave-by nudge for an appointment.",
+      "Work out when to LEAVE to arrive on time, using the traffic PREDICTED for that trip (Azure Maps) plus a buffer. Pass origin, destination, and arriveBy (ISO datetime in the family tz). Set setReminder true to also arm a reminder at the leave-by time. Use for 'when do I need to leave for X?' or to set a leave-by nudge for an appointment.",
     input_schema: {
       type: "object",
       properties: {
@@ -569,12 +569,14 @@ const tools = [
   {
     name: "commute_time",
     description:
-      "Precise door-to-door driving time with LIVE traffic between two addresses (Azure Maps). Returns minutes, miles, current delay, and a traffic label. Use this for real commute ETAs (e.g. the morning digest's per-person routes); it is accurate where web search is not. The standing locations are in the house rules.",
+      "Door-to-door driving time between two addresses (Azure Maps), priced on the traffic for WHEN the drive happens. For any trip that is not right now, pass arriveBy (when they need to be there) or departAt (when they leave): without one, the drive is priced on current traffic, which is wrong for a later trip (an 8 AM commute checked at 6 AM looks empty). Returns minutes, miles, traffic vs. empty roads, and the leave/arrive times. The standing locations are in the house rules.",
     input_schema: {
       type: "object",
       properties: {
         origin: { type: "string", description: "Start address (usually home)." },
         dest: { type: "string", description: "Destination address." },
+        arriveBy: { type: "string", description: "Family-local time they must arrive, e.g. 2026-10-27T09:30. Preferred for appointments and work." },
+        departAt: { type: "string", description: "Family-local time they leave, e.g. 2026-10-27T17:15. Use instead of arriveBy for a known departure." },
       },
       required: ["origin", "dest"],
     },
@@ -1521,9 +1523,9 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
         return `Could not search: ${e.message}`;
       }
     },
-    commute_time: async ({ origin, dest }) => {
+    commute_time: async ({ origin, dest, arriveBy, departAt }) => {
       try {
-        const r = await getCommuteTime(origin, dest);
+        const r = await getCommuteTime(origin, dest, { arriveBy: arriveBy || null, departAt: arriveBy ? null : departAt || null });
         return `${origin} to ${dest}: ${formatCommute(r)}`;
       } catch (e) {
         return `Could not get commute time: ${e.message}`;
@@ -1541,7 +1543,7 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
       try {
         const r = await computeLeaveBy({ origin, destination, arriveBy, ...(bufferMin != null ? { bufferMin } : {}) });
         const when = new Date(r.leaveBy).toLocaleString("en-US", { timeZone: FAMILY_TZ, dateStyle: "medium", timeStyle: "short" });
-        let out = `Leave by ${when} for ${destination} (${r.driveMin} min drive, ${r.trafficLabel}, +${r.bufferMin} min buffer).`;
+        let out = `Leave by ${when} for ${destination} (${r.driveMin} min drive, ${r.trafficLabel}${r.basis === "predicted" ? " predicted for that time" : " right now"}, +${r.bufferMin} min buffer).`;
         if (setReminder) {
           const { reminder } = await createReminder({ message: `Leave now for ${destination}`, fireAt: r.leaveBy });
           out += ` Reminder set {${reminder.id}}.`;
