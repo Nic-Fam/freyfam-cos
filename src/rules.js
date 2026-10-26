@@ -31,7 +31,14 @@ export async function getHouseRules() {
 /** Render rules for the system context. Empty string when there are none. */
 export function formatHouseRules(rules) {
   if (!rules || !rules.length) return "";
-  return "House rules (always apply; use the current time above to judge conditions like 'during the workday'):\n" +
+  // A time condition in a rule refers to WHEN THE THING HAPPENS. This header used to
+  // say "use the current time" for conditions like 'during the workday', so a 9 PM
+  // request for a Tuesday 2 PM appointment read as "not the workday" and the
+  // workday invitee rule was skipped. For calendar events, judge by the event.
+  return "House rules (always apply). A time condition in a rule refers to WHEN THE THING HAPPENS: " +
+    "for a calendar event, judge conditions like 'during the workday' by the EVENT's own date and time " +
+    "(look its weekday up in the date reference), never by the current time. Use the current time only " +
+    "for rules about acting right now:\n" +
     rules.map((r) => "- " + r).join("\n");
 }
 

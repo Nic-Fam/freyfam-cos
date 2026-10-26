@@ -20,15 +20,24 @@ import { FAMILY_ADDRESSES } from "./config.js";
 const norm = (s) => String(s || "").toLowerCase().trim();
 const isFamily = (addr) => FAMILY_ADDRESSES.includes(norm(addr));
 
-/** Pure. @returns {{auto:boolean, why:string}} */
-export function calendarGateDecision({ start, attendees = [], sourceFrom = null, hasConflict = false } = {}) {
+/** Pure. @returns {{auto:boolean, why:string}}
+ *  `trustedRequester` is the channel-aware "a family member asked" signal
+ *  (guards.isFamilyRequester). `sourceFrom` remains as an email-only fallback. */
+export function calendarGateDecision({ start, attendees = [], sourceFrom = null, trustedRequester = null, hasConflict = false } = {}) {
   if (!start || Number.isNaN(Date.parse(String(start)))) return { auto: false, why: "no clear date/time" };
   const list = (Array.isArray(attendees) ? attendees : String(attendees || "").split(/[,;]/))
     .map(norm)
     .filter(Boolean);
   const external = list.filter((a) => !isFamily(a));
   if (external.length) return { auto: false, why: `external invitee(s): ${external.join(", ")}` };
-  if (!isFamily(sourceFrom)) return { auto: false, why: sourceFrom ? "requester is not a family member" : "no authenticated requester (proactive or unknown turn)" };
+  // A family member must have asked: the channel-aware signal (trustedRequester,
+  // guards.isFamilyRequester) or, for email, a family From. No requester at all
+  // (a proactive/heartbeat turn) always gates, even for an attendee-less block.
+  const trusted = trustedRequester === true || isFamily(sourceFrom);
+  if (!trusted) {
+    const known = sourceFrom || trustedRequester === false;
+    return { auto: false, why: known ? "requester is not a family member" : "no authenticated requester (proactive or unknown turn)" };
+  }
   if (hasConflict) return { auto: false, why: "overlaps an existing event" };
   return { auto: true, why: list.length ? "family-only invitees, requested by family, no conflict" : "personal block, no conflict" };
 }
