@@ -43,16 +43,33 @@ export async function triageInbound(message) {
     model: MODELS.triage,
     system: systemBlocks(INBOUND_SYSTEM),
     messages: [{ role: "user", content: message }],
-    maxTokens: 200,
+    // Haiku 5.5 thinks before answering and the thinking counts against
+    // max_tokens, so leave room (the JSON itself is ~60 tokens).
+    maxTokens: 1024,
   });
-  try {
-    return parseJson(textOf(resp));
-  } catch {
-    // Fail SAFE: an unparseable triage verdict is treated as high-stakes standard
-    // chief work, so a malformed/garbled message can't slip under the high-stakes
-    // posture. (Model cost is unchanged — high_stakes is a Sonnet floor, not Opus.)
-    return { agent: "chief-of-staff", complexity: "standard", high_stakes: true, summary: message.slice(0, 60) };
-  }
+  return inboundVerdict(parseJson(textOf(resp)), message);
+}
+
+/**
+ * Normalize a parsed inbound-triage reply. `parseJson` never throws; it returns
+ * null on a garbled/truncated/prose reply, so the fail-safe has to be applied
+ * here (the old try/catch around it was dead code, and the null reached the
+ * orchestrator as `t.complexity` -> TypeError -> the message retried to the
+ * poison queue). Fail SAFE: an unusable verdict is treated as high-stakes
+ * standard chief work, so a malformed message can't slip under the high-stakes
+ * posture. (Model cost is unchanged — high_stakes is a Sonnet floor, not Opus.)
+ * Pure; exported for tests.
+ */
+export function inboundVerdict(parsed, message = "") {
+  const fallback = { agent: "chief-of-staff", complexity: "standard", high_stakes: true, summary: String(message).slice(0, 60) };
+  if (!parsed || typeof parsed !== "object") return fallback;
+  const complexity = ["trivial", "standard", "complex"].includes(parsed.complexity) ? parsed.complexity : "standard";
+  return {
+    agent: typeof parsed.agent === "string" && parsed.agent ? parsed.agent : "chief-of-staff",
+    complexity,
+    high_stakes: parsed.high_stakes === undefined ? true : Boolean(parsed.high_stakes),
+    summary: typeof parsed.summary === "string" ? parsed.summary : fallback.summary,
+  };
 }
 
 const HEARTBEAT_SYSTEM = `You are a watchdog for a family's assistant. You are given a compact list of \
@@ -69,6 +86,10 @@ Route expiring/expired kitchen items to "chef" (urgency "fyi" unless it is a lot
 Route security-relevant signals to "security" ONLY for genuinely EXTERNAL anomalies: a
 sign-in/breach/password-reset notice from a real service, a phishing attempt from an
 outside sender, an unknown sender impersonating someone, a home-system/device alert.
+
+Routine account notices (a password reset, a new sign-in, a verification code, a 2FA
+change) are almost always the family themselves: urgency "fyi", NOT "now", unless the
+notice itself says the attempt was unrecognized, blocked, or not them.
 
 The family's OWN mail is NEVER a security threat. A signal with "fromFamily": true (or
 from one of the family's addresses) is normal activity: do NOT flag their email volume,
@@ -115,11 +136,14 @@ export async function triageHeartbeat(signals) {
     model: MODELS.triage,
     system: systemBlocks(HEARTBEAT_SYSTEM),
     messages: [{ role: "user", content: JSON.stringify(signals).slice(0, 6000) }],
-    maxTokens: 400,
+    maxTokens: 1536, // room for adaptive thinking + a multi-item verdict
   });
-  try {
-    return parseJson(textOf(resp));
-  } catch {
-    return { actionable: false, items: [] };
-  }
+  return heartbeatVerdict(parseJson(textOf(resp)));
+}
+
+/** Normalize a parsed heartbeat-triage reply (null/garbage -> not actionable). Pure. */
+export function heartbeatVerdict(parsed) {
+  if (!parsed || typeof parsed !== "object" || !parsed.actionable) return { actionable: false, items: [] };
+  const items = (Array.isArray(parsed.items) ? parsed.items : []).filter((it) => it && typeof it.what === "string" && it.what.trim());
+  return { actionable: items.length > 0, items };
 }

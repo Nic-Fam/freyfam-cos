@@ -27,10 +27,13 @@ import { createLogger } from "../log.js";
 
 const log = createLogger("imessage-in");
 
-/** True if `handle` is permitted to talk to the chief. Empty allowlist = open
- *  (parity with SMS, which any sender to the private number can reach). */
+/** True if `handle` is permitted to talk to the chief. */
+// FAIL CLOSED (policy 2026-10-11): an empty IMESSAGE_ALLOW used to mean "allow
+// all"; it now means nobody, because an Apple ID handle is guessable and any
+// sender could otherwise approve a staged action. guards.isAuthorizedSender
+// applies the same rule downstream; this early check just saves the work.
 function isAllowed(handle) {
-  if (!IMESSAGE.allow.length) return true;
+  if (!IMESSAGE.allow.length) return false;
   return IMESSAGE.allow.includes(String(handle || "").toLowerCase().trim());
 }
 

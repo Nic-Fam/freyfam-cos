@@ -27,11 +27,19 @@ const FAMILY_TZ = process.env.FAMILY_TZ || "America/Los_Angeles";
 
 // Local price table, USD per MILLION tokens. ESTIMATES for the early-warning
 // ledger, not billing truth - override with COS_MODEL_PRICES (JSON) when rates
-// change. cacheWrite/cacheRead default to the standard 1.25x / 0.10x of input.
+// change. cacheRead defaults to 0.10x of input (Opus 5.5 is 0.05x, so it is set
+// explicitly). Cache WRITES are priced by the TTL actually used: 1.25x input for
+// the 5-minute breakpoint and 2x for the 1-hour stable prefix (claude.js); the
+// usage record carries both buckets when the API reports them. cacheWrite below
+// is the 5m rate and is only used when the breakdown is absent.
+// Refreshed 2026-10-11 from the current price list.
 const DEFAULT_PRICES = {
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
-  "claude-opus-4-8": { input: 15, output: 75 },
+  "claude-opus-4-8": { input: 5, output: 25 },
 };
 function loadPrices() {
   let overrides = {};
@@ -48,7 +56,8 @@ export function priceFor(model) {
   return {
     input: base.input,
     output: base.output,
-    cacheWrite: base.cacheWrite ?? base.input * 1.25,
+    cacheWrite: base.cacheWrite ?? base.input * 1.25,     // 5m breakpoint
+    cacheWrite1h: base.cacheWrite1h ?? base.input * 2,    // 1h stable prefix
     cacheRead: base.cacheRead ?? base.input * 0.1,
   };
 }
@@ -58,9 +67,13 @@ export function costOfUsage(model, usage = {}) {
   const p = priceFor(model);
   const inTok = usage.input_tokens || 0;
   const outTok = usage.output_tokens || 0;
-  const cw = usage.cache_creation_input_tokens || 0;
   const cr = usage.cache_read_input_tokens || 0;
-  return (inTok * p.input + outTok * p.output + cw * p.cacheWrite + cr * p.cacheRead) / 1e6;
+  const cw1h = usage.cache_creation_1h_input_tokens || usage.cache_creation?.ephemeral_1h_input_tokens || 0;
+  const cw5m = usage.cache_creation_5m_input_tokens || usage.cache_creation?.ephemeral_5m_input_tokens || 0;
+  // Prefer the TTL breakdown; fall back to the aggregate at the 5m rate.
+  const cwTotal = usage.cache_creation_input_tokens || 0;
+  const cwCost = (cw1h || cw5m) ? cw1h * p.cacheWrite1h + cw5m * p.cacheWrite : cwTotal * p.cacheWrite;
+  return (inTok * p.input + outTok * p.output + cwCost + cr * p.cacheRead) / 1e6;
 }
 
 /** Billing cycle key. Phase 1: calendar month (YYYY-MM) in the family timezone. */

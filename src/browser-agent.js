@@ -249,7 +249,7 @@ export async function runBrowserTask({ task, startUrl, allowedHosts, allowCommit
     const observations = [];
     const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
     for (let turn = 1; turn <= maxTurns; turn++) {
-      const resp = await llm({ model, system: SYSTEM, messages: convo, tools: BROWSER_TOOLS, maxTokens: 1500, cacheConversation: true });
+      const resp = await llm({ model, system: SYSTEM, messages: convo, tools: BROWSER_TOOLS, maxTokens: 4096, cacheConversation: true });
       for (const k of Object.keys(usage)) usage[k] += resp.usage?.[k] || 0;
       const uses = toolUses(resp);
       if (!uses.length) {

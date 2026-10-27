@@ -77,3 +77,45 @@ export async function dismissAlert(text, { note = null, now = Date.now() } = {})
 }
 
 export async function listDismissed() { return (await load()).dismissed || {}; }
+
+// ---------------------------------------------------------------------------
+// Judge each signal ONCE (2026-10-26). The heartbeat used to send the 15 newest
+// inbox headers to Haiku whenever any of them changed, so one new email re-judged
+// fourteen old ones, including a security-looking email the family had already
+// dealt with, and a reworded verdict slipped past the alert dedup. Now each
+// signal has a stable key (the Graph message id for mail, item+expiry for the
+// kitchen) and only never-judged signals reach triage.
+// ---------------------------------------------------------------------------
+const TRIAGED_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Stable identity of a heartbeat signal. Pure. */
+export function signalKey(s) {
+  if (!s) return null;
+  if (s.id) return `id:${s.id}`;
+  if (s.source === "kitchen") return `kitchen:${s.item}|${s.expiresAt}`;
+  if (s.from || s.subject) return `mail:${s.from || ""}|${s.subject || ""}|${s.receivedAt || ""}`;
+  return `json:${JSON.stringify(s)}`;
+}
+
+/** The signals that have never been triaged. */
+export async function untriaged(signals = []) {
+  const db = await load();
+  const seen = db.triaged || {};
+  return (signals || []).filter((s) => {
+    const k = signalKey(s);
+    return k && !seen[k];
+  });
+}
+
+/** Record signals as triaged (call only after a successful triage). Prunes >30d. */
+export async function markTriaged(signals = [], { now = Date.now() } = {}) {
+  if (!signals.length) return;
+  const db = await load();
+  db.triaged = db.triaged || {};
+  for (const s of signals) {
+    const k = signalKey(s);
+    if (k) db.triaged[k] = now;
+  }
+  for (const k of Object.keys(db.triaged)) if (now - db.triaged[k] > TRIAGED_KEEP_MS) delete db.triaged[k];
+  await save(db);
+}

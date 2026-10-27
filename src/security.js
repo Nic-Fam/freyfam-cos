@@ -105,3 +105,51 @@ export async function resolveFinding(id, { note = "" } = {}) {
   }
   return f;
 }
+
+const SIG_STOP = new Set("a an the of to in on for and or is are was were be it its this that from with at by as our we fine ok okay handled expected".split(" "));
+const sigWords = (t) => [...new Set((String(t || "").toLowerCase().match(/[a-z0-9]+/g) || []).filter((w) => w.length > 2 && !SIG_STOP.has(w)))];
+
+/**
+ * Close OPEN findings the family has accepted, by id or by topic (2026-10-26).
+ * The family's word is final: no proof is required, and nothing is re-opened
+ * unless a genuinely new finding is logged later. Topic matching is generous on
+ * purpose (the family describes an issue in their own words): a finding matches
+ * when its title contains the phrase, or when at least half of the phrase's
+ * significant words appear in its title + summary. Returns what was closed and
+ * what is still open, so the caller can retry with an id.
+ * @param {{ids?:string[], match?:string, note?:string, by?:string}} opts
+ */
+export async function resolveMatching({ ids = [], match = "", note = "", by = "family" } = {}) {
+  const db = await load();
+  const open = db.items.filter((f) => f && f.status === "open");
+  const idSet = new Set((ids || []).map(String));
+  const words = sigWords(match);
+  const m = String(match || "").toLowerCase().trim();
+  // Ids and exact phrase matches close outright. Otherwise score by word overlap
+  // and close only the BEST match(es): "the Ring device on the LAN" must close the
+  // Ring finding, not every "New device on LAN" finding that shares two words.
+  const byId = open.filter((f) => idSet.has(f.id));
+  const byPhrase = m ? open.filter((f) => !idSet.has(f.id) && String(f.title || "").toLowerCase().includes(m)) : [];
+  let byWords = [];
+  if (!byId.length && !byPhrase.length && words.length >= 1) {
+    const scored = open.map((f) => {
+      const hay = sigWords(`${f.title} ${f.summary || ""}`);
+      return { f, score: words.filter((w) => hay.includes(w)).length / words.length };
+    });
+    const best = Math.max(0, ...scored.map((x) => x.score));
+    if (best >= 0.5) byWords = scored.filter((x) => x.score === best).map((x) => x.f);
+  }
+  const hits = [...byId, ...byPhrase, ...byWords];
+  const now = new Date().toISOString();
+  for (const f of hits.slice(0, 20)) {
+    f.status = "resolved";
+    f.resolvedAt = now;
+    f.resolvedBy = by;
+    if (note) f.resolvedNote = String(note);
+  }
+  if (hits.length) await save(db);
+  return {
+    closed: hits.slice(0, 20).map((f) => ({ id: f.id, title: f.title })),
+    stillOpen: db.items.filter((f) => f && f.status === "open").map((f) => ({ id: f.id, title: f.title, severity: f.severity })),
+  };
+}

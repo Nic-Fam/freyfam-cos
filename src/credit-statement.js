@@ -51,7 +51,7 @@ export async function extractStatement({ from, subject, body } = {}, { complete 
     model: MODELS.triage,
     system: STMT_SYSTEM,
     messages: [{ role: "user", content: `FROM: ${from || ""}\nSUBJECT: ${subject || ""}\n${String(body || "").slice(0, 1500)}` }],
-    maxTokens: 300, // complete() expects maxTokens (max_tokens was silently ignored -> defaulted to 1024)
+    maxTokens: 1024, // complete() expects maxTokens; Haiku 5.5 thinks first, so leave room
   });
   const out = parseJson(textOf(resp)) || {};
   const num = (x) => (typeof x === "number" && Number.isFinite(x) ? round2(x) : null);

@@ -177,8 +177,10 @@ export async function startSlack() {
     // Owner-only approvals (hard constraint #2). Any member who can SEE the button
     // could otherwise tap it to execute a staged money/email action. When SLACK.allow
     // is set, only those user ids may approve/deny; the tap is otherwise refused.
+    // FAIL CLOSED (policy 2026-10-11): an empty SLACK_ALLOW used to mean "any
+    // member may approve"; it now means nobody can, until the family's ids are set.
     const tapper = String(body?.user?.id || "").trim();
-    if (SLACK.allow.length && !SLACK.allow.includes(tapper)) {
+    if (!SLACK.allow.length || !SLACK.allow.includes(tapper)) {
       log.warn("approval tap refused (unauthorized slack user)", { user: tapper, code: action.value });
       try {
         await client.chat.postEphemeral({ channel: body.channel.id, user: tapper, text: `You're not authorized to approve actions (code ${action.value}).` });

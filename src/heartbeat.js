@@ -1,6 +1,7 @@
 import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, COO_REVIEW } from "./config.js";
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
-import { shouldAlert, recordAlerted } from "./heartbeat-alerts.js";
+import { shouldAlert, recordAlerted, untriaged, markTriaged } from "./heartbeat-alerts.js";
+import { consolidateIdleThreads } from "./memory-consolidate.js";
 import { recentMailSignals, recentShipmentMail, listEvents } from "./channels/graph.js";
 import { listReceipts, leftoverEstimate, markLeftoverProcessed, pendingExtraction, extractReceipts, applyExtraction } from "./receipts.js";
 import { processShipmentEmail, isShippingEmail, isDeliveryConfirmation, listPickupsNeedingSchedule, markPickupScheduled } from "./packages.js";
@@ -637,7 +638,25 @@ async function maybeRunCooReviews() {
 }
 
 let bootChecked = false;
+let ticking = false;
 export async function tick() {
+  // Re-entrancy guard: a tick that runs the digest + a resale slot + a grocery
+  // fill can outlast the interval, and setInterval would start the next tick on
+  // top of it (double triage, overlapping browser use, racing JSON writes). Skip
+  // the overlapping tick; the next one catches up.
+  if (ticking) {
+    log.warn("heartbeat tick still running; skipping this interval");
+    return;
+  }
+  ticking = true;
+  try {
+    await tickBody();
+  } finally {
+    ticking = false;
+  }
+}
+
+async function tickBody() {
   // On the FIRST tick after (re)start, detect whether Lloyd was offline for a real
   // gap and tell the owner he's back + catching up (workstream R). Reads the previous
   // run's last-seen before this tick refreshes it. Best-effort.
@@ -672,19 +691,22 @@ export async function tick() {
   await maybeRunGroceryOrder();
   await maybeRunCooReviews();
 
-  const signals = await gatherSignals();
-  // Local gate: skip the Haiku triage call when the signal set is unchanged from
-  // the last tick (the common case). Saves the program's most frequent model
-  // call on quiet ticks and prevents re-escalating an unchanged signal. The
-  // fingerprint is recorded only AFTER a successful triage, so a transient
-  // triage failure still retries on the next identical tick.
-  const fingerprint = signalsFingerprint(signals);
-  if (fingerprint === lastSignalsFingerprint) {
-    log.debug("heartbeat signals unchanged; skipped triage", { signals: signals.length });
+  // Long-term memory: distill threads that have gone quiet (memory-consolidate.js).
+  // Before anything that can return early below.
+  await consolidateIdleThreads().catch((e) => log.error("memory consolidation failed", { reason: String(e?.message || e) }));
+
+  // Judge each signal exactly ONCE: only never-triaged signals go to Haiku (see
+  // heartbeat-alerts.untriaged). Quiet ticks cost nothing, and an email already
+  // judged is never re-judged (and re-flagged) just because a new one arrived.
+  // Signals are marked only AFTER a successful triage, so a failure retries.
+  const signals = await untriaged(await gatherSignals());
+  if (!signals.length) {
+    log.debug("no new heartbeat signals; skipped triage");
     return;
   }
   const verdict = await triageHeartbeat(signals);
-  lastSignalsFingerprint = fingerprint;
+  await markTriaged(signals);
+  lastSignalsFingerprint = signalsFingerprint(signals);
   if (!verdict.actionable) return;
 
   for (const item of verdict.items) {

@@ -62,12 +62,14 @@ export async function recentMailSignals({ top = 15 } = {}) {
   const res = await graph()
     .api(`/users/${GRAPH.mailbox}/mailFolders/inbox/messages`)
     .top(top)
-    .select("from,subject,receivedDateTime,isRead")
+    .select("id,from,subject,receivedDateTime,isRead")
     .orderby("receivedDateTime desc")
     .get();
   return (res.value || [])
     .filter((m) => !isApprovalMechanismMail(m.subject))
     .map((m) => ({
+      // Graph message id: the heartbeat judges each message exactly once by it.
+      id: m.id,
       source: "email",
       from: m.from?.emailAddress?.address,
       subject: m.subject,
@@ -119,6 +121,25 @@ export async function recentInboxFull({ top = 25 } = {}) {
     receivedAt: m.receivedDateTime,
     unread: !m.isRead,
   }));
+}
+
+/**
+ * Authentication-Results header value(s) for one inbox message, read via Graph
+ * `internetMessageHeaders`. Exchange Online stamps every delivered message with
+ * its SPF/DKIM/DMARC/compauth verdicts; src/email-auth.js turns that into the
+ * sender-verification decision. Returns an array (Graph can carry several
+ * Authentication-Results headers; the first is the receiving hop's). Empty array
+ * when the message has none.
+ */
+export async function fetchAuthenticationResults(messageId) {
+  if (!messageId) return [];
+  const res = await graph()
+    .api(`/users/${GRAPH.mailbox}/messages/${messageId}`)
+    .select("internetMessageHeaders")
+    .get();
+  return (res?.internetMessageHeaders || [])
+    .filter((h) => String(h?.name || "").toLowerCase() === "authentication-results")
+    .map((h) => String(h?.value || ""));
 }
 
 /**

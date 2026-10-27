@@ -37,7 +37,14 @@ test("no clear date/time gates", () => {
   assert.equal(calendarGateDecision({ start: "", sourceFrom: NIC }).auto, false);
 });
 
-test("a personal block auto-creates even without a known sender (e.g. voice)", () => {
+test("a personal block with NO known sender (proactive/heartbeat turn) gates", () => {
+  // Policy 2026-10-11: an injected proactive turn must not write to the calendars.
   const d = calendarGateDecision({ start: START, attendees: [], sourceFrom: null });
-  assert.equal(d.auto, true);
+  assert.equal(d.auto, false);
+  assert.match(d.why, /no authenticated requester/);
+});
+
+test("a personal block requested by a non-family sender gates", () => {
+  const d = calendarGateDecision({ start: START, attendees: [], sourceFrom: "someone@school.org" });
+  assert.equal(d.auto, false);
 });

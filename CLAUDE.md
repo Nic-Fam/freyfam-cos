@@ -99,6 +99,14 @@ brain or a callback to Lloyd. Lloyd keeps his own local brain. The `recall`/`rem
 and `logDecision`/`listDecisions` interfaces stay stable, so this is a store swap
 inside the specialist runner, not a caller change.
 
+**Writes go where the specialist lives (2026-10-26).** Anything Lloyd saves FOR a
+specialist (a memory, a standing rule, a security-finding closure) must go through a
+zero-model op over the `delegate` seam (`src/specialists/ops.js`: `remember`,
+`forget`, `add_rule`, `remove_rule`, `list_rules`, Frank's `resolve_findings`), so it
+lands in that specialist's own store wherever it runs. Never write a specialist's
+memory or rules to Lloyd's disk: a remote specialist never reads it.
+`tools/push-specialist-memory.mjs` migrated what was stranded there before.
+
 ## HARD CONSTRAINTS (do not regress these)
 
 1. **Work domains require confirmation (policy changed 2026-06-20; no longer a hard
@@ -124,6 +132,15 @@ inside the specialist runner, not a caller change.
    proactive/heartbeat-originated event still routes through the gate
    (`src/calendar-gate.js`).
 3. **No money movement.** Finance agent surfaces actions; humans execute them.
+4. **Inbound trust fails closed (policy 2026-10-11).** "The family" is decided by
+   `guards.isAuthorizedSender`, and it never defaults open: iMessage/SMS need
+   `IMESSAGE_ALLOW`, Slack needs `SLACK_ALLOW` (commands AND approval taps), unknown
+   channels are refused, and an **email** From is trusted only when the message's
+   `Authentication-Results` passes DMARC/compauth (`src/email-auth.js`, read via
+   Graph). `YES ALL` applies only to codes quoted in the reply; there is no
+   "approve everything pending" fallback. Calendar auto-create (the one narrow
+   carve-out from constraint 2) requires an authenticated family requester; a
+   proactive/heartbeat turn always gates.
 
 ## Model routing = the cost strategy
 

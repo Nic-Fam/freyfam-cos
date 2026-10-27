@@ -55,7 +55,11 @@ test("an unauthorized sender's approval reply does NOT execute the staged action
   assert.equal(t.replies.length, 0, "no approval acknowledgement to an outsider");
 });
 
-test("a family sender's approval reply DOES execute the staged action", async () => {
+// Injectable Authentication-Results fetchers (what Graph would return for the id).
+const PASS = async () => ["spf=pass (sender IP is 1.2.3.4) smtp.mailfrom=freyfam.com; dkim=pass (signature was verified) header.d=freyfam.com; dmarc=pass action=none header.from=freyfam.com; compauth=pass reason=100"];
+const SPOOF = async () => ["spf=fail (sender IP is 5.6.7.8) smtp.mailfrom=evil.example; dkim=none (message not signed) header.d=none; dmarc=fail action=none header.from=freyfam.com; compauth=fail reason=001"];
+
+test("an AUTHENTICATED family sender's approval reply DOES execute the staged action", async () => {
   let ran = 0;
   registerActionHandler("test-action-2", async () => {
     ran += 1;
@@ -65,9 +69,58 @@ test("a family sender's approval reply DOES execute the staged action", async ()
 
   const t = capturingTransport();
   await handleInbound(
-    { channel: "email", from: "nic@freyfam.com", subject: "re", body: `YES ${code}` },
-    t
+    { channel: "email", from: "nic@freyfam.com", subject: "re", body: `YES ${code}`, graphMessageId: "AAMk-real" },
+    t,
+    { authHeaders: PASS }
   );
   assert.equal(ran, 1, "the family member's approval runs the staged action once");
   assert.equal(t.replies.length, 1, "the outcome is relayed back");
+});
+
+test("a SPOOFED family From (DMARC fail) cannot approve or drive the chief", async () => {
+  let ran = 0;
+  registerActionHandler("test-action-3", async () => {
+    ran += 1;
+    return "did the thing";
+  });
+  const { code } = await requestConfirmation("Test action", "test-action-3", { to: "x@y.com" });
+
+  const t = capturingTransport();
+  await handleInbound(
+    { channel: "email", from: "nic@freyfam.com", subject: "re", body: `YES ${code}`, graphMessageId: "AAMk-forged" },
+    t,
+    { authHeaders: SPOOF }
+  );
+  assert.equal(ran, 0, "a forged From must never run the staged action");
+  assert.equal(t.replies.length, 0, "no reply to a forged sender (no oracle)");
+});
+
+test("a family From with NO Graph message id is unverifiable and refused (fail closed)", async () => {
+  let ran = 0;
+  registerActionHandler("test-action-4", async () => {
+    ran += 1;
+    return "did the thing";
+  });
+  const { code } = await requestConfirmation("Test action", "test-action-4", { to: "x@y.com" });
+  const t = capturingTransport();
+  await handleInbound({ channel: "email", from: "nic@freyfam.com", subject: "re", body: `YES ${code}` }, t, { authHeaders: PASS });
+  assert.equal(ran, 0);
+  assert.equal(t.replies.length, 0);
+});
+
+test("a header fetch failure is treated as unverified (fail closed)", async () => {
+  let ran = 0;
+  registerActionHandler("test-action-5", async () => {
+    ran += 1;
+    return "did the thing";
+  });
+  const { code } = await requestConfirmation("Test action", "test-action-5", { to: "x@y.com" });
+  const t = capturingTransport();
+  await handleInbound(
+    { channel: "email", from: "nic@freyfam.com", subject: "re", body: `YES ${code}`, graphMessageId: "AAMk-x" },
+    t,
+    { authHeaders: async () => { throw new Error("graph down"); } }
+  );
+  assert.equal(ran, 0);
+  assert.equal(t.replies.length, 0);
 });

@@ -7,16 +7,24 @@ import { isCoo, isCompanyAgent } from "./companies.js";
 // Confirm exact model IDs / snapshots at https://docs.claude.com/en/docs/about-claude/models
 // ---------------------------------------------------------------------------
 export const MODELS = {
-  triage: process.env.MODEL_TRIAGE || "claude-haiku-4-5",   // cheap router + heartbeat gate
-  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse (see NOTE)
+  // NOTE 2026-10-11: triage moved to Haiku 5.5 ($0.10/$0.50 per MTok vs Haiku
+  // 4.5's $1/$5). This tier is used far beyond triage (heartbeat gate, resale +
+  // chef + company specialists, trivial replies, voice turns, hunt judge, receipt
+  // and finance extraction), so it was ~a quarter of API spend. Haiku 5.5 runs
+  // adaptive thinking by default; claude.js sends effort "low" for the Haiku
+  // family and every call site's max_tokens was raised to leave room for it.
+  triage: process.env.MODEL_TRIAGE || "claude-haiku-5-5",   // cheap router + heartbeat gate
+  standard: process.env.MODEL_STANDARD || "claude-sonnet-5-5", // the workhorse
   // NOTE 2026-10-03: moved to the current generation. Sonnet 5.5 and Opus 5.5 are
   // both CHEAPER than the 4.x models they replace ($2/$10 vs Sonnet 4.6's $3/$15;
   // $4/$20 vs Opus 4.8's $5/$25), so this is a quality AND cost win.
   // History: "claude-sonnet-5" was reverted 2026-07-01 because it returned EMPTY on
   // long/tool-heavy standard-tier output (the morning digest composed 0 chars).
-  // claude-sonnet-5-5 is a DIFFERENT, later model, not that one - but watch the
-  // first few digests for empty output and fall back to claude-sonnet-4-6 via
-  // MODEL_STANDARD if it ever recurs.
+  // Re-diagnosed 2026-10-11: that generation thinks by default and the thinking
+  // counted against the chief loop's max_tokens of 2048, so a tool-heavy turn
+  // could spend the whole budget thinking and return no text. claude.js now sets
+  // an explicit effort, an 8192 default cap, and retries a truncated turn, which
+  // is the actual fix; the model was not at fault.
   heavy: process.env.MODEL_HEAVY || "claude-opus-5-5",      // complex / agentic only
 };
 
@@ -387,17 +395,33 @@ function dayList(raw, fallback) {
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
 }
 
+// Standing places for the calendar-driven day planner (src/day-plan.js). The
+// planner prices every trip on predicted traffic for when it actually happens, so
+// it needs real addresses. Until HOME_ADDRESS is set it still adapts the digest to
+// the calendar, but leaves the routing to Lloyd's commute_time tool. These are
+// env-only on purpose: addresses are personal and do not belong in the repo.
+const place = (v) => String(v || "").trim() || null;
+const hhmm = (v, fallback) => (/^\d{1,2}:\d{2}$/.test(String(v || "").trim()) ? String(v).trim().padStart(5, "0") : fallback);
+
 export const SCHEDULE = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+  homeAddress: place(process.env.HOME_ADDRESS),
+  daycareAddress: place(process.env.DAYCARE_ADDRESS),
+  daycareName: process.env.DAYCARE_NAME || "Woodbury Preschool",
+  daycareDropoff: hhmm(process.env.DAYCARE_DROPOFF, "08:15"),   // target arrival at drop-off
+  dropoffDwellMin: Number(process.env.DAYCARE_DROPOFF_MIN ?? 5), // minutes spent at drop-off
+  travelBufferMin: Number(process.env.TRAVEL_BUFFER_MIN ?? 10),  // arrive this early
   // Days anyone is expected at a workplace at all.
   workDays: dayList(process.env.FAMILY_WORK_DAYS, [1, 2, 3, 4, 5]),
   // Days Fox is at Woodbury Preschool (drives the drop-off leg + his daily note).
   daycareDays: dayList(process.env.DAYCARE_DAYS, [1, 2, 3, 4, 5]),
   people: [
     // Nic's morning drive is CHAINED through Fox's daycare on daycare days.
-    { name: "Nic", wfhDays: dayList(process.env.NIC_WFH_DAYS, []), chainedDaycare: true },
+    { name: "Nic", wfhDays: dayList(process.env.NIC_WFH_DAYS, []), chainedDaycare: true,
+      workAddress: place(process.env.NIC_WORK_ADDRESS), workStart: hhmm(process.env.NIC_WORK_START, "09:00") },
     // Shelli works from home on Fridays, so no commute/work weather for her then.
-    { name: "Shelli", wfhDays: dayList(process.env.SHELLI_WFH_DAYS, [5]), chainedDaycare: false },
+    { name: "Shelli", wfhDays: dayList(process.env.SHELLI_WFH_DAYS, [5]), chainedDaycare: false,
+      workAddress: place(process.env.SHELLI_WORK_ADDRESS), workStart: hhmm(process.env.SHELLI_WORK_START, "09:00") },
   ],
 };
 
