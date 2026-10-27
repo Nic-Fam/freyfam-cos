@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { companyAgentKeys } from "./companies.js";
+import { createCollection, usingTableStore } from "./stores/collection.js";
 
 // ===========================================================================
 // House rules = always-on operating policy, distinct from RAG memory. A fact you
@@ -50,8 +51,20 @@ export function formatHouseRules(rules) {
 // per-agent policy without editing the persona source. Injected in runSpecialist.
 // ---------------------------------------------------------------------------
 
+// A remote specialist on an Azure Function has no durable disk, so its rules live
+// in its own Table (partition "rules"), like its memory and decision log. Lloyd and
+// the LAN Macs keep the JSON file. Selected by the same COS_TABLE_* switch.
+const rulesTable = () => createCollection({ file: RULES_PATH + ".unused", partition: "rules" });
+async function tableRules(agent) {
+  const rows = (await rulesTable().list()).filter((r) => r && r.agent === agent && typeof r.text === "string");
+  return rows.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+}
+
 /** Return the always-on rules for one agent (empty if none / unreadable). */
 export async function getAgentRules(agent) {
+  if (usingTableStore()) {
+    try { return (await tableRules(agent)).map((r) => r.text.trim()).filter(Boolean); } catch { return []; }
+  }
   try {
     const data = JSON.parse(await readFile(RULES_PATH, "utf8"));
     const rules = Array.isArray(data?.agentRules?.[agent]) ? data.agentRules[agent] : [];
@@ -105,6 +118,12 @@ export async function addRule(text, { agent } = {}) {
   if (agent && !KNOWN_AGENTS.includes(agent)) {
     throw new Error(`unknown agent "${agent}" (expected one of: ${KNOWN_AGENTS.join(", ")})`);
   }
+  if (agent && usingTableStore()) {
+    const existing = await tableRules(agent);
+    if (existing.some((r) => r.text.trim() === t)) return { added: false, scope: agent, text: t };
+    await rulesTable().add({ id: `${agent}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, agent, text: t, createdAt: new Date().toISOString() });
+    return { added: true, scope: agent, text: t };
+  }
   const data = await loadRaw();
   if (agent) {
     data.agentRules = data.agentRules && typeof data.agentRules === "object" ? data.agentRules : {};
@@ -129,6 +148,16 @@ export async function addRule(text, { agent } = {}) {
 export async function removeRule(match, { agent } = {}) {
   if (agent && !KNOWN_AGENTS.includes(agent)) {
     throw new Error(`unknown agent "${agent}" (expected one of: ${KNOWN_AGENTS.join(", ")})`);
+  }
+  if (agent && usingTableStore()) {
+    const rows = await tableRules(agent);
+    const asNum = Number(match);
+    const row = Number.isInteger(asNum) && asNum >= 1 && asNum <= rows.length
+      ? rows[asNum - 1]
+      : rows.find((r) => r.text.trim() === String(match || "").trim());
+    if (!row) return null;
+    await rulesTable().remove(row.id);
+    return row.text;
   }
   const data = await loadRaw();
   const list = agent

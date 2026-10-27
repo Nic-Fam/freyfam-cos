@@ -99,6 +99,14 @@ brain or a callback to Lloyd. Lloyd keeps his own local brain. The `recall`/`rem
 and `logDecision`/`listDecisions` interfaces stay stable, so this is a store swap
 inside the specialist runner, not a caller change.
 
+**Writes go where the specialist lives (2026-10-26).** Anything Lloyd saves FOR a
+specialist (a memory, a standing rule, a security-finding closure) must go through a
+zero-model op over the `delegate` seam (`src/specialists/ops.js`: `remember`,
+`forget`, `add_rule`, `remove_rule`, `list_rules`, Frank's `resolve_findings`), so it
+lands in that specialist's own store wherever it runs. Never write a specialist's
+memory or rules to Lloyd's disk: a remote specialist never reads it.
+`tools/push-specialist-memory.mjs` migrated what was stranded there before.
+
 ## HARD CONSTRAINTS (do not regress these)
 
 1. **Work domains require confirmation (policy changed 2026-06-20; no longer a hard

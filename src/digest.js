@@ -5,6 +5,9 @@ import { dayPlan } from "./schedule.js";
 import { planDay, priceTrips, formatTripLine } from "./day-plan.js";
 import { getWeather, formatWeather } from "./weather.js";
 import { listEventsDetailed } from "./channels/graph.js";
+import { digestTaskSection } from "./tasks.js";
+import { delegate } from "./delegate.js";
+import { recordOutbound, personFor, ownerThreadKey } from "./conversation.js";
 import { summary as downsizingSummary } from "./downsizing.js";
 import { runChief } from "./orchestrator.js";
 import { postSlack } from "./channels/notify.js";
@@ -107,6 +110,7 @@ export async function buildDigestContext(now = new Date(), {
   moveSummary = downsizingSummary,
   // No Graph credentials (tests, a fresh box) -> no calendar -> weekday rules.
   loadEvents = async () => (GRAPH.tenantId && GRAPH.clientId ? (await listEventsDetailed({ days: 1 })).events : null),
+  securityOps = delegate,
   price = priceTrips,
   weather = getWeather,
   mapsKey = MAPS.key,
@@ -136,6 +140,22 @@ export async function buildDigestContext(now = new Date(), {
       : { ...w, ok: false, error: String(wx[i].reason?.message || wx[i].reason) }));
   }
   let move = null;
+  // Frank's NEW findings since the last digest (zero-model op on Frank's side).
+  let security = null;
+  try {
+    const since = (await readState()).securitySince || new Date(now.getTime() - 24 * 3600e3).toISOString();
+    const [fresh, open] = await Promise.all([
+      securityOps({ agent: "security", op: "list_findings", args: { status: "open", since } }),
+      securityOps({ agent: "security", op: "list_findings", args: { status: "open" } }),
+    ]);
+    const sev = ["critical", "high", "medium", "low", "info"];
+    const freshList = (Array.isArray(fresh?.data) ? fresh.data : []).sort((a, b) => sev.indexOf(a.severity) - sev.indexOf(b.severity));
+    const openList = Array.isArray(open?.data) ? open.data : [];
+    const isMonday = dayPlan(now, tz).dow === 1;
+    security = { fresh: freshList, weeklyOlder: isMonday ? Math.max(0, openList.length - freshList.length) : 0 };
+  } catch (e) {
+    log.warn("digest: security read failed", { reason: String(e?.message || e) });
+  }
   if (DIGEST.moveSale) {
     try {
       const s = await moveSummary();
@@ -146,7 +166,7 @@ export async function buildDigestContext(now = new Date(), {
       /* a store hiccup must never block the digest */
     }
   }
-  return { plan, move, day };
+  return { plan, move, day, security };
 }
 
 /**
@@ -196,12 +216,35 @@ export function computedTravelSection(day) {
 // Monday" on Sunday the 21st and then dropped that day's events as "past"), so we
 // hand it the authoritative weekday + ISO key and tell it to anchor on them.
 // `ctx` (see buildDigestContext) decides which sections are even requested.
+/**
+ * Security in the digest (2026-10-26). It used to delegate "any security flags" to
+ * Frank every morning, and Frank answered with every OPEN finding, so an issue the
+ * family had already waved off reappeared daily. Now the digest reads Frank's log
+ * directly (a zero-model op, on Frank's side) and reports only findings that are
+ * NEW or re-seen since the last digest. Older still-open items get one line on
+ * Mondays. Pure.
+ */
+export function securitySection(security) {
+  if (!security) return null;
+  const fresh = security.fresh || [];
+  const lines = [];
+  if (fresh.length) {
+    lines.push(`- Security (new or re-seen since the last digest, from Frank's log; one calm line each
+  with the recommended step, most severe first; do not add anything not listed):`);
+    for (const f of fresh.slice(0, 5)) lines.push(`    - [${f.severity || "info"}] ${f.title}${f.recommendation ? ` -> ${f.recommendation}` : ""}`);
+  }
+  if (security.weeklyOlder) {
+    lines.push(`- Security housekeeping (Mondays only, one line): ${security.weeklyOlder} older security item(s) still open in Frank's log. Say they can reply "close <topic>" if any are handled or fine.`);
+  }
+  return lines.length ? lines.join("\n") : null;
+}
+
 export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) {
   const human = new Intl.DateTimeFormat("en-US", {
     timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric",
   }).format(now);
   const { date } = localParts(now, tz); // YYYY-MM-DD
-  const { plan, move, day } = ctx || { plan: dayPlan(now, tz), move: null, day: null };
+  const { plan, move, day, security = null } = ctx || { plan: dayPlan(now, tz), move: null, day: null };
   const computed = Boolean(day && (day.priced || day.weather));
 
   // Only ask for the sections that can actually apply today. Anything that cannot
@@ -244,7 +287,10 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
   you also see what happened YESTERDAY. For any notable event that just passed and
   genuinely needs a next step, check list_tasks; if no open follow-up exists for it
   yet, create one with add_task, phrased as the ACTION and dated ${date} (e.g.
-  add_task title "Follow up: email Deborah re: Fairview tour" dueDate ${date}).
+  add_task title "Follow up: email Deborah re: Fairview tour" dueDate ${date}
+  source "<the event's subject> @ <the event's YYYY-MM-DD date>"). Always pass source:
+  it is how a follow-up you already created (or the family already closed) is
+  recognised and never recreated.
   BE STRICT ABOUT WHAT EARNS A FOLLOW-UP. Only create one when ALL of these hold:
     1. it involves someone OUTSIDE the household, or leaves a decision/deliverable
        still open (a tour to respond to, a quote to chase, a form to send back), AND
@@ -254,13 +300,9 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
   the dogs are out in the garden, the trash is at the curb, or a workout is done,
   there is nothing to follow up on and nothing to report. Do not ask how any of them
   went, and do not add them to the list.
-  Then call list_tasks and surface EVERY open follow-up plus anything overdue or due
-  today AS A NUMBERED LIST (1., 2., 3. ...), keeping the SAME order and numbers
-  list_tasks returns so a later "done 2" maps to the right one. The numbers make it
-  easy to see at a glance which items are done or still need input. Close the section
-  with exactly: "To clear any of these, reply 'done 2' with its number (or 'done <the
-  item>'), and I'll mark it handled." If there are no open follow-ups at all, omit
-  this whole section including that closing line.
+  Do NOT write a to-do list, task numbers, or a "reply done 2" line yourself: the
+  numbered to-do list is generated and appended automatically after your digest, so
+  its numbers always match what "done 2" closes. Do not repeat tasks elsewhere.
   GROUNDING (important): never state that a task, hunt, tour, or action is "over",
   "done", "completed", or "wrapped up" unless list_tasks shows it done or the
   family told you. If you are not sure, treat it as still OPEN. Do not invent
@@ -278,7 +320,7 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz, ctx = null) 
   flag MUST be grounded in a real logged transaction (actual merchant + amount +
   date); never invent amounts, totals, or "unnamed withdrawals". If nothing real is
   worth flagging, omit the finance section entirely.`,
-    `- Any security flags: delegate to security (Frank).`,
+    securitySection(security),
     `- Notable resale finds worth a glance: delegate to resale (Shey). Her saved-search
   "traces" are ONGOING hunts, never one-and-done: report any NEW results as the
   action ("Dsquared trace: 2 new matches, take a look"), and never say a trace is
@@ -404,14 +446,21 @@ export function digestSubject(now = new Date()) {
  * (reliable today). Each send is independent, so one failing never blocks the
  * other. Channels injectable for tests.
  */
-export async function runMorningDigest({ runner = runChief, notify = postSlack, mail = sendMail, now = new Date() } = {}) {
+export async function runMorningDigest({ runner = runChief, notify = postSlack, mail = sendMail, now = new Date(), context = buildDigestContext, tasks = digestTaskSection, record = recordOutbound } = {}) {
   // Weather now comes from the free get_weather tool, so the digest no longer
   // needs the metered web_search tool. DIGEST.webSearch stays as an opt-in
   // escape hatch (default off) for any other live lookup the chief might want.
   // The context decides which sections are requested at all (see buildDigestContext).
-  const ctx = await buildDigestContext(now);
+  const ctx = await context(now);
   const text = await runner(buildDigestPrompt(now, DIGEST.tz, ctx), MODELS.standard, { webSearch: DIGEST.webSearch });
-  const body = extractDigest(text);
+  const composed = extractDigest(text);
+  // The to-do list is rendered in CODE after the model has created any follow-ups,
+  // and saved as a snapshot, so "done 2" closes exactly the 2nd item shown here.
+  let todo = "";
+  if (composed) {
+    try { todo = (await tasks({ now })).text || ""; } catch (e) { log.warn("digest: task section failed", { reason: String(e?.message || e) }); }
+  }
+  const body = composed && todo ? `${composed}\n\n${todo}` : composed;
   if (!body) {
     log.warn("digest produced no text; nothing sent");
     return { delivered: false, empty: true, body: "" };
@@ -428,5 +477,17 @@ export async function runMorningDigest({ runner = runChief, notify = postSlack, 
   const mailOk = sends.length > 1 && results[1].status === "fulfilled";
   const delivered = notifyOk || mailOk;
   if (!delivered) log.error("digest composed but no channel delivered");
+  if (delivered) {
+    // Record the digest in each recipient's conversation, so a reply ("done 2",
+    // "book the second place", "who's taking Fox?") has the digest as context.
+    const keys = new Set([ownerThreadKey()]);
+    for (const to of DIGEST.emailTo) {
+      const person = personFor({ channel: "email", from: to });
+      if (person) keys.add(`person:${person}`);
+    }
+    for (const k of keys) await record(k, body, { kind: "morning digest" }).catch(() => {});
+    // Security "new since" window advances only when a digest actually went out.
+    try { const s = await readState(); s.securitySince = now.toISOString(); await writeState(s); } catch { /* best-effort */ }
+  }
   return { delivered, empty: false, body };
 }

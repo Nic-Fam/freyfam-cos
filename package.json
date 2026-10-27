@@ -17,7 +17,8 @@
     "specialist": "node deploy/specialists/local-server.mjs",
     "capture:resale": "node tools/capture-resale-selectors.mjs",
     "packages:status": "node --env-file=.env tools/packages-status.mjs",
-    "test": "EMBEDDINGS_PROVIDER=none node --test"
+    "test": "EMBEDDINGS_PROVIDER=none CONVO_PATH=${TMPDIR:-/tmp}/cos-test-conversations.json TASK_SNAPSHOTS_PATH=${TMPDIR:-/tmp}/cos-test-task-snapshots.json DIGEST_STATE_PATH=${TMPDIR:-/tmp}/cos-test-digest-state.json node --test",
+    "memory:push-specialists": "node --env-file=.env tools/push-specialist-memory.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

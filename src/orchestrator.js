@@ -2,7 +2,7 @@ import { agentLoop, systemBlocks, MAX_TURNS_SENTINEL, TRUNCATED_SENTINEL } from 
 import { modelForComplexity, modelForTurn, GRAPH, BUDGET, CALENDAR } from "./config.js";
 import { getEmailContacts, recordEmailContact } from "./contacts.js";
 import { processShipmentEmail, listActivePackages, formatPackages, isShippingEmail, isDeliveryConfirmation } from "./packages.js";
-import { addTask, listTasks, completeTask, removeTask, formatTasks } from "./tasks.js";
+import { addTask, listTasks, completeTask, removeTask, formatTasks, closeTasks, latestTaskSnapshot, tryResolveDoneReply, currentNumbering, formatNumbered } from "./tasks.js";
 import { dismissAlert } from "./heartbeat-alerts.js";
 import { createReminder, listReminders, cancelReminder } from "./reminders.js";
 import { addShoppingItem, listShopping, removeShoppingItem, clearShopping, formatShopping } from "./shopping.js";
@@ -15,7 +15,7 @@ import { browserAgentEnabled } from "./browser-agent.js";
 import { buildCvsOtcPlaybook } from "./pharmacy-order-playbook.js";
 import { planRxSync, formatRxPlan } from "./rx.js";
 import { triageInbound } from "./triage.js";
-import { recall, remember } from "./memory.js";
+import { recall, remember, rememberFact, forgetMatching, RECALL_MIN_SCORE } from "./memory.js";
 import { logDecision, listDecisions } from "./decisions.js";
 import { requestConfirmation, tryResolveConfirmation, registerActionHandler } from "./confirm.js";
 import { notifyOwner } from "./channels/notify.js";
@@ -53,7 +53,7 @@ import { getCommuteTime, formatCommute } from "./commute.js";
 import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
 import { webSearch } from "./search.js";
-import { conversationKey, getHistory, appendTurn, foldThread } from "./conversation.js";
+import { conversationKey, threadKeyFor, getThread, appendTurn, foldThread } from "./conversation.js";
 import { isWorkDomain, shouldAutoReply, isSelfAddress, isFamilyAddress, isFamilySelfEmail, isAuthorizedSender, isFamilyRequester } from "./guards.js";
 import { logAction, listActions, formatAudit } from "./audit.js";
 import { getMealsInRange } from "./meals.js";
@@ -78,11 +78,25 @@ const tools = [
   {
     name: "remember",
     description:
-      "Save a durable fact or preference to memory. Omit `agent` for a shared/household fact; set `agent` (finance, dev, resale, chef, security) to seed THAT specialist's brain (e.g. an allergy for chef, a target brand for resale). Use this whenever the family tells you something worth keeping.",
+      "Save a durable fact, preference, decision, or outcome to memory, written as one self-contained sentence with names and dates (e.g. 'On Oct 27 Nic and Shelli toured 500 Fairview Ave and liked it; next step is an offer by Friday'). Omit `agent` for a shared/household fact; set `agent` (finance, dev, resale, chef, security) to save it in THAT specialist's own memory, wherever it runs. If it replaces something older (a moved appointment, a changed preference), put the old fact in `supersedes` so the stale version stops being recalled. Duplicates are skipped automatically.",
     input_schema: {
       type: "object",
-      properties: { text: { type: "string" }, agent: { type: "string", enum: KNOWN_AGENTS.filter((a) => a !== "chief") } },
+      properties: {
+        text: { type: "string" },
+        agent: { type: "string", enum: KNOWN_AGENTS.filter((a) => a !== "chief") },
+        supersedes: { type: "string", description: "short description of the older fact this replaces, e.g. 'Fairview tour is Tuesday'" },
+      },
       required: ["text"],
+    },
+  },
+  {
+    name: "forget_memory",
+    description:
+      "Delete a memory that is wrong or no longer true, when the family says so ('forget that', 'that's not right anymore'). `match` is a distinctive phrase from the fact. Set `agent` to forget from a specialist's memory. Refuses (and lists candidates) if the phrase matches too many facts. To REPLACE a fact, prefer remember with `supersedes`.",
+    input_schema: {
+      type: "object",
+      properties: { match: { type: "string" }, agent: { type: "string", enum: KNOWN_AGENTS.filter((a) => a !== "chief") } },
+      required: ["match"],
     },
   },
   {
@@ -317,10 +331,15 @@ const tools = [
   },
   {
     name: "add_task",
-    description: "Add a to-do to the family task list. Optional `dueDate` (YYYY-MM-DD) and `owner` (e.g. Nic or Shelli). Use this for any 'add to my list / remind me to <do a thing>' that is a task, not a timed alert.",
+    description: "Add a to-do to the family task list. Optional `dueDate` (YYYY-MM-DD) and `owner` (e.g. Nic or Shelli). Use this for any 'add to my list / remind me to <do a thing>' that is a task, not a timed alert. For a follow-up that comes from a calendar event, pass `source` as '<event subject> @ <YYYY-MM-DD>': a follow-up for the same event is then never created twice, even after it was closed.",
     input_schema: {
       type: "object",
-      properties: { title: { type: "string" }, dueDate: { type: "string", description: "YYYY-MM-DD" }, owner: { type: "string" } },
+      properties: {
+        title: { type: "string" },
+        dueDate: { type: "string", description: "YYYY-MM-DD" },
+        owner: { type: "string" },
+        source: { type: "string", description: "for follow-ups: '<calendar event subject> @ <YYYY-MM-DD>'" },
+      },
       required: ["title"],
     },
   },
@@ -341,8 +360,28 @@ const tools = [
   },
   {
     name: "complete_task",
-    description: "Mark a task done by its NUMBER from the morning digest / list_tasks (a bare 1-2 digit number = its position in the current open-task list, e.g. \"2\"), its id (from list_tasks), or its exact title.",
-    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+    description: "Close one or more tasks. Pass ALL of them in ONE call in `tasks` (never one call per item: numbers are resolved together against the list the family was looking at, the latest digest or list_tasks). Each entry is a NUMBER from that list (\"2\"), a task id, or a distinctive phrase from the title. Set `outcome` to 'dropped' when the family says it isn't needed anymore (not the same as done). Short replies like 'done 2' or 'drop 1, 3' are usually handled before you see them.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tasks: { type: "array", items: { type: "string" } },
+        task: { type: "string", description: "single task (legacy; prefer tasks)" },
+        outcome: { type: "string", enum: ["done", "dropped"] },
+      },
+    },
+  },
+  {
+    name: "close_security_issue",
+    description: "The family says a security issue is handled, expected, a false positive, or fine. This CLOSES it everywhere: Frank's finding is resolved on his side (with the family's reason recorded in his log and memory, so he will not raise it again without new evidence) and the matching proactive alert is dismissed. The family's word is enough; never argue or ask for proof. `topic` is their description with its distinctive nouns (e.g. 'new device on LAN Ring doorbell', 'Chase password reset'); `ids` are Frank's finding ids if known.",
+    input_schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string" },
+        ids: { type: "array", items: { type: "string" } },
+        reason: { type: "string", description: "why it's closed, in the family's words" },
+      },
+      required: ["topic"],
+    },
   },
   {
     name: "dismiss_alert",
@@ -916,6 +955,17 @@ export function wrapDelegateWithMirror(delegateFn, { onDelegate, images, fulfill
   };
 }
 
+/**
+ * Run a specialist's zero-model op on the side where that specialist runs
+ * (remote over the delegate seam, or in-process). Throws on a transport error so
+ * the caller can say the write did NOT land, instead of confirming a phantom save.
+ */
+async function specialistOp(agent, op, args) {
+  const r = await delegate({ agent, op, args });
+  if (r?.error) throw new Error(r.error);
+  return r?.data;
+}
+
 // 011: would this proposed event overlap an existing one? Free/closure events never
 // conflict; a date too far out to fetch (>120d) is treated as "gate to be safe".
 // Checks the people whose time the event takes (its family invitees), not always
@@ -940,15 +990,28 @@ async function calendarWouldConflict(input) {
 
 function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, trustedRequester = null } = {}) {
   return {
-    recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
+    recall_memory: async ({ query }) => JSON.stringify((await recall(query, 6, { minScore: 0.05 })).map((m) => ({ text: m.text, meta: m.meta }))),
     // Optional `agent` routes the fact to that specialist's scoped brain; omit for shared.
-    remember: async ({ text, agent }) => {
-      await remember(text, agent ? { agent } : {});
-      return agent ? `saved to ${agent}'s memory` : "saved";
+    // Specialist-scoped writes go to the specialist's OWN store, wherever it runs
+    // (a remote op over the delegate seam, or in-process when local). They used to
+    // land on Lloyd's disk, where a remote specialist never reads them.
+    remember: async ({ text, agent, supersedes }) => {
+      const r = agent
+        ? await specialistOp(agent, "remember", { text, supersedes })
+        : await rememberFact(text, { supersedes });
+      if (r?.deduped) return "Already known; nothing new saved.";
+      const where = agent ? `${agent}'s memory` : "memory";
+      return `Saved to ${where}.${r?.superseded?.length ? ` Replaced the older fact: "${r.superseded[0]}".` : ""}`;
+    },
+    forget_memory: async ({ match, agent }) => {
+      const r = agent ? await specialistOp(agent, "forget", { match }) : await forgetMatching(match);
+      if (r?.ambiguous?.length) return `That matches several facts; say which one:\n${r.ambiguous.map((t) => `- ${t}`).join("\n")}`;
+      if (!r?.removed?.length) return "Nothing in memory matched that.";
+      return `Forgot: ${r.removed.map((t) => `"${t}"`).join("; ")}`;
     },
     add_rule: async ({ text, agent }) => {
       try {
-        const r = await addRule(text, agent ? { agent } : {});
+        const r = agent && agent !== "chief" ? await specialistOp(agent, "add_rule", { text }) : await addRule(text, agent ? { agent } : {});
         const where = r.scope === "house" ? "household" : `${r.scope}'s`;
         return r.added ? `Saved a ${where} rule: "${r.text}"` : `That ${where} rule already exists.`;
       } catch (e) {
@@ -956,14 +1019,16 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
       }
     },
     list_rules: async ({ agent } = {}) => {
-      const rules = agent ? await getAgentRules(agent) : await getHouseRules();
+      const rules = !agent ? await getHouseRules() : agent === "chief" ? await getAgentRules(agent) : await specialistOp(agent, "list_rules", {});
       const label = agent ? `${agent}'s rules` : "household rules";
-      if (!rules.length) return `No ${label} yet.`;
+      if (!rules || !rules.length) return `No ${label} yet.`;
       return `${label}:\n` + rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
     },
     remove_rule: async ({ match, agent }) => {
       try {
-        const removed = await removeRule(match, agent ? { agent } : {});
+        const removed = agent && agent !== "chief"
+          ? (await specialistOp(agent, "remove_rule", { match }))?.removed
+          : await removeRule(match, agent ? { agent } : {});
         return removed ? `Removed: "${removed}"` : "No matching rule found.";
       } catch (e) {
         return `Could not remove rule: ${e.message}`;
@@ -1344,9 +1409,9 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
     },
     list_packages: async () => formatPackages(await listActivePackages()),
     plan_rx_sync: async ({ meds }) => formatRxPlan(planRxSync(meds)),
-    add_task: async ({ title, dueDate, owner }) => {
+    add_task: async ({ title, dueDate, owner, source }) => {
       try {
-        const t = await addTask({ title, dueDate, owner });
+        const t = await addTask({ title, dueDate, owner, source });
         if (t.deduped) {
           return t.status === "done"
             ? `Already handled (marked done ${t.completedAt ? t.completedAt.slice(0, 10) : "recently"}) — not re-adding "${t.title}". Do NOT surface this as open or overdue.`
@@ -1357,7 +1422,12 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
         return `Could not add task: ${e.message}`;
       }
     },
-    list_tasks: async ({ includeDone } = {}) => formatTasks(await listTasks({ includeDone })),
+    list_tasks: async ({ includeDone } = {}) => {
+      if (includeDone) return formatTasks(await listTasks({ includeDone }));
+      // Same numbers as this morning's digest; tasks added since are appended. So
+      // "done 3" means the same task in every list the family has seen today.
+      return formatNumbered(await currentNumbering());
+    },
     list_receipts: async ({ sinceDays, kind } = {}) => formatReceipts(await listReceipts({ sinceDays, kind })),
     order_groceries: async ({ store } = {}) => {
       const s = String(store || "").toLowerCase();
@@ -1395,9 +1465,33 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null, tr
       }
       return "Unknown store — use ralphs, costco, or cvs.";
     },
-    complete_task: async ({ task }) => {
-      const t = await completeTask(task);
-      return t ? `Marked done: "${t.title}"` : "No single matching open task — that phrase matched none or more than one. Call list_tasks and complete by the {id}, or be more specific.";
+    complete_task: async ({ tasks: many, task, outcome = "done" } = {}) => {
+      const refs = (Array.isArray(many) && many.length ? many : [task]).filter((x) => x != null && String(x).trim());
+      if (!refs.length) return "Tell me which task(s) to close.";
+      const snapshot = await latestTaskSnapshot();
+      const r = await closeTasks(refs.map(String), { snapshot, outcome: outcome === "dropped" ? "dropped" : "done", reason: outcome === "dropped" ? "family said not needed" : null });
+      const parts = [];
+      if (r.closed.length) parts.push(`${outcome === "dropped" ? "Dropped" : "Marked done"}: ${r.closed.map((t) => `"${t.title}"`).join("; ")}.`);
+      if (r.ambiguous.length) parts.push(`Matched more than one open task, so not closed: ${r.ambiguous.join(", ")}. Use list_tasks and close by number or {id}.`);
+      if (r.missing.length) parts.push(`No open task matched: ${r.missing.join(", ")}.`);
+      return parts.join(" ");
+    },
+    close_security_issue: async ({ topic, ids, reason } = {}) => {
+      const note = String(reason || "family confirmed it is handled/fine").slice(0, 300);
+      const by = sourceFrom ? String(sourceFrom) : "family";
+      const alert = await dismissAlert(String(topic || "")).catch(() => ({ ok: false }));
+      let r;
+      try {
+        r = await specialistOp("security", "resolve_findings", { ids: ids || [], match: topic, note, by });
+      } catch (e) {
+        return `${alert.ok ? "Dismissed the alert on my side, but " : ""}I couldn't reach Frank's log to close the finding (${e.message}). I'll stop raising it; ask me again later to close it in his log.`;
+      }
+      const closed = r?.closed || [];
+      if (closed.length) {
+        return `Closed in Frank's log: ${closed.map((f) => `"${f.title}"`).join("; ")}.${alert.ok ? " Alert dismissed too." : ""} He has the reason on file and won't raise it again without new evidence.`;
+      }
+      const open = (r?.stillOpen || []).slice(0, 8);
+      return `${alert.ok ? "Dismissed the alert. " : ""}No open finding in Frank's log matched "${topic}".${open.length ? ` Open findings: ${open.map((f) => `{${f.id}} ${f.title}`).join("; ")}. Call again with the right id(s) if one of these is it.` : " Nothing else is open."}`;
     },
     dismiss_alert: async ({ topic }) => {
       const r = await dismissAlert(String(topic || ""));
@@ -1631,9 +1725,57 @@ function memSavedTag(m) {
 // digest, for live weather + traffic along each person's commute).
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 6 };
 
-export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], thread = null, sourceFrom = null, trustedRequester = null } = {}) {
+// Short acknowledgements carry no topic to recall against ("done 2", "yes do that").
+const ACK_WORDS = new Set(("yes yep yeah yup ok okay k sure please thanks thank you ty cool great perfect " +
+  "sounds good do it that this go ahead got done drop no nope fine thats that's sounds lets let's " +
+  "and the one first second third last both all all good right correct agreed works for me").split(/\s+/));
+const isAck = (b) => {
+  const words = String(b || "").toLowerCase().replace(/[^a-z0-9'\s]/g, " ").split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => ACK_WORDS.has(w) || /^\d{1,2}$/.test(w));
+};
+
+/** What to recall against: the message itself, or the thread's last real question
+ *  when the message is a bare acknowledgement. Pure; exported for tests. */
+export function recallQueryFor(body, history = []) {
+  const b = String(body || "").trim();
+  if (b && !isAck(b) && b.split(/\s+/).length >= 3) return b;
+  const lastUser = [...(history || [])].reverse().find((m) => m?.role === "user" && typeof m.content === "string" && m.content.split(/\s+/).length >= 3);
+  return lastUser ? `${lastUser.content} ${b}`.trim() : null;
+}
+
+/**
+ * Deterministic "what happened lately" block (2026-10-26): actions Lloyd took and
+ * tasks opened/closed in the last 48 hours, so "did you send that?" or "what did we
+ * decide yesterday?" doesn't depend on a thread that may have scrolled away.
+ */
+export async function recentActivityBlock({ now = Date.now(), actions = listActions, tasks = listTasks } = {}) {
+  const lines = [];
+  const fmt = (iso) => new Date(iso).toLocaleString("en-US", { timeZone: FAMILY_TZ, weekday: "short", hour: "numeric", minute: "2-digit" });
+  try {
+    for (const a of (await actions({ sinceDays: 2 })).slice(-10)) lines.push(`- [${fmt(a.at)}] did: ${a.kind}: ${a.summary}`);
+  } catch { /* audit is best-effort */ }
+  try {
+    const cutoff = now - 48 * 3600e3;
+    for (const t of await tasks({ includeDone: true })) {
+      const ev = t.status === "done" ? t.completedAt : t.status === "dropped" ? t.droppedAt : t.createdAt;
+      if (ev && Date.parse(ev) >= cutoff) lines.push(`- [${fmt(ev)}] task ${t.status === "open" ? "added" : t.status}: ${t.title}`);
+    }
+  } catch { /* best-effort */ }
+  if (!lines.length) return "";
+  return `Last 48 hours (actions you took and task changes; authoritative):\n${lines.slice(-16).join("\n")}`;
+}
+
+export async function runChief(body, model, { content, images, onDelegate, webSearch, history = [], earlier = [], thread = null, sourceFrom = null, trustedRequester = null } = {}) {
   const p = await persona("chief-of-staff");
-  const mems = await recall(body, 4); // recall always keys off the text
+  // Recall only when there is a topic, and only facts that are actually relevant
+  // (a floor on relevance), so "done 2" no longer injects four random facts.
+  const recallQuery = recallQueryFor(body, history);
+  const mems = recallQuery ? await recall(recallQuery, 4, { minScore: RECALL_MIN_SCORE }) : [];
+  const activity = await recentActivityBlock();
+  const fmtWhen = (ts) => new Date(ts).toLocaleString("en-US", { timeZone: FAMILY_TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const earlierBlock = (earlier || []).length
+    ? `Earlier in this conversation (older turns, condensed, oldest first):\n${earlier.map((e) => `- [${fmtWhen(e.ts)}] ${e.role === "assistant" ? "Lloyd" : "Family"}: ${String(e.text || "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}`
+    : "";
   const rules = await getHouseRules(); // ALWAYS injected, not subject to recall
   const contacts = await getEmailContacts(); // so Lloyd knows who is NOT a first contact
   const volatile = [
@@ -1647,6 +1789,8 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
     mems.length
       ? `Relevant memory (each tagged with when it was saved; a day-specific fact like a schedule is about THAT date, not necessarily today):\n${mems.map((m) => `- ${memSavedTag(m)}${m.text}`).join("\n")}`
       : "",
+    activity,
+    earlierBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1674,6 +1818,11 @@ export async function runChief(body, model, { content, images, onDelegate, webSe
       ? `[${new Date(m.ts).toLocaleString("en-US", { timeZone: FAMILY_TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}] ${m.content}`
       : (m ? m.content : ""),
   }));
+  // A thread can now start with something Lloyd SENT (the digest, a heads-up), and
+  // the API requires the first message to be from the user.
+  if (stampedHistory.length && stampedHistory[0].role !== "user") {
+    stampedHistory.unshift({ role: "user", content: "(Earlier messages from Lloyd follow.)" });
+  }
   const { text, truncated } = await agentLoop({
     model,
     system: systemBlocks(p, volatile),
@@ -1789,6 +1938,16 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
     const confirm = await tryResolveConfirmation(msg.body);
     if (confirm.handled) {
       if (confirm.message) await transport.reply(confirm.message);
+      await appendTurn(threadKeyFor(msg), msg.body || "", confirm.message || "").catch(() => {});
+      return;
+    }
+    // 0'. "done 2" / "done 1, 3" / "drop 4": close tasks deterministically against
+    //     the numbered list the family was looking at (the digest or list_tasks).
+    //     No model run, so the numbers can't drift and nothing is misread.
+    const done = await tryResolveDoneReply(msg.body);
+    if (done.handled) {
+      await transport.reply(done.message);
+      await appendTurn(threadKeyFor(msg), msg.body || "", done.message).catch(() => {});
       return;
     }
   }
@@ -1985,10 +2144,12 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   // 2. Memory key. A forced per-agent channel (e.g. Slack #resale) shares ONE
   //    thread for the whole channel (channel+agent), so text and photos posted
   //    there build the same context; everything else is keyed per sender.
+  //    Otherwise the thread is per PERSON (Nic's email, Slack and iMessage share one),
+  //    falling back to channel+sender for anyone not mapped to a family member.
   const convoKey = forceAgent
     ? conversationKey({ channel: `${msg.channel}:${forceAgent}`, from: msg.replyTo || msg.from })
-    : conversationKey(msg);
-  const history = await getHistory(convoKey);
+    : threadKeyFor(msg);
+  const { messages: history, earlier } = await getThread(convoKey);
 
   // 3. Run it. A forced channel talks STRAIGHT to its specialist (no triage, no
   //    chief) but with the channel's shared memory: the thread + any extracted
@@ -2020,6 +2181,7 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
       content,
       images,
       history,
+      earlier,
       // Thread approval emails INTO the source conversation when this turn was triggered
       // by an email (else the notifier falls back to a standalone approval email).
       thread: msg.channel === "email" && msg.graphMessageId ? { messageId: msg.graphMessageId, subject: msg.subject } : null,

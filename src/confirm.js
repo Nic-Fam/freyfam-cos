@@ -122,6 +122,13 @@ export async function requestConfirmation(actionDescription, kind, params, { now
   pending.set(code, { kind, params, action: actionDescription, createdAt: now, thread });
   await savePending(pending);
 
+  // Record the request in the owner's conversation, so "yes" / "do it" in reply
+  // to the Slack or email approval has a referent. Lazy + best-effort.
+  try {
+    const { recordInOwnerThread } = await import("./channels/notify.js");
+    await recordInOwnerThread(`Approval needed (${code}): ${actionDescription}`, "approval request");
+  } catch { /* never block staging */ }
+
   // Suppress the ping (only) once this recipient+kind is clearly piling up.
   const throttled = Boolean(to) && sameTarget >= NOTIFY_CAP;
   if (!throttled) {

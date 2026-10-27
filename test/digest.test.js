@@ -40,13 +40,15 @@ test("fires again the next local day", () => {
 
 test("last-digest date persists across calls (survives a restart)", async () => {
   const TMP = join(os.tmpdir(), "cos-digest-state-test.json");
+  const prevStatePath = process.env.DIGEST_STATE_PATH;
   process.env.DIGEST_STATE_PATH = TMP;
   await rm(TMP, { force: true });
   assert.equal(await getLastDigestDate(), null); // no state yet
   await setLastDigestDate("2026-06-22");
   assert.equal(await getLastDigestDate(), "2026-06-22"); // a fresh process would read this and not re-fire
   await rm(TMP, { force: true });
-  delete process.env.DIGEST_STATE_PATH;
+  if (prevStatePath) process.env.DIGEST_STATE_PATH = prevStatePath;
+  else delete process.env.DIGEST_STATE_PATH;
 });
 
 test("buildDigestPrompt injects the authoritative date as ground truth", () => {
@@ -163,7 +165,10 @@ test("follow-ups exclude routine, self-completing things (no 'how did the dogs g
   assert.match(p, /COMPLETE BY HAPPENING/);
   assert.match(p, /dogs are out in the garden/);
   assert.match(p, /Do not ask how any of them\s+went/);
-  assert.match(p, /no open follow-ups at all, omit\s+this whole section/);
+  // The numbered to-do list is rendered in code after the model runs (tasks.js
+  // digestTaskSection), so the model must not write one, and follow-ups carry a source.
+  assert.match(p, /Do NOT write a to-do list/);
+  assert.match(p, /Always pass source/);
 });
 
 test("extractDigest pulls fenced content and drops any preamble", () => {
@@ -216,6 +221,7 @@ test("runMorningDigest sends nothing when the digest is empty", async () => {
 
 test("digest state keeps lastRunDate and alertedDate independently", async () => {
   const TMP = join(os.tmpdir(), "cos-digest-state-2.json");
+  const prevStatePath = process.env.DIGEST_STATE_PATH;
   process.env.DIGEST_STATE_PATH = TMP;
   await rm(TMP, { force: true });
   await setLastDigestDate("2026-07-01");
@@ -225,7 +231,8 @@ test("digest state keeps lastRunDate and alertedDate independently", async () =>
   await setLastDigestDate("2026-07-02"); // must not clobber alertedDate
   assert.equal(await getDigestAlertedDate(), "2026-07-01");
   await rm(TMP, { force: true });
-  delete process.env.DIGEST_STATE_PATH;
+  if (prevStatePath) process.env.DIGEST_STATE_PATH = prevStatePath;
+  else delete process.env.DIGEST_STATE_PATH;
 });
 
 // --- calendar-driven day planning + predicted traffic (2026-10-26) ------------
@@ -281,4 +288,44 @@ test("without addresses the digest still adapts to the calendar and asks for arr
   assert.match(p, /Woodbury Preschool is closed today/);
   assert.doesNotMatch(p, /call fox_today/, "no school-day section when Woodbury is closed");
   assert.match(p, /arriveBy set to that commitment's start time/);
+});
+
+// --- to-do list rendered in code, security as "new since", digest in threads -----
+import { securitySection } from "../src/digest.js";
+
+test("runMorningDigest appends the code-rendered to-do list and records the digest in each recipient's thread", async () => {
+  const recorded = [];
+  const r = await runMorningDigest({
+    context: async () => ({ plan: dayPlan(new Date(), TZ), move: null, day: null, security: null }),
+    runner: async () => "<digest>Good morning. Clear skies.</digest>",
+    tasks: async () => ({ text: "To do:\n1. Follow up: plumber\nTo clear any of these, reply 'done 2'." }),
+    notify: async () => "sent",
+    mail: async () => {},
+    record: async (key, body, opts) => recorded.push({ key, body, kind: opts.kind }),
+  });
+  assert.equal(r.body, "Good morning. Clear skies.\n\nTo do:\n1. Follow up: plumber\nTo clear any of these, reply 'done 2'.");
+  assert.ok(recorded.length >= 1);
+  assert.ok(recorded.every((x) => x.kind === "morning digest" && x.body === r.body));
+  assert.ok(recorded.some((x) => x.key === "person:nic"));
+});
+
+test("securitySection reports only new findings, and older open ones once a week", () => {
+  assert.equal(securitySection(null), null);
+  assert.equal(securitySection({ fresh: [], weeklyOlder: 0 }), null, "nothing new: no security section at all");
+  const s = securitySection({ fresh: [{ severity: "high", title: "Breach exposure: nic@freyfam.com in Canva", recommendation: "Change that password" }], weeklyOlder: 2 });
+  assert.match(s, /\[high\] Breach exposure: nic@freyfam.com in Canva -> Change that password/);
+  assert.match(s, /2 older security item\(s\) still open/);
+});
+
+test("buildDigestContext asks Frank's log for findings since the last digest (no model call)", async () => {
+  const calls = [];
+  const ctx = await buildDigestContext(new Date("2026-10-26T13:00:00Z"), {
+    tz: TZ, moveSummary: async () => ({ active: 0, draft: 0 }), loadEvents: async () => null,
+    securityOps: async (req) => { calls.push(req); return { data: req.args.since ? [{ title: "New", severity: "low" }] : [{ title: "New" }, { title: "Old" }, { title: "Older" }] }; },
+  });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((c) => c.agent === "security" && c.op === "list_findings"));
+  assert.equal(ctx.security.fresh.length, 1);
+  assert.equal(ctx.security.weeklyOlder, 2, "Monday: older open items counted once");
+  assert.doesNotMatch(buildDigestPrompt(new Date("2026-10-26T13:00:00Z"), TZ, ctx), /delegate to security/);
 });

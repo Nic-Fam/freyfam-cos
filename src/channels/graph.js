@@ -62,12 +62,14 @@ export async function recentMailSignals({ top = 15 } = {}) {
   const res = await graph()
     .api(`/users/${GRAPH.mailbox}/mailFolders/inbox/messages`)
     .top(top)
-    .select("from,subject,receivedDateTime,isRead")
+    .select("id,from,subject,receivedDateTime,isRead")
     .orderby("receivedDateTime desc")
     .get();
   return (res.value || [])
     .filter((m) => !isApprovalMechanismMail(m.subject))
     .map((m) => ({
+      // Graph message id: the heartbeat judges each message exactly once by it.
+      id: m.id,
       source: "email",
       from: m.from?.emailAddress?.address,
       subject: m.subject,

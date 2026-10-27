@@ -87,6 +87,10 @@ Route security-relevant signals to "security" ONLY for genuinely EXTERNAL anomal
 sign-in/breach/password-reset notice from a real service, a phishing attempt from an
 outside sender, an unknown sender impersonating someone, a home-system/device alert.
 
+Routine account notices (a password reset, a new sign-in, a verification code, a 2FA
+change) are almost always the family themselves: urgency "fyi", NOT "now", unless the
+notice itself says the attempt was unrecognized, blocked, or not them.
+
 The family's OWN mail is NEVER a security threat. A signal with "fromFamily": true (or
 from one of the family's addresses) is normal activity: do NOT flag their email volume,
 their replies, forwards, bounce/undeliverable notices, or links THEY share (e.g. a

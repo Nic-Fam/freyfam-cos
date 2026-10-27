@@ -59,7 +59,18 @@ export async function notifyOwner(body) {
   const delivered = results.some((r) => r.status === "fulfilled");
   const failed = results.filter((r) => r.status === "rejected").map((r) => String(r.reason?.message || r.reason));
   if (failed.length) log.warn("notifyOwner channel(s) failed", { failed, anyDelivered: delivered });
+  // Record it in the owner's conversation so a reply ("yes do that", "it's fine")
+  // has a referent. Lazy import, like graph.js above, and never throws.
+  if (delivered) await recordInOwnerThread(text, "heads-up");
   return delivered ? "sent" : null;
+}
+
+/** Best-effort: append something Lloyd sent to the owner into the owner's thread. */
+export async function recordInOwnerThread(text, kind = "message") {
+  try {
+    const { recordOutbound, ownerThreadKey } = await import("../conversation.js");
+    await recordOutbound(ownerThreadKey(), text, { kind });
+  } catch { /* history is a nicety */ }
 }
 
 // Post ONLY to Slack (no email). For artifacts that are emailed separately to a
