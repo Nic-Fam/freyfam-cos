@@ -21,7 +21,7 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, fetchAuthenticationResults, listEvents, listEventsDetailed, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, fetchAuthHeaders, listEvents, listEventsDetailed, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { verifyEmailSender } from "./email-auth.js";
 import { calendarGateDecision } from "./calendar-gate.js";
 import { describeEventTime, eventFacts, checkWeekday, isBeforeToday, todayISO, addMinutes, wallClock, dateReference, personsFor } from "./calendar-facts.js";
@@ -1908,7 +1908,7 @@ export async function collectAttachments(msg, { fetchImpl = fetch } = {}) {
  * @param {{from:string, body:string, channel:string, replyTo?:string, media?:object[], subject?:string, graphMessageId?:string}} msg
  * @param {{reply:Function, mirror:Function}} [transport] defaults to the channel's built-in
  */
-export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null, authHeaders = fetchAuthenticationResults } = {}) {
+export async function handleInbound(msg, transport = transportFor(msg), { forceAgent = null, authHeaders = fetchAuthHeaders } = {}) {
   // Authorization (hard constraint #1 + #2). Only an authorized sender may drive
   // the chief OR resolve an approval. Computed once, up front. Silent-capture
   // paths below (OTP relay, shipment/txn filing) deliberately run for UNauthorized
@@ -1918,7 +1918,9 @@ export async function handleInbound(msg, transport = transportFor(msg), { forceA
   // EMAIL is special (policy 2026-10-11): the From header is forgeable, so a
   // family From is necessary but not sufficient. The message's
   // Authentication-Results (DMARC / composite auth, read via Graph) must also
-  // pass, or the sender is treated as a stranger: no approval, no agent run.
+  // pass, or Exchange must have stamped it as internal mail from our own tenant
+  // (email-auth.internalTenantVerdict: nic@/shelli@freyfam.com get no DMARC
+  // verdict), or the sender is treated as a stranger: no approval, no agent run.
   // `authHeaders` is injectable so tests stay hermetic. The check only runs for
   // senders that would otherwise be authorized, so service mail costs no Graph read.
   let authorized = isAuthorizedSender(msg);

@@ -124,22 +124,35 @@ export async function recentInboxFull({ top = 25 } = {}) {
 }
 
 /**
- * Authentication-Results header value(s) for one inbox message, read via Graph
- * `internetMessageHeaders`. Exchange Online stamps every delivered message with
- * its SPF/DKIM/DMARC/compauth verdicts; src/email-auth.js turns that into the
- * sender-verification decision. Returns an array (Graph can carry several
- * Authentication-Results headers; the first is the receiving hop's). Empty array
- * when the message has none.
+ * Sender-authentication headers for one inbox message, read via Graph
+ * `internetMessageHeaders`; src/email-auth.js turns them into the
+ * sender-verification decision.
+ *   - authResults: every Authentication-Results value (SPF/DKIM/DMARC/compauth
+ *     verdicts; Graph can carry several, the first is the receiving hop's).
+ *   - exchange: the X-MS-Exchange-* stamps that mark mail a signed-in mailbox in
+ *     our own tenant sent (intra-tenant mail gets no DMARC/compauth verdict).
+ *     Each is an array of values so a duplicated header is visible to the caller.
+ * Empty shapes when there is no id or the message has none of these headers.
  */
-export async function fetchAuthenticationResults(messageId) {
-  if (!messageId) return [];
+export async function fetchAuthHeaders(messageId) {
+  const empty = { authResults: [], exchange: { authAs: [], directionality: [], crossTenantId: [] } };
+  if (!messageId) return empty;
   const res = await graph()
     .api(`/users/${GRAPH.mailbox}/messages/${messageId}`)
     .select("internetMessageHeaders")
     .get();
-  return (res?.internetMessageHeaders || [])
-    .filter((h) => String(h?.name || "").toLowerCase() === "authentication-results")
+  const headers = res?.internetMessageHeaders || [];
+  const values = (name) => headers
+    .filter((h) => String(h?.name || "").toLowerCase() === name)
     .map((h) => String(h?.value || ""));
+  return {
+    authResults: values("authentication-results"),
+    exchange: {
+      authAs: values("x-ms-exchange-organization-authas"),
+      directionality: values("x-ms-exchange-organization-messagedirectionality"),
+      crossTenantId: values("x-ms-exchange-crosstenant-id"),
+    },
+  };
 }
 
 /**
