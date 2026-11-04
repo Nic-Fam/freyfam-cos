@@ -13,8 +13,12 @@
 // Verdict rule (pure, tested): PASS when
 //   - dmarc=pass            (the From domain is DKIM/SPF aligned: the normal case
 //                            for gmail/outlook/corporate senders), OR
-//   - compauth=pass         (Microsoft composite authentication, which also covers
-//                            intra-tenant mail that carries no DKIM at all).
+//   - compauth=pass         (Microsoft composite authentication), OR
+//   - internal tenant mail  (a signed-in mailbox in OUR tenant sent it; see
+//                            internalTenantVerdict). Exchange stamps NO DMARC or
+//                            compauth verdict on intra-tenant mail at all
+//                            ("dmarc=none", no compauth), so without this rule
+//                            nic@/shelli@freyfam.com -> cos@ is always refused.
 // Anything else (fail, none, missing header, fetch error) is NOT verified.
 //
 // EMAIL_AUTH_CHECK=false disables enforcement (logs a loud warning at boot);
@@ -59,17 +63,50 @@ export function authResultsVerdict(header) {
 }
 
 /**
+ * Intra-tenant verdict from Exchange's own stamps. Mail a signed-in mailbox in
+ * our tenant sends to cos@ carries X-MS-Exchange-Organization-AuthAs: Internal,
+ * X-MS-Exchange-Organization-MessageDirectionality: Originating and
+ * X-MS-Exchange-CrossTenant-Id: <our tenant id>. Exchange's header firewall
+ * strips X-MS-Exchange-Organization-* headers from mail arriving from outside
+ * the org, so an outside forger cannot carry these in.
+ * PASS only when tenantId is configured AND each header has exactly one distinct
+ * value AND those are Internal / Originating / our tenant (case-insensitive,
+ * trimmed). Pure. `exchange` is {authAs, directionality, crossTenantId}, each a
+ * string or array of strings.
+ * @returns {{verified:boolean, reason:string}}
+ */
+export function internalTenantVerdict(exchange, tenantId) {
+  const one = (v) => {
+    const vals = [...new Set((Array.isArray(v) ? v : [v]).filter(Boolean).map((s) => String(s).trim().toLowerCase()))];
+    return vals.length === 1 ? vals[0] : null;
+  };
+  const tenant = String(tenantId || "").trim().toLowerCase();
+  const authAs = one(exchange?.authAs);
+  const directionality = one(exchange?.directionality);
+  const crossTenantId = one(exchange?.crossTenantId);
+  if (tenant && authAs === "internal" && directionality === "originating" && crossTenantId === tenant) {
+    return { verified: true, reason: "internal tenant mail (AuthAs=Internal)" };
+  }
+  return {
+    verified: false,
+    reason: `not internal tenant mail (authAs=${authAs || "none"} directionality=${directionality || "none"} tenant=${!tenant ? "unconfigured" : crossTenantId === tenant ? "match" : "mismatch"})`,
+  };
+}
+
+/**
  * Verify one inbound email message's sender authentication.
- * `fetchHeader(messageId)` resolves to the Authentication-Results value(s) for
- * that Graph message id (injectable for tests; defaults are wired by the caller
- * so this module never imports the Graph client).
+ * `fetchHeader(messageId)` resolves to either {authResults, exchange} (see
+ * graph.fetchAuthHeaders) or, legacy shape, just the Authentication-Results
+ * value(s) for that Graph message id (injectable for tests; defaults are wired
+ * by the caller so this module never imports the Graph client). `tenantId` is
+ * our Entra tenant, for the internal-tenant rule.
  *
  * Fail CLOSED: no message id, a fetch failure, or a non-pass verdict all return
  * verified:false. With EMAIL_AUTH_CHECK=false every message is treated as
  * verified (enforcement off), but the real verdict is still logged.
  * @returns {Promise<{verified:boolean, reason:string, enforced:boolean}>}
  */
-export async function verifyEmailSender(msg, { fetchHeader } = {}) {
+export async function verifyEmailSender(msg, { fetchHeader, tenantId = process.env.GRAPH_TENANT_ID } = {}) {
   const enforced = EMAIL_AUTH_ENFORCED;
   const id = msg?.graphMessageId;
   if (!id) {
@@ -80,14 +117,21 @@ export async function verifyEmailSender(msg, { fetchHeader } = {}) {
     log.warn("email sender unverifiable (no header fetcher)", { from: msg?.from, enforced });
     return { verified: !enforced, reason: "no header fetcher", enforced };
   }
-  let header;
+  let fetched;
   try {
-    header = await fetchHeader(id);
+    fetched = await fetchHeader(id);
   } catch (err) {
     log.warn("email auth header fetch failed", { from: msg?.from, reason: String(err?.message || err), enforced });
     return { verified: !enforced, reason: `header fetch failed: ${err?.message || err}`, enforced };
   }
-  const v = authResultsVerdict(header);
+  const legacy = fetched == null || typeof fetched === "string" || Array.isArray(fetched);
+  const authResults = legacy ? fetched : fetched.authResults;
+  const exchange = legacy ? null : fetched.exchange;
+  let v = authResultsVerdict(authResults);
+  if (!v.verified) {
+    const internal = internalTenantVerdict(exchange, tenantId);
+    if (internal.verified) v = internal;
+  }
   if (!v.verified) {
     log.warn("email sender FAILED authentication", { from: msg?.from, reason: v.reason, enforced });
   }

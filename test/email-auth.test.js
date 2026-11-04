@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { authResultsVerdict, verifyEmailSender } from "../src/email-auth.js";
+import { authResultsVerdict, internalTenantVerdict, verifyEmailSender } from "../src/email-auth.js";
 
 const EXO_PASS =
   "spf=pass (sender IP is 209.85.220.41) smtp.mailfrom=gmail.com; dkim=pass (signature was verified) header.d=gmail.com; dmarc=pass action=none header.from=gmail.com; compauth=pass reason=100";
@@ -54,4 +54,60 @@ test("verifyEmailSender fails closed: no id, no fetcher, fetch error, bad verdic
   const ok = await verifyEmailSender({ from: "nic@freyfam.com", graphMessageId: "a" }, { fetchHeader: async () => [EXO_PASS] });
   assert.equal(ok.verified, true);
   assert.equal(ok.enforced, true);
+});
+
+// Real shape of nic@ -> cos@ inside the tenant (2026-10-30): Exchange stamps no
+// DMARC/compauth verdict, only its own X-MS-Exchange-* markers. Fake tenant id.
+const TENANT = "00000000-1111-2222-3333-444444444444";
+const EXO_INTERNAL_AR = "mx.microsoft.com 1; dkim=none (message not signed) header.d=none;dmarc=none action=none header.from=example.com;";
+const INTERNAL = { authAs: ["Internal"], directionality: ["Originating"], crossTenantId: [TENANT] };
+const internalMsg = (exchange) => async () => ({ authResults: [EXO_INTERNAL_AR], exchange });
+const MSG = { from: "nic@freyfam.com", graphMessageId: "a" };
+
+test("internalTenantVerdict: Internal + Originating + our tenant verifies (case-insensitive)", () => {
+  assert.equal(internalTenantVerdict(INTERNAL, TENANT).verified, true);
+  assert.equal(internalTenantVerdict({ authAs: "internal", directionality: " ORIGINATING ", crossTenantId: TENANT.toUpperCase() }, TENANT).verified, true);
+});
+
+test("internalTenantVerdict: wrong tenant, Anonymous, Incoming, conflicting duplicates, no tenant all fail", () => {
+  assert.equal(internalTenantVerdict({ ...INTERNAL, crossTenantId: ["99999999-1111-2222-3333-444444444444"] }, TENANT).verified, false);
+  assert.equal(internalTenantVerdict({ ...INTERNAL, authAs: ["Anonymous"] }, TENANT).verified, false);
+  assert.equal(internalTenantVerdict({ ...INTERNAL, directionality: ["Incoming"] }, TENANT).verified, false);
+  assert.equal(internalTenantVerdict({ ...INTERNAL, authAs: ["Internal", "Anonymous"] }, TENANT).verified, false);
+  assert.equal(internalTenantVerdict(INTERNAL, "").verified, false);
+  assert.equal(internalTenantVerdict(INTERNAL, undefined).verified, false);
+  assert.equal(internalTenantVerdict(null, TENANT).verified, false);
+  // The same value stamped twice is still one distinct value.
+  assert.equal(internalTenantVerdict({ ...INTERNAL, authAs: ["Internal", "internal"] }, TENANT).verified, true);
+});
+
+test("verifyEmailSender: intra-tenant mail with dmarc=none verifies via the Exchange stamps", async () => {
+  const v = await verifyEmailSender(MSG, { fetchHeader: internalMsg(INTERNAL), tenantId: TENANT });
+  assert.equal(v.verified, true);
+  assert.match(v.reason, /internal tenant/);
+});
+
+test("verifyEmailSender: dmarc=none plus non-internal stamps keeps the DMARC failure reason", async () => {
+  const wrongTenant = await verifyEmailSender(MSG, { fetchHeader: internalMsg({ ...INTERNAL, crossTenantId: ["99999999-1111-2222-3333-444444444444"] }), tenantId: TENANT });
+  assert.equal(wrongTenant.verified, false);
+  assert.match(wrongTenant.reason, /dmarc=none/);
+  const anonymous = await verifyEmailSender(MSG, { fetchHeader: internalMsg({ ...INTERNAL, authAs: ["Anonymous"] }), tenantId: TENANT });
+  assert.equal(anonymous.verified, false);
+  const incoming = await verifyEmailSender(MSG, { fetchHeader: internalMsg({ ...INTERNAL, directionality: ["Incoming"] }), tenantId: TENANT });
+  assert.equal(incoming.verified, false);
+  const noTenant = await verifyEmailSender(MSG, { fetchHeader: internalMsg(INTERNAL), tenantId: "" });
+  assert.equal(noTenant.verified, false);
+});
+
+test("verifyEmailSender: object shape still honors dmarc=pass and still rejects a spoof", async () => {
+  const pass = await verifyEmailSender(MSG, { fetchHeader: async () => ({ authResults: [EXO_PASS], exchange: {} }), tenantId: TENANT });
+  assert.equal(pass.verified, true);
+  assert.equal(pass.reason, "dmarc=pass");
+  const spoof = await verifyEmailSender(MSG, { fetchHeader: async () => ({ authResults: [EXO_SPOOF], exchange: { authAs: ["Anonymous"], directionality: ["Incoming"], crossTenantId: [] } }), tenantId: TENANT });
+  assert.equal(spoof.verified, false);
+});
+
+test("verifyEmailSender: legacy array shape still works (no Exchange stamps to fall back on)", async () => {
+  assert.equal((await verifyEmailSender(MSG, { fetchHeader: async () => [EXO_PASS], tenantId: TENANT })).verified, true);
+  assert.equal((await verifyEmailSender(MSG, { fetchHeader: async () => [EXO_INTERNAL_AR], tenantId: TENANT })).verified, false);
 });
