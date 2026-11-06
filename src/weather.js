@@ -54,8 +54,25 @@ export function summarizePeriod(period) {
 }
 
 /**
- * Today's forecast for an address. Returns the summarized nearest period
- * (in the morning that is "Today"). Throws on a non-US / ungeocodable address.
+ * The forecast period that carries TODAY's high: the first daytime period that
+ * starts on the same local date as the current one. Before dawn NWS leads with
+ * "Overnight", a night period whose temperature is the LOW, and the 5am digest
+ * runs then, so taking periods[0] reported the overnight low as the day's
+ * weather. Once today's daytime periods are past ("Tonight"), the current period
+ * stands. NWS startTime carries the location's own offset, so its first 10
+ * characters are the local date. Pure.
+ */
+export function todayPeriod(periods) {
+  const first = periods?.[0];
+  if (!first) return null;
+  const day = String(first.startTime || "").slice(0, 10);
+  return (day && periods.find((p) => p.isDaytime && String(p.startTime || "").slice(0, 10) === day)) || first;
+}
+
+/**
+ * Today's forecast for an address: the daytime period (so the temperature is
+ * the high) while today still has one, else the current period. Throws on a
+ * non-US / ungeocodable address.
  */
 export async function getWeather(location, { mapsKey = MAPS.key, userAgent = WEATHER.userAgent } = {}) {
   if (!mapsKey) throw new Error("AZURE_MAPS_KEY is not configured");
@@ -64,13 +81,16 @@ export async function getWeather(location, { mapsKey = MAPS.key, userAgent = WEA
   const res = await fetch(url, { headers: nwsHeaders(userAgent) });
   if (!res.ok) throw new Error(`NWS forecast error: ${res.status}`);
   const data = await res.json();
-  const period = data.properties?.periods?.[0];
+  const period = todayPeriod(data.properties?.periods);
   if (!period) throw new Error("NWS returned no forecast periods");
   return summarizePeriod(period);
 }
 
-/** One-line human summary. Precip shown only when meaningful (>=10%). Pure. */
-export function formatWeather({ label, temp, unit, shortForecast, precipChance }) {
+/** One-line human summary. A daytime period's temperature is the high and a
+ *  night period's the low, so say which. Precip shown only when meaningful
+ *  (>=10%). Pure. */
+export function formatWeather({ label, temp, unit, shortForecast, precipChance, isDaytime }) {
+  const kind = isDaytime === true ? "high " : isDaytime === false ? "low " : "";
   const precip = precipChance != null && precipChance >= 10 ? `, ${precipChance}% precip` : "";
-  return `${label}: ${shortForecast}, ${temp}°${unit}${precip}`;
+  return `${label}: ${shortForecast}, ${kind}${temp}°${unit}${precip}`;
 }

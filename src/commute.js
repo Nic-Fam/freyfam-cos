@@ -11,15 +11,23 @@ import { MAPS } from "./config.js";
 // Geocode results are stable, so cache them for the process lifetime.
 const geocodeCache = new Map();
 
+// Address-search hits that pin an actual street address. Anything weaker
+// ("Street", "Cross Street", "Geography") on a query that is really a place name
+// lands on whatever street shares a word with it: "Zonnie Bauer Pilates,
+// Montrose, CA" matched Montrose Street in Bakersfield, 108 miles out, and the
+// digest priced a 3-minute drive at 100 minutes.
+const PRECISE_ADDRESS = new Set(["Point Address", "Address Range"]);
+
 // Exported so the weather tool can reuse the same geocoder + cache: NWS keys
 // off lat/lon, and the digest asks for weather at the very same addresses.
 export async function geocode(address, key, fetchImpl = fetch) {
   if (geocodeCache.has(address)) return geocodeCache.get(address);
-  const url = `https://atlas.microsoft.com/search/address/json?api-version=1.0&query=${encodeURIComponent(address)}&limit=1&subscription-key=${key}`;
+  const url = `https://atlas.microsoft.com/search/address/json?api-version=1.0&query=${encodeURIComponent(address)}&countrySet=US&limit=1&subscription-key=${key}`;
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`Azure Maps geocode error: ${res.status}`);
   const data = await res.json();
-  let pos = data.results?.[0]?.position;
+  const hit = data.results?.[0];
+  let pos = PRECISE_ADDRESS.has(hit?.type) ? hit.position : null;
   if (!pos) {
     // Calendar locations are often a place NAME ("Glendale Dental", "Union
     // Pasadena"), which the address geocoder can't resolve. Fuzzy search covers
