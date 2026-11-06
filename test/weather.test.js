@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import { createServer } from "node:http";
-import { summarizePeriod, formatWeather, getWeather } from "../src/weather.js";
+import { summarizePeriod, formatWeather, getWeather, todayPeriod } from "../src/weather.js";
 
 // --- pure helpers ----------------------------------------------------------
 
@@ -22,6 +22,37 @@ test("formatWeather shows precip only when meaningful (>=10%)", () => {
   assert.equal(formatWeather({ label: "Today", temp: 78, unit: "F", shortForecast: "Sunny", precipChance: 0 }), "Today: Sunny, 78°F");
   assert.equal(formatWeather({ label: "Today", temp: 64, unit: "F", shortForecast: "Rain Likely", precipChance: 70 }), "Today: Rain Likely, 64°F, 70% precip");
   assert.equal(formatWeather({ label: "Today", temp: 64, unit: "F", shortForecast: "Cloudy", precipChance: null }), "Today: Cloudy, 64°F");
+});
+
+test("formatWeather says high for a daytime period and low for a night one", () => {
+  assert.equal(formatWeather({ label: "Today", temp: 78, unit: "F", shortForecast: "Sunny", precipChance: 0, isDaytime: true }), "Today: Sunny, high 78°F");
+  assert.equal(formatWeather({ label: "Tonight", temp: 55, unit: "F", shortForecast: "Clear", precipChance: null, isDaytime: false }), "Tonight: Clear, low 55°F");
+});
+
+// NWS before dawn: the first period is "Overnight" (its temperature is the LOW).
+const PREDAWN = [
+  { name: "Overnight", startTime: "2026-11-06T05:00:00-08:00", isDaytime: false, temperature: 52 },
+  { name: "Today", startTime: "2026-11-06T06:00:00-08:00", isDaytime: true, temperature: 74 },
+  { name: "Tonight", startTime: "2026-11-06T18:00:00-08:00", isDaytime: false, temperature: 53 },
+  { name: "Saturday", startTime: "2026-11-07T06:00:00-08:00", isDaytime: true, temperature: 77 },
+];
+
+test("todayPeriod skips the overnight low and takes today's daytime high (the 5am digest case)", () => {
+  assert.equal(todayPeriod(PREDAWN).name, "Today");
+  assert.equal(todayPeriod(PREDAWN).temperature, 74);
+});
+
+test("todayPeriod keeps the current period mid-day and once today's daytime is over", () => {
+  const afternoon = [{ name: "This Afternoon", startTime: "2026-11-06T13:00:00-08:00", isDaytime: true, temperature: 74 }, ...PREDAWN.slice(2)];
+  assert.equal(todayPeriod(afternoon).name, "This Afternoon");
+  // Evening: today has no daytime left, so it must NOT jump to tomorrow's high.
+  assert.equal(todayPeriod(PREDAWN.slice(2)).name, "Tonight");
+});
+
+test("todayPeriod tolerates missing startTime and empty input", () => {
+  assert.equal(todayPeriod([{ name: "Today", isDaytime: true }]).name, "Today");
+  assert.equal(todayPeriod([]), null);
+  assert.equal(todayPeriod(undefined), null);
 });
 
 // --- two-step NWS flow against a stub server -------------------------------

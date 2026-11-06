@@ -43,7 +43,7 @@ function fakeMaps({ rejectArriveAt = false, travel = 2400, freeFlow = 1500 } = {
   const calls = [];
   const fetchImpl = async (url) => {
     calls.push(url);
-    if (url.includes("/search/address/")) return { ok: true, json: async () => ({ results: [{ position: { lat: 34.2, lon: -118.2 + calls.length * 0.01 } }] }) };
+    if (url.includes("/search/address/")) return { ok: true, json: async () => ({ results: [{ type: "Point Address", position: { lat: 34.2, lon: -118.2 + calls.length * 0.01 } }] }) };
     if (rejectArriveAt && url.includes("arriveAt=")) return { ok: false, status: 400, json: async () => ({}) };
     const m = url.match(/(arriveAt|departAt)=([^&]+)/);
     const at = m ? new Date(decodeURIComponent(m[2])) : new Date("2026-10-27T13:00:00Z");
@@ -104,4 +104,32 @@ test("geocode falls back to fuzzy (place-name) search when the address search fi
   const pos = await geocode("Glendale Dental (unique test name)", "k", fetchImpl);
   assert.deepEqual(pos, { lat: 34.15, lon: -118.25 });
   assert.ok(urls[1].includes("/search/fuzzy/"));
+});
+
+test("geocode ignores a weak street-level address hit and uses the place search", async () => {
+  // Real case: "Zonnie Bauer Pilates, Montrose, CA" matched Montrose Street in
+  // Bakersfield (type "Street") and the digest priced a 3-minute drive at 100 min.
+  const { geocode } = await import("../src/commute.js");
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    if (url.includes("/search/address/")) return { ok: true, json: async () => ({ results: [{ type: "Street", position: { lat: 35.39, lon: -119.0 } }] }) };
+    return { ok: true, json: async () => ({ results: [{ type: "POI", position: { lat: 34.21, lon: -118.23 } }] }) };
+  };
+  const pos = await geocode("Pilates studio, Montrose, CA (unique test name)", "k", fetchImpl);
+  assert.deepEqual(pos, { lat: 34.21, lon: -118.23 });
+  assert.ok(urls[0].includes("countrySet=US"));
+  assert.ok(urls[1].includes("/search/fuzzy/"));
+});
+
+test("geocode keeps a precise street-address hit without a second call", async () => {
+  const { geocode } = await import("../src/commute.js");
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return { ok: true, json: async () => ({ results: [{ type: "Point Address", position: { lat: 34.15, lon: -118.34 } }] }) };
+  };
+  const pos = await geocode("3800 Test Ave, Burbank CA (unique test name)", "k", fetchImpl);
+  assert.deepEqual(pos, { lat: 34.15, lon: -118.34 });
+  assert.equal(urls.length, 1);
 });
