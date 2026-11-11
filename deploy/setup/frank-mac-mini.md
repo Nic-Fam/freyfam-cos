@@ -30,6 +30,13 @@ confirmation power**. Those live only on Lloyd, wherever Frank runs.
 2. **Power**: System Settings → Energy → prevent sleep when display off, start up
    after power failure, wake for network access. Frank should be reachable whenever
    Lloyd delegates.
+   Then, once, in Terminal (display off after 1 min, no Power Nap, restart after an
+   outage, wake on network; the never-sleep setting above is unchanged):
+   `sudo pmset -a displaysleep 1 powernap 0 autorestart 1 womp 1`
+   Keep any monitor unplugged or powered off when not in use: a monitor left on can
+   draw more than the mini itself. Electricity peak is 4-9pm (see `PEAK_HOURS`);
+   Frank's only recurring job is the 30-minute network scan, a short ping sweep, so
+   it keeps running through peak for security coverage. Don't sleep Frank in peak.
 3. **Firewall**: if macOS firewall is on, allow incoming connections for `node`
    (System Settings → Network → Firewall → Options). The server listens on a LAN
    port (default `8787`).

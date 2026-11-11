@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { minuteInPeak } from "./peak.js";
 
 // ===========================================================================
 // Scheduler for Shey's saved-search runs, so new listings surface on their own
@@ -41,12 +42,24 @@ export function localHM(now = new Date(), tz = TZ) {
 /**
  * Which run slots are due now (in their post-drop window and not yet run today).
  * Pure. `state` maps slot label -> last-run date. Returns { due:[{label}], date }.
+ *
+ * `peak` ({start,end} hours, see peak.js): a slot that falls inside the electricity
+ * peak window is DEFERRED to the end of it (e.g. 16:05, 18:30 and 20:30 all become
+ * due at 21:00), so the Chrome-driven checks never run 4-9pm. The heartbeat runs
+ * all slots due at the same moment as ONE run. Default null keeps this pure
+ * function's original behavior for callers and tests that don't pass it.
  */
-export function dueSlots(now, state = {}, { slots = SLOTS, windowMin = WINDOW_MIN, tz = TZ } = {}) {
+export function dueSlots(now, state = {}, { slots = SLOTS, windowMin = WINDOW_MIN, tz = TZ, peak = null } = {}) {
   const { date, minutesOfDay } = localHM(now, tz);
   const due = [];
   for (const s of slots) {
-    const inWindow = minutesOfDay >= s.minutes && minutesOfDay < s.minutes + windowMin;
+    let start = s.minutes;
+    let win = windowMin;
+    if (peak && minuteInPeak(s.minutes, peak) && peak.start < peak.end) {
+      start = peak.end * 60; // run as soon as the peak window closes
+      win = Math.max(windowMin, 60); // and give the catch-up a full hour to land
+    }
+    const inWindow = minutesOfDay >= start && minutesOfDay < start + win;
     if (inWindow && state[s.label] !== date) due.push({ label: s.label });
   }
   return { due, date };
