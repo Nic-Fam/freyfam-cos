@@ -21,6 +21,8 @@ import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, set
 import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLastAmazonDigestDate } from "./amazon-digest.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
+import { PEAK, inPeak } from "./peak.js";
+import { closeBrowserIfIdle } from "./channels/browser.js";
 import { delegate, chooseTransport } from "./delegate.js";
 import { fetchHuntsViaDelegate, listSavedSearches } from "./saved-searches.js";
 import { cooRoster } from "./companies.js";
@@ -143,6 +145,7 @@ const BACKUP_INTERVAL_MS = Number(process.env.BACKUP_INTERVAL_MS || 6 * 60 * 60 
 async function maybeBackup() {
   const now = Date.now();
   if (now - lastBackupAt < BACKUP_INTERVAL_MS) return;
+  if (inPeak()) return; // electricity peak: wait for it to end (the interval stays due)
   lastBackupAt = now;
   await backupState();
 }
@@ -504,12 +507,16 @@ async function maybeRunPackageDigest() {
 
 async function maybeRunAmazonDigest() {
   if (!AMAZON_DIGEST.enabled) return;
+  // A Chrome crawl of order history: heavy, so never during electricity peak. The
+  // Sunday window (7pm + 3h by default) is still open when peak ends at 9pm.
+  if (inPeak()) return;
   const last = await getLastAmazonDigestDate();
   const { run, date } = shouldRunAmazonDigest(new Date(), last, AMAZON_DIGEST);
   if (!run) return;
   await setLastAmazonDigestDate(date); // persist BEFORE running so a restart mid-window can't double-fire
   try {
     const r = await runAmazonDigest();
+    await closeBrowserIfIdle().catch(() => {});
     if (r.sent) log.info("amazon spend digest sent", { date, count: r.count });
     else log.info("amazon spend digest skipped", { date, signedIn: r.signedIn, count: r.count ?? 0 });
   } catch (err) {
@@ -538,9 +545,13 @@ async function maybeFireReminders() {
 async function maybeRunResale() {
   try {
     const state = await getResaleState();
-    const { due, date } = dueSlots(new Date(), state);
-    for (const slot of due) {
-      await setSlotRan(slot.label, date); // record before running so a slow run can't double-fire
+    // Slots inside the electricity peak (4-9pm) are deferred to its end; several
+    // slots due at once (e.g. 16:05, 18:30 and 20:30, all deferred to 9pm) are
+    // ONE run, not three back-to-back crawls.
+    const { due, date } = dueSlots(new Date(), state, { peak: PEAK.hours });
+    if (!due.length) return;
+    for (const slot of due) await setSlotRan(slot.label, date); // record before running so a slow run can't double-fire
+    for (const slot of [{ label: due.map((d) => d.label).join("+") }]) {
       try {
         // Load the active hunt list ONCE. It is the SINGLE source of resale scope:
         // if it fails to load we leave it empty and surface nothing (safe: under-
@@ -574,6 +585,8 @@ async function maybeRunResale() {
         log.error("resale run failed", { slot: slot.label, reason: err.message });
       }
     }
+    // Don't leave Chrome idling after the crawl.
+    await closeBrowserIfIdle().catch(() => {});
   } catch (err) {
     log.error("resale schedule check failed", { reason: err.message });
   }
@@ -668,6 +681,12 @@ async function tickBody() {
   // the off-Mac monitor can alert the family if this stops. Best-effort, never throws.
   await recordLiveness();
   await setLastSeen(); // local heartbeat stamp for boot-time outage detection
+  // Electricity peak (4-9pm): close Chrome whenever nothing is using it, so it
+  // doesn't idle through the most expensive hours. A family request reopens it.
+  if (inPeak()) {
+    const closed = await closeBrowserIfIdle().catch(() => false);
+    if (!closed) log.debug("peak hours: browser busy, left open");
+  }
   await maybeReconcileInboundEmail();
   await maybeCheckCosts();
   await maybeCheckModelUpdates();

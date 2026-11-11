@@ -31,6 +31,14 @@ Steve on the LAN, finance/resale/chef on Azure) and only ever return text to Llo
    - "Start up automatically after a power failure" → **on**
    - "Wake for network access" → **on**
    This box should never sleep — it's pulling the queue continuously.
+   Then, once, in Terminal (display off after 1 min, no Power Nap, restart after an
+   outage, wake on network; the never-sleep setting above is unchanged):
+   `sudo pmset -a displaysleep 1 powernap 0 autorestart 1 womp 1`
+   Keep any monitor unplugged or powered off when not in use: a monitor left on can
+   draw more than the mini itself. Electricity peak is 4-9pm (see `PEAK_HOURS`);
+   Lloyd defers his heavy scheduled work (Chrome crawls, backups) out of that window
+   and closes an idle Chrome during it. Never sleep him during peak: 4-9pm is when
+   the family uses him most.
 3. **Create a dedicated login user** (e.g. `cos`) that the daemon runs as, and enable
    automatic login for it so the daemon comes back after a reboot.
 4. Install **Xcode Command Line Tools** (needed for git + some native deps):

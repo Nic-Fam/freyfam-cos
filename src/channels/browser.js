@@ -93,9 +93,43 @@ async function chromium() {
   return _chromium;
 }
 
+// --- idle tracking (2026-11-11) -------------------------------------------
+// Chrome used to stay open between jobs, idling all evening. To close it safely
+// when nothing needs it (peak hours, after a scheduled crawl), every page is
+// counted from the moment it is requested until it closes, and a close in
+// progress makes new requests wait for it instead of racing it.
+let _openPages = 0; // pages open right now
+let _pending = 0;   // newPage() calls still launching / opening
+let _closing = null; // promise while closeBrowserIfIdle is shutting Chrome down
+
+/** Pages open or being opened right now (for tests and logging). */
+export function browserInUse() {
+  return _openPages + _pending;
+}
+
+function track(page) {
+  _openPages++;
+  let done = false;
+  const release = () => { if (!done) { done = true; _openPages = Math.max(0, _openPages - 1); } };
+  try { page.once?.("close", release); } catch { /* no event emitter: release on explicit close below */ }
+  const origClose = page.close?.bind(page);
+  if (origClose) page.close = async (...a) => { try { return await origClose(...a); } finally { release(); } };
+  return page;
+}
+
 // A page from the right surface: the device's persistent Chrome profile when
 // configured (saved logins available), else an ephemeral headless Chromium.
 async function newPage() {
+  if (_closing) await _closing;
+  _pending++; // synchronous with the check above, so an idle-close can't slip in between
+  try {
+    return track(await openRawPage());
+  } finally {
+    _pending--;
+  }
+}
+
+async function openRawPage() {
   const c = await chromium();
   if (BROWSER.userDataDir) {
     if (!_context) {
@@ -139,6 +173,20 @@ export async function withPage(fn) {
   } finally {
     await page.close();
   }
+}
+
+/**
+ * Close Chrome only if no page is open or being opened. Returns true if it closed
+ * (or nothing was running). Used during peak electricity hours and after each
+ * scheduled crawl, so Chrome doesn't idle for hours. Never interrupts a job.
+ */
+export async function closeBrowserIfIdle() {
+  if (_openPages > 0 || _pending > 0) return false;
+  if (_closing) { await _closing; return true; }
+  if (!_context && !_browser) return true;
+  _closing = closeBrowser().finally(() => { _closing = null; });
+  await _closing;
+  return true;
 }
 
 /** Close the shared browser/context if one is open. Safe when nothing launched. */
