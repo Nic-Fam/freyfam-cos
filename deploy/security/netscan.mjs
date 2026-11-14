@@ -16,11 +16,11 @@
 // Baseline lives at data/network-baseline.json (gitignored via data/*), so MACs
 // never hit git.
 //
-// Multi-subnet: ARP only sees the networks this box is physically on. The Eero
-// runs its own NAT'd IoT subnet (Ring, Lockly) behind the Asus router, so Frank
-// gets a second NIC (USB Ethernet adapter into an Eero LAN port) and this scan
-// sweeps every LAN interface it finds. NETSCAN_IFACES=en0,en7 pins the list.
-// Subnets wider than a /22 are clamped to the /22 around this box.
+// Multi-subnet: ARP only sees the networks this box is physically on. Any other
+// hardware subnet (an IoT or camera leg behind its own router) is reached by
+// giving this box a second NIC on it (e.g. a USB Ethernet adapter), and this
+// scan sweeps every LAN interface it finds. NETSCAN_IFACES=en0,en7 pins the
+// list. Subnets wider than a /22 are clamped to the /22 around this box.
 //
 // Scope note: ping-silent devices won't populate ARP unless they talk to this
 // box, so treat "GONE" as "not seen this run", not proof of removal.
