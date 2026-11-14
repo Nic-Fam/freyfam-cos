@@ -19,8 +19,9 @@ import { requestConfirmation, tryResolveConfirmation, registerActionHandler } fr
 import { notifyOwner } from "./channels/notify.js";
 import { extractCode as extractVerificationCode } from "./verification.js";
 import { sendImessage, sendImessageAudio } from "./channels/imessage.js";
-import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
+import { recentMailSignals, sendMail, sendVoiceMail, sendMailWithAttachment, createDraft, fetchAttachments, listEvents, createEvent, updateEvent, deleteEvent, replyToMessage, listTodoTasks, addTodoTask } from "./channels/graph.js";
 import { calendarGateDecision } from "./calendar-gate.js";
+import { findDuplicateEvent, eventPatch, withFamilyDefaults } from "./calendar-policy.js";
 import { findConflicts } from "./week-conflicts.js";
 import { isReceipt, captureReceipt, listReceipts, formatReceipts } from "./receipts.js";
 import { synthesizeSpeech, ttsConfigured } from "./tts.js";
@@ -45,6 +46,7 @@ import { isTransactionAlert, queueAlert } from "./finance-ingest.js";
 import { getHouseRules, formatHouseRules, getAgentRules, addRule, removeRule, KNOWN_AGENTS } from "./rules.js";
 import { getFoxToday, setFoxDay } from "./fox.js";
 import { fetchFoxWeek } from "./fox-curriculum.js";
+import { runBrightwheelPull } from "./brightwheel.js";
 import { getCommuteTime, formatCommute } from "./commute.js";
 import { getWeather, formatWeather } from "./weather.js";
 import { computeLeaveBy } from "./leave-by.js";
@@ -149,6 +151,12 @@ const tools = [
     input_schema: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD; defaults to today" } } },
   },
   {
+    name: "brightwheel_pull",
+    description:
+      "Pull Fox's Brightwheel feed from Woodbury Preschool RIGHT NOW (activities, meals, teacher notes, announcements) and save each day so the digest can use it. Use when asked what's new at Fox's school, or when fox_today comes back empty. Read-only crawl on the local signed-in Chrome; reports plainly when the profile isn't signed into Brightwheel instead of inventing a day.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "ingest_fox_curriculum",
     description:
       "Fetch a Woodbury Preschool WEEKLY curriculum PDF link and save Fox's activities PER DAY automatically (one entry per weekday, with a wardrobe hint each). Use this on a Woodbury Preschool email. Returns what was saved.",
@@ -172,19 +180,52 @@ const tools = [
   {
     name: "create_calendar_event",
     description:
-      "Create a calendar event and invite attendees. High-stakes (sends invites): requires owner approval. Apply the house rules above — e.g. for workday appointments include Nic's and Shelli's work emails as attendees; mark House Cleaning events showAs='free'. Times are ISO strings in the family's timezone.",
+      "Create a calendar event and invite attendees. High-stakes (sends invites): requires owner approval. Apply the house rules above — e.g. mark House Cleaning events showAs='free'. Times are ISO strings in the family's timezone. " +
+      "NEVER DUPLICATE: before creating anything, call list_calendar and look for the same thing already on the calendar that day. If it is already there, do NOT create a second copy — call update_calendar_event with that event's refs to correct the time, location, or invitees. (This tool also checks: a near-identical event turns into an update automatically.) " +
+      "FAMILY BY DEFAULT: the event goes on the family calendar and both spouses are invited on their personal addresses automatically, with their work addresses added too for a weekday daytime appointment. You do not need to list nic@freyfam.com / shelli@freyfam.com / the work addresses yourself. Set familyCalendar:false ONLY when the family explicitly says to keep it off the family calendar or not to invite the other spouse (e.g. Fox's own appointments per the house rule, or a private personal block); then no one is auto-invited and only the attendees you pass are used.",
     input_schema: {
       type: "object",
       properties: {
         subject: { type: "string" },
         start: { type: "string", description: "ISO start, e.g. 2026-06-25T14:00:00" },
         end: { type: "string", description: "ISO end; defaults to start if omitted" },
-        attendees: { type: "array", items: { type: "string" }, description: "invitee email addresses" },
+        attendees: { type: "array", items: { type: "string" }, description: "extra invitee email addresses beyond the family defaults" },
+        location: { type: "string" },
+        showAs: { type: "string", enum: ["free", "busy"] },
+        body: { type: "string" },
+        familyCalendar: {
+          type: "boolean",
+          description: "Defaults true (invite the family). Pass false ONLY when explicitly told to keep the event off the family calendar / not invite the other spouse.",
+        },
+      },
+      required: ["subject", "start"],
+    },
+  },
+  {
+    name: "update_calendar_event",
+    description:
+      "Update an event that is ALREADY on the calendar, in place — the correct tool whenever something moved, changed location, or needs another invitee. Always prefer this over creating a second, similar event. First call list_calendar to find the event, then pass that event's `refs` array verbatim plus only the fields that change. High-stakes (re-notifies attendees): requires owner approval unless it is a routine family-only event.",
+    input_schema: {
+      type: "object",
+      properties: {
+        refs: {
+          type: "array",
+          description: "The `refs` array copied from the list_calendar event to update.",
+          items: {
+            type: "object",
+            properties: { calendar: { type: "string" }, id: { type: "string" } },
+            required: ["calendar", "id"],
+          },
+        },
+        subject: { type: "string", description: "Event title (new title if renaming; otherwise the existing one, for the approval prompt)." },
+        start: { type: "string", description: "New ISO start, if the time moves" },
+        end: { type: "string", description: "New ISO end, if the time moves" },
+        attendees: { type: "array", items: { type: "string" }, description: "The FULL attendee list after the change (include the existing ones you want kept)" },
         location: { type: "string" },
         showAs: { type: "string", enum: ["free", "busy"] },
         body: { type: "string" },
       },
-      required: ["subject", "start"],
+      required: ["refs", "subject"],
     },
   },
   {
@@ -690,6 +731,27 @@ registerActionHandler("calendar", async (input) => {
   await logAction("calendar", `Created event "${r.subject}"${input.start ? ` at ${input.start}` : ""}`);
   return `Event created: ${r.subject}${r.webLink ? ` (${r.webLink})` : ""}`;
 });
+// Update-in-place: the anti-duplicate path. `refs` are the handles from
+// list_calendar (an event on both calendars carries one per calendar), `patch`
+// only the fields that actually change.
+registerActionHandler("calendar_update", async ({ refs, patch, subject }) => {
+  const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);
+  if (!list.length) throw new Error("calendar_update requires refs: [{ calendar, id }]");
+  const updated = [];
+  const errors = [];
+  for (const ref of list) {
+    try {
+      await updateEvent({ ref, patch });
+      updated.push(ref);
+    } catch (err) {
+      errors.push({ ref, reason: err.message });
+    }
+  }
+  if (!updated.length) throw new Error(`could not update "${subject}": ${errors[0]?.reason || "unknown error"}`);
+  const changed = Object.keys(patch || {}).join(", ");
+  await logAction("calendar", `Updated event "${subject}" (${changed})`);
+  return `Updated "${subject}" (${changed}) on ${updated.length} calendar${updated.length === 1 ? "" : "s"}${errors.length ? ` (${errors.length} failed)` : ""}.`;
+});
 registerActionHandler("reservation", async ({ platform, url, restaurant, date, partySize, time, type }) => {
   const book = platform === "opentable" ? openTableBook : resyBook;
   const r = await book({ url, date, partySize, time, type });
@@ -907,6 +969,22 @@ async function calendarWouldConflict(input) {
   return findConflicts([...events, proposed]).some((c) => c.a === proposed || c.b === proposed);
 }
 
+// Anti-duplicate lookup: is this proposal a re-statement of something already on
+// the calendar? Reads the same window the conflict check uses. Any failure
+// returns null (we fall through to a normal create rather than lose the event).
+async function calendarDuplicateFor(input) {
+  const t = Date.parse(String(input.start));
+  if (Number.isNaN(t)) return null;
+  const daysOut = Math.ceil((t - Date.now()) / 864e5) + 2;
+  if (daysOut > 120) return null;
+  try {
+    const events = await listEvents({ days: Math.max(1, daysOut) });
+    return findDuplicateEvent({ proposed: input, events });
+  } catch {
+    return null;
+  }
+}
+
 function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } = {}) {
   return {
     recall_memory: async ({ query }) => JSON.stringify(await recall(query)),
@@ -957,6 +1035,11 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     list_calendar: async ({ top, days, back } = {}) => JSON.stringify(await listEvents({ top, days, back })),
     fox_today: async ({ date } = {}) =>
       JSON.stringify((await getFoxToday(date)) || { note: "no Woodbury Preschool context captured for that day yet" }),
+    brightwheel_pull: async () => {
+      const r = await runBrightwheelPull();
+      if (!r.signedIn) return `Couldn't read Brightwheel: ${r.reason || "not signed in"}.`;
+      return `Brightwheel pull done: ${r.days} day(s) saved, ${r.newEntries} new item(s)${r.notified ? " (notable ones sent to the family)" : ""}. Call fox_today for the day itself.`;
+    },
     ingest_fox_curriculum: async ({ url }) => {
       let parsed;
       try {
@@ -983,9 +1066,58 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
     // NOT block the turn (that dead-locked the serial queue consumer). The action
     // runs only when the family replies "YES <code>"; the staged kind+params are
     // persisted (confirm.js) so a restart can't drop a pending approval.
-    create_calendar_event: async (input) => {
+    create_calendar_event: async (raw) => {
+      // Family-by-default: unless the family explicitly asked to keep this off
+      // the family calendar (familyCalendar:false), both spouses are invited on
+      // their personal addresses, plus their work calendars for a weekday
+      // daytime appointment. `familyCalendar` is policy, not a Graph field, so
+      // it is stripped before the event is built.
+      const { familyCalendar = true, ...proposed } = raw || {};
+      const input = withFamilyDefaults(proposed, {
+        organizer: GRAPH.calendarWrite,
+        familyCalendar,
+      });
       const who = (input.attendees || []).join(", ") || "(no invitees)";
       const when = `${input.start}${input.end ? ` – ${input.end}` : ""}`;
+
+      // Anti-duplicate: if this is the same thing already on the calendar, update
+      // that event instead of adding a second copy. Nothing changed -> say so and
+      // touch nothing.
+      const dup = await calendarDuplicateFor(input);
+      if (dup) {
+        const patch = eventPatch(input, dup.event);
+        const refs = dup.event.refs;
+        if (!patch) {
+          return `"${dup.event.subject}" is ${dup.why} (${dup.event.start}), and nothing about it changed, so I left it alone. No duplicate added.`;
+        }
+        const changed = Object.keys(patch).join(", ");
+        // Same gate as a create: a family-only event with no conflict updates
+        // itself; anything touching outsiders waits for approval.
+        const upGate = calendarGateDecision({
+          start: input.start,
+          attendees: patch.attendees || dup.event.attendees || [],
+          sourceFrom,
+          hasConflict: false,
+        });
+        if (upGate.auto) {
+          try {
+            for (const ref of refs) await updateEvent({ ref, patch });
+            await logAction("calendar", `Updated event "${dup.event.subject}" (${changed})`);
+            log.info("calendar updated instead of duplicated", { subject: dup.event.subject, changed });
+            return `That's ${dup.why}, so I updated it instead of making a duplicate: "${dup.event.subject}" (${changed}). Tell me if you want it removed instead.`;
+          } catch (e) {
+            log.error("calendar auto-update failed; falling back to approval", { reason: e.message });
+          }
+        }
+        const { instruction } = await requestConfirmation(
+          `Update existing event: ${dup.event.subject}\nOn the calendar: ${dup.event.start}\nChanging: ${changed}\nNew: ${when}${patch.attendees ? `\nInvitees: ${patch.attendees.join(", ")}` : ""}\n(Updating in place — no duplicate.)`,
+          "calendar_update",
+          { refs, patch, subject: dup.event.subject },
+          { thread }
+        );
+        return `"${dup.event.subject}" is ${dup.why}, so I'd update that one rather than duplicate it (${changed}). ${instruction}`;
+      }
+
       // 011: auto-create routine, family-own events (personal blocks or family-only
       // invitees requested by family, no conflict); gate everything else exactly as
       // before. Conservative: any error -> treat as conflict -> gate.
@@ -1008,6 +1140,42 @@ function toolHandlers({ images, onDelegate, thread = null, sourceFrom = null } =
         { thread }
       );
       return `Ready to create "${input.subject}" (${when}), invitees: ${who}. ${instruction}`;
+    },
+    update_calendar_event: async ({ refs, subject, start, end, attendees, location, showAs, body }) => {
+      const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);
+      if (!list.length) return `I couldn't update that — I need the event's refs from list_calendar. Let me look it up first.`;
+      const patch = {};
+      if (start) patch.start = start;
+      if (end) patch.end = end;
+      if (Array.isArray(attendees) && attendees.length) patch.attendees = attendees;
+      if (location) patch.location = location;
+      if (showAs) patch.showAs = showAs;
+      if (body) patch.body = body;
+      if (subject) patch.subject = subject;
+      if (!Object.keys(patch).length) return `Nothing to change on "${subject}" — tell me what should be different.`;
+      const changed = Object.keys(patch).join(", ");
+      const gate = calendarGateDecision({
+        start: start || new Date().toISOString(),
+        attendees: patch.attendees || [],
+        sourceFrom,
+        hasConflict: false,
+      });
+      if (gate.auto) {
+        try {
+          for (const ref of list) await updateEvent({ ref, patch });
+          await logAction("calendar", `Updated event "${subject}" (${changed})`);
+          return `Updated "${subject}" (${changed}). No duplicate created.`;
+        } catch (e) {
+          log.error("calendar update failed; falling back to approval", { reason: e.message });
+        }
+      }
+      const { instruction } = await requestConfirmation(
+        `Update event: ${subject}\nChanging: ${changed}${start ? `\nNew time: ${start}${end ? ` – ${end}` : ""}` : ""}${patch.attendees ? `\nInvitees: ${patch.attendees.join(", ")}` : ""}\n(Updating in place — no duplicate.)`,
+        "calendar_update",
+        { refs: list, patch, subject },
+        { thread }
+      );
+      return `Ready to update "${subject}" (${changed}). ${instruction}`;
     },
     delete_calendar_event: async ({ refs, subject, start }) => {
       const list = (Array.isArray(refs) ? refs : []).filter((r) => r && r.calendar && r.id);

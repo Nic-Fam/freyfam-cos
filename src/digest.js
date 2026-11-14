@@ -39,7 +39,13 @@ export function buildDigestPrompt(now = new Date(), tz = DIGEST.tz) {
   home->work number. For Shelli, call commute_time home to her work. Call
   get_weather at each destination (Woodbury/Altadena and each workplace) today.
   Give a one-line per-person heads-up. Skip anyone not heading out today (e.g. on
-  a weekend, skip work commutes; on a daycare day include the Woodbury leg).`;
+  a weekend, skip work commutes; on a daycare day include the Woodbury leg).
+  SHELLI WORKS FROM HOME ON FRIDAYS AND WEEKENDS. If today is a Friday, Saturday,
+  or Sunday, do NOT call commute_time for Shelli and do NOT give her a Burbank
+  weather line: she is home all day, so call get_weather at HOME (the house rules
+  give the Ocean View address) and use that for her heads-up, plus anything else
+  local to her day. Always include the HOME weather line on those days even if no
+  one is heading out.`;
   return `Today is ${human} (${date}). It is morning. Anchor EVERYTHING to this date: do not compute or state any other date, and treat a calendar event dated ${date} as TODAY (events on other dates are not today; mention them only in a brief "coming up" note if useful).
 
 Compose a brief MORNING DIGEST for the family.
@@ -57,7 +63,7 @@ Gather what you need first:
   WARDROBE note so they can dress him right (old clothes on paint/messy days, a
   full change of clothes on water days).
 - Dinner out: check today's schedule for an event in the DINNER window (~4:30-8:30 PM)
-  at a location AWAY from home (the family lives in the La Crescenta area; a tour,
+  at a location AWAY from home (the family lives in La Canada Flintridge, on Ocean View; a tour,
   appointment, or plans in another neighborhood around that time counts). If there is
   one, proactively suggest 2-3 well-reviewed dinner spots near that location: use
   \`search\` (e.g. "best dinner restaurants near <place>") to find them, name each with

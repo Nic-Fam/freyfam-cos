@@ -1,4 +1,4 @@
-import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, COO_REVIEW } from "./config.js";
+import { HEARTBEAT_INTERVAL_MS, COST, MODELS, DIGEST, FINANCE_REPORT, PACKAGE_DIGEST, AMAZON_DIGEST, BRIGHTWHEEL, COO_REVIEW } from "./config.js";
 import { triageHeartbeat, signalsFingerprint } from "./triage.js";
 import { shouldAlert, recordAlerted } from "./heartbeat-alerts.js";
 import { recentMailSignals, recentShipmentMail, listEvents } from "./channels/graph.js";
@@ -18,6 +18,7 @@ import { WEEK_CONFLICTS, shouldRunWeekConflicts, getLastConflictRun, setLastConf
 import { transferOutlook, shouldRunTransferOutlook, getLastOutlookCycle, setLastOutlookCycle } from "./transfer-outlook.js";
 import { runPackageDigest, shouldRunPackageDigest, getLastPackageDigestDate, setLastPackageDigestDate } from "./package-digest.js";
 import { runAmazonDigest, shouldRunAmazonDigest, getLastAmazonDigestDate, setLastAmazonDigestDate } from "./amazon-digest.js";
+import { runBrightwheelPull, shouldRunBrightwheel, getBrightwheelState, setBrightwheelState } from "./brightwheel.js";
 import { getDueReminders, afterFired } from "./reminders.js";
 import { dueSlots, getResaleState, setSlotRan } from "./resale-schedule.js";
 import { delegate, chooseTransport } from "./delegate.js";
@@ -516,6 +517,30 @@ async function maybeRunAmazonDigest() {
   }
 }
 
+// Fox's Brightwheel pull: once per local day, EARLY (before the digest window) so
+// the day's activities + wardrobe hint are in foxDailyContext by the time the
+// digest composes. Woodbury posts to Brightwheel instead of emailing, so this is
+// the only path that keeps the digest's Fox section populated. Quiet when the
+// Chrome profile isn't signed into Brightwheel.
+async function maybeRunBrightwheel() {
+  if (!BRIGHTWHEEL.enabled) return;
+  const state = await getBrightwheelState();
+  const { run, date } = shouldRunBrightwheel(new Date(), state.lastRunDate, BRIGHTWHEEL);
+  if (!run) return;
+  const firstRun = !state.lastRunDate && !state.seen.length;
+  // Claim the day BEFORE crawling so a restart inside the window can't double-run
+  // the browser; runBrightwheelPull rewrites this row with the seen-set on success.
+  // firstRun is computed HERE because that claim overwrites the signal.
+  await setBrightwheelState({ lastRunDate: date, seen: state.seen });
+  try {
+    const r = await runBrightwheelPull({ firstRun });
+    if (r.signedIn) log.info("brightwheel pull", { date, days: r.days, newEntries: r.newEntries, notified: r.notified });
+    else log.info("brightwheel pull skipped", { date, reason: r.reason });
+  } catch (err) {
+    log.error("brightwheel pull failed", { reason: err.message });
+  }
+}
+
 // Fire any reminders that have come due: notify the owner, then re-arm recurring
 // ones / mark one-shots done. Persisted, so a restart never drops one.
 async function maybeFireReminders() {
@@ -657,6 +682,7 @@ export async function tick() {
   await maybeSchedulePickups();
   await maybeSecurityScan();
   await maybeNetworkScan();
+  await maybeRunBrightwheel(); // before the digest: it populates the digest's Fox section
   await maybeRunDigest();
   await maybeScanTransactionAlerts();
   await maybeRunFinanceIngest();

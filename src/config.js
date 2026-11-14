@@ -396,6 +396,33 @@ export const AMAZON_DIGEST = {
   tz: process.env.FAMILY_TZ || "America/Los_Angeles",
 };
 
+// Fox's Brightwheel pull (Woodbury Preschool). Runs early each morning BEFORE the
+// digest window so the day's activities + wardrobe hint are already in
+// foxDailyContext when the digest composes. Read-only crawl on Lloyd's local
+// signed-in Chrome (see brightwheel.js). Ships dark — flip BRIGHTWHEEL_ENABLED
+// once the profile is signed in and the parser has had its live tuning pass.
+//
+// CREDENTIALS: leave username/password UNSET and just sign into Brightwheel once
+// in the Chrome profile BROWSER_USER_DATA_DIR points at — the session is reused
+// and no password sits on disk. Set BRIGHTWHEEL_USERNAME/BRIGHTWHEEL_PASSWORD
+// only if you want the crawl to re-authenticate itself when that session lapses.
+export const BRIGHTWHEEL = {
+  enabled: String(process.env.BRIGHTWHEEL_ENABLED ?? "false").toLowerCase() === "true",
+  homeUrl: process.env.BRIGHTWHEEL_HOME_URL || "https://schools.mybrightwheel.com/",
+  childName: process.env.BRIGHTWHEEL_CHILD_NAME || "Fox",
+  username: process.env.BRIGHTWHEEL_USERNAME || "",
+  password: process.env.BRIGHTWHEEL_PASSWORD || "",
+  hour: Number(process.env.BRIGHTWHEEL_HOUR ?? 5),          // local hour, ahead of the digest
+  windowHours: Number(process.env.BRIGHTWHEEL_WINDOW_HOURS ?? 3),
+  headed: String(process.env.BRIGHTWHEEL_HEADED ?? "false").toLowerCase() === "true",
+  notify: String(process.env.BRIGHTWHEEL_NOTIFY ?? "true").toLowerCase() === "true",
+  maxEntries: Number(process.env.BRIGHTWHEEL_MAX_ENTRIES ?? 300),
+  maxSeen: Number(process.env.BRIGHTWHEEL_MAX_SEEN ?? 2000),
+  settleMs: Number(process.env.BRIGHTWHEEL_SETTLE_MS ?? 3000),
+  timeoutMs: Number(process.env.BRIGHTWHEEL_TIMEOUT_MS ?? 30000),
+  tz: process.env.FAMILY_TZ || "America/Los_Angeles",
+};
+
 // Monthly budget burn: track cumulative spend as a % of anticipated monthly
 // income, day-by-day, against a savings target (spend cap = income * (1 - rate)).
 // Income is a fixed figure (set BUDGET_MONTHLY_INCOME); until it's set the

@@ -394,6 +394,39 @@ export async function createEvent(input) {
   return { id: res.id, webLink: res.webLink, subject: res.subject };
 }
 
+/** Pure: shape a partial event update for Graph PATCH. Only the given fields travel. */
+export function buildEventPatch({ subject, start, end, attendees, location, body, showAs } = {}) {
+  const payload = {};
+  if (subject) payload.subject = subject;
+  if (start) payload.start = toGraphDateTime(start);
+  if (end) payload.end = toGraphDateTime(end);
+  if (showAs) payload.showAs = showAs;
+  if (Array.isArray(attendees)) {
+    payload.attendees = attendees.map((a) => ({
+      emailAddress: { address: typeof a === "string" ? a : a.address },
+      type: "required",
+    }));
+  }
+  if (location) payload.location = { displayName: location };
+  if (body) payload.body = { contentType: "Text", content: body };
+  return payload;
+}
+
+/**
+ * Update an existing event in place — the anti-duplicate path. `ref` is one
+ * {calendar, id} handle from a list_calendar event; `patch` carries only the
+ * fields that change (see calendar-policy.eventPatch). Re-invites attendees on
+ * a time change exactly as Outlook would, so it is gated like a create.
+ */
+export async function updateEvent({ ref, patch } = {}) {
+  if (!ref?.calendar || !ref?.id) throw new Error("updateEvent requires ref: { calendar, id }");
+  const body = buildEventPatch(patch || {});
+  if (!Object.keys(body).length) throw new Error("updateEvent requires at least one field to change");
+  const res = await graph().api(`/users/${ref.calendar}/events/${ref.id}`).patch(body);
+  clearCalendarCache(); // the changed event must show on the next read
+  return { id: res.id, webLink: res.webLink, subject: res.subject };
+}
+
 /**
  * Delete (cancel) events from the family calendars. Takes the `refs` array a
  * list_calendar event carries ([{calendar, id}], one per calendar it's on), so a

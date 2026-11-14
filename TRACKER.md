@@ -49,7 +49,7 @@ reverted by a parallel session's git reset — push after editing so it survives
 | 003 | Lloyd authenticated browsing — reservations + checks | `[~]` reservations + browse DONE | Resy + OpenTable availability + GATED booking (`find_reservation` / `make_reservation`), name→venue via web search, HEADED on the signed-in profile, payment-required guard. `browse_and_report` (headed signed-in reader) done. Dinner-out suggestions live in the digest. Remaining: broader authenticated flows as they come up. |
 | 004 | Weekly-digest scheduling conflicts | `[x]` done | `8286921`. |
 | 005a | Bright Horizons → "daycare"/Woodbury in the digest | `[x]` done | `f54f9fc` + parallel session's Woodbury specialization. |
-| 005b | Load Woodbury curriculum + menu | `[ ]` parked on Nic | Send a sample schedule/menu. |
+| 005b | Load Woodbury curriculum + menu | `[~]` built; needs sign-in + live tune | Woodbury posts to **Brightwheel**, not email, so `src/brightwheel.js` pulls it at the source: read-only crawl of schools.mybrightwheel.com on the local signed-in Chrome, folds each day into `foxDailyContext` via `setFoxDay` (digest unchanged), pushes only notable items (incident/message/announcement), silent first run. Daily 5am ahead of the digest; on-demand tool `brightwheel_pull`. 17/17 tests. **Setup:** sign Brightwheel into the Chrome-cos profile, run `node tools/capture-brightwheel.mjs` to tune the feed parser on real markup, then flip `BRIGHTWHEEL_ENABLED=true`. |
 | 006 | Frank ↔ Ring ecosystem | `[ ]` long-term / research | Ring has no solid API. |
 | 007 | iMessage channel (BlueBubbles) | `[ ]` not started | Outbound is Slack + email today. |
 | 008 | Grocery ordering & planning | `[ ]` not started | Ties to 003 (no cart API). |
