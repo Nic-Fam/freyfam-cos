@@ -1,5 +1,5 @@
 {
-  "_note": "Captured live from ralphs.com (signed in as NICHOLAS, delivery to 5725 Canyonside Rd) 2026-06-23 via Control Chrome. Kroger uses data-testid; coupon ids rotate weekly so match coupons by aria-label TEXT, not id. Used by placeRalphsOrder (src/grocery.js). Slot + checkout selectors are at-checkout only (need a qualifying $35 cart) and still pending.",
+  "_note": "Captured live from ralphs.com (signed in as NICHOLAS, home delivery) 2026-06-23 via Control Chrome. Kroger uses data-testid; coupon ids rotate weekly so match coupons by aria-label TEXT, not id. Used by placeRalphsOrder (src/grocery.js). Slot + checkout selectors are at-checkout only (need a qualifying $35 cart) and still pending.",
   "captured": {
     "search_input": "input[data-testid=\"SearchBar-input\"]",
     "add_to_cart_button": "button[data-testid=\"citrus-QuantityStepper-ctaButton\"]",

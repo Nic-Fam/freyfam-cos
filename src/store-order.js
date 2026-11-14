@@ -17,7 +17,7 @@
 // proven live. Deps are injectable so the whole flow is testable without a browser.
 // ===========================================================================
 import { runBrowserTask, browserAgentEnabled } from "./browser-agent.js";
-import { buildGroceryPlaybook, validateGroceryResult, STORE_URLS } from "./grocery-order-playbook.js";
+import { buildGroceryPlaybook, validateGroceryResult, configuredDeliveryAddress, STORE_URLS } from "./grocery-order-playbook.js";
 import { gatherGroceryItems } from "./grocery.js";
 import { listTodoTasks, completeTodoTask } from "./channels/graph.js";
 import { createLogger } from "./log.js";
@@ -49,6 +49,9 @@ export async function startStoreOrder(store, { deps = {} } = {}) {
   if (!browserAgentEnabled()) return "My browser agent isn't switched on yet (COS_BROWSER_AGENT), so I can't build the cart myself.";
   const { gather = gatherGroceryItems, run = runBrowserTask, stage, notify = async () => {} } = deps;
   if (!stage) throw new Error("startStoreOrder needs deps.stage (confirm.js requestConfirmation)");
+  // Fail closed: no configured delivery address means the address guard can't tell
+  // our house from wherever the account still points (e.g. the old house).
+  if (!configuredDeliveryAddress(store)) return `I don't have a delivery address set for ${s.name} (HOME_DELIVERY_HINT), so I won't build the cart. Nothing was ordered.`;
 
   const items = await gather({ store: s.list });
   if (!items.length) return `The ${s.name} list is empty, so there's nothing to order.`;
@@ -82,6 +85,7 @@ export async function placeStoreOrder(params, { deps = {} } = {}) {
   const s = STORES[store];
   if (!s) return `Unknown store "${store}"; nothing placed.`;
   if (!browserAgentEnabled()) return `Approved, but my browser agent is off, so place the ${s.name} order by hand.`;
+  if (!configuredDeliveryAddress(store)) return `Approved, but I don't have a delivery address set for ${s.name} (HOME_DELIVERY_HINT), so I did NOT place the order.`;
   const { run = runBrowserTask, markDone = markListItemsDone } = deps;
 
   const task = buildGroceryPlaybook({

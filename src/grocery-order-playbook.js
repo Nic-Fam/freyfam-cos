@@ -43,10 +43,26 @@ export function groceryHints() {
     profile: process.env.GROCERY_PROFILE_HINT || "Nic",
     account: (process.env.GROCERY_ACCOUNT_NAME_HINT || "Nic").toLowerCase(),
     address: process.env.HOME_DELIVERY_HINT || "the family's home address",
-    // Costco/Instacart delivers to the detached garage, not the house (Nic, 2026-07-13).
+    // Optional per-store override; by default Costco/Instacart delivers home like
+    // Ralphs. (It used to point at the old house's detached garage; after the move
+    // everything goes to the house, so a leftover override is the risk, not a need.)
     costcoAddress: process.env.COSTCO_DELIVERY_HINT || process.env.HOME_DELIVERY_HINT || "the family's home address",
     spendCap: Number(process.env.GROCERY_SPEND_CAP || 350), // refuse an order above this
   };
+}
+
+/**
+ * The street address a store's delivery must go to, or null when none is
+ * configured. Lloyd's own browser agent refuses to build or place an order
+ * without one: the playbook's address guard is only as good as the address it
+ * checks against, and "the family's home address" lets the agent accept whatever
+ * the retailer account already has (after a move, the OLD house).
+ */
+export function configuredDeliveryAddress(store) {
+  const pick = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const home = pick(process.env.HOME_DELIVERY_HINT);
+  if (store === "costco") return pick(process.env.COSTCO_DELIVERY_HINT) || home;
+  return home;
 }
 
 const STORE_LABEL = { ralphs: "Ralphs (ralphs.com)", costco: "Costco (Instacart Costco storefront)" };
