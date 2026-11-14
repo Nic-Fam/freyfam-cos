@@ -82,6 +82,12 @@ in Azure:
   fallback / interim before its Mac is online).
 - **Isolation** comes from per-specialist identity + scoped storage (Azure RBAC per
   Table; per-agent function key on the LAN), NOT from warm compute.
+- **Secrets (2026-11-13):** the Azure specialists' Anthropic key lives in Key Vault
+  `freyfam-cos-kv` (secret `anthropic-api-key`); each app's setting is a Key Vault
+  reference read with its own identity, which can read only that one secret. To
+  rotate: `az keyvault secret set --vault-name freyfam-cos-kv -n anthropic-api-key
+  --file <keyfile>`, then restart the three apps (or wait up to 24h). The Macs still
+  use `.env`; keep a copy of each in the password manager.
 - **Outbound + confirmation always stay on Lloyd.** A specialist only RETURNS text;
   it has no outbound channel and no confirmation power, wherever it runs. This keeps
   the confirmation gate (constraint 2) the single chokepoint for all outbound.

@@ -29,7 +29,12 @@ AGENTS=${AGENTS:-finance resale chef}
 # fall back to a new unique name on a first run.
 DATA_STORAGE=${DATA_STORAGE:-$(az storage account list -g "$RG" --query "[0].name" -o tsv 2>/dev/null || true)}
 DATA_STORAGE=${DATA_STORAGE:-freyfamcosdata$RANDOM}
-: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY (the inference key) before running}"
+# The inference key lives in Key Vault, NOT in plain-text app settings. Each app
+# reads it through a Key Vault reference using its own managed identity.
+#   ANTHROPIC_API_KEY set   -> written to the vault (first run, or rotating the key)
+#   ANTHROPIC_API_KEY unset -> the secret must already be in the vault
+KEY_VAULT=${KEY_VAULT:-${APP_PREFIX}-kv}
+SECRET_NAME=anthropic-api-key
 
 # Preflight: this recipe REQUIRES a Flex Consumption-capable Azure CLI. A stale az
 # silently creates plain-Linux apps with NO runtime (functionAppConfig=null) that
@@ -69,6 +74,49 @@ az storage account create -n "$DATA_STORAGE" -g "$RG" -l "$LOCATION" \
   --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
   --allow-blob-public-access false -o none
 echo "storage account ready"
+
+# Key Vault (RBAC mode). It lives in this RG, so rebuild-specialists.sh deleting
+# the RG soft-deletes it and reserves the name for 90 days: recover it instead of
+# failing on create.
+if ! az keyvault show -n "$KEY_VAULT" -o none 2>/dev/null; then
+  if az keyvault show-deleted -n "$KEY_VAULT" -o none 2>/dev/null; then
+    echo "recovering soft-deleted vault $KEY_VAULT"
+    az keyvault recover -n "$KEY_VAULT" -o none
+  else
+    az keyvault create -n "$KEY_VAULT" -g "$RG" -l "$LOCATION" \
+      --enable-rbac-authorization true --retention-days 90 -o none
+  fi
+fi
+KV_ID=$(az keyvault show -n "$KEY_VAULT" --query id -o tsv)
+SECRET_SCOPE="$KV_ID/secrets/$SECRET_NAME"
+# The person running this needs to write secrets (skipped for a service principal).
+ME=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)
+if [ -n "$ME" ]; then
+  az role assignment create --assignee-object-id "$ME" --assignee-principal-type User \
+    --role "Key Vault Secrets Officer" --scope "$KV_ID" -o none 2>/dev/null || true
+fi
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  # Via a temp file so the key never shows up in the process list. Retry: a
+  # fresh role assignment takes a minute or two to reach the vault.
+  KEY_FILE=$(mktemp); trap 'rm -f "$KEY_FILE"' EXIT
+  printf '%s' "$ANTHROPIC_API_KEY" > "$KEY_FILE"
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if az keyvault secret set --vault-name "$KEY_VAULT" -n "$SECRET_NAME" \
+         --file "$KEY_FILE" --encoding utf-8 -o none 2>/dev/null; then
+      break
+    fi
+    [ "$attempt" = 8 ] && { echo "ERROR: could not write $SECRET_NAME to $KEY_VAULT"; exit 1; }
+    echo "  vault write attempt $attempt failed (role replicating); retry in 15s"
+    sleep 15
+  done
+  rm -f "$KEY_FILE"
+  echo "inference key stored in $KEY_VAULT/$SECRET_NAME"
+elif ! az keyvault secret show --vault-name "$KEY_VAULT" -n "$SECRET_NAME" -o none 2>/dev/null; then
+  echo "ERROR: $SECRET_NAME is not in $KEY_VAULT. Set ANTHROPIC_API_KEY and re-run to store it."
+  exit 1
+fi
+# Versionless URI: a rotated key is picked up without touching the apps.
+KEY_REF="@Microsoft.KeyVault(SecretUri=https://${KEY_VAULT}.vault.azure.net/secrets/${SECRET_NAME}/)"
 
 for AGENT in $AGENTS; do
   APP="${APP_PREFIX}-${AGENT}"
@@ -123,14 +171,15 @@ for AGENT in $AGENTS; do
   PRINCIPAL=$(az functionapp identity show -n "$APP" -g "$RG" --query principalId -o tsv)
   TABLE_ENDPOINT="https://${DATA_STORAGE}.table.core.windows.net"
 
-  # App settings: pin the agent, hand over the inference key, point at the data
-  # Table. The specialist reads the Table via its managed identity (no secret).
+  # App settings: pin the agent, reference the inference key in Key Vault, point
+  # at the data Table. Both the key and the Table are read via the app's managed
+  # identity, so no secret sits in the app settings.
   # EnableWorkerIndexing is REQUIRED for the v4 Node programming model: without
   # it the host never discovers the code-defined function (publish reports
   # "Error calling sync triggers" and the function list stays empty).
   az functionapp config appsettings set -n "$APP" -g "$RG" -o none --settings \
     COS_AGENT="$AGENT" \
-    ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    ANTHROPIC_API_KEY="$KEY_REF" \
     COS_TABLE_ENDPOINT="$TABLE_ENDPOINT" \
     COS_TABLE_NAME="$TABLE" \
     AzureWebJobsFeatureFlags="EnableWorkerIndexing"
@@ -149,7 +198,17 @@ for AGENT in $AGENTS; do
     echo "  role-assign attempt $attempt failed (identity replicating); retry in 10s"
     sleep 10
   done
-  echo "  identity $PRINCIPAL scoped to $TABLE only"
+  # Let this app read the ONE inference-key secret (not the whole vault).
+  for attempt in 1 2 3 4 5 6; do
+    if az role assignment create --assignee-object-id "$PRINCIPAL" \
+         --assignee-principal-type ServicePrincipal \
+         --role "Key Vault Secrets User" --scope "$SECRET_SCOPE" -o none 2>/dev/null; then
+      break
+    fi
+    echo "  key-vault role attempt $attempt failed (identity replicating); retry in 10s"
+    sleep 10
+  done
+  echo "  identity $PRINCIPAL scoped to $TABLE + $SECRET_NAME only"
 done
 
 echo
