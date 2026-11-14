@@ -13,8 +13,8 @@
 //   node deploy/security/netscan.mjs --json       # machine-readable diff to stdout
 //
 // Baseline lives at data/network-baseline.json (gitignored via data/*), so MACs
-// never hit git. Frank can only see his own subnet; the Eero/IoT and camera
-// subnets are separate legs off the Asus router and need their own scan host.
+// never hit git. Frank can only see his own subnet; any other hardware subnet
+// (an IoT or camera leg) needs its own scan host.
 //
 // Scope note: ping-silent devices won't populate ARP unless they talk to this
 // box, so treat "GONE" as "not seen this run", not proof of removal.
